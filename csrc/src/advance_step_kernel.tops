@@ -1,0 +1,140 @@
+#include <algorithm>
+
+#include "tops_utils.h"
+
+namespace vllm_gcu::llm_ops {
+__global__ void advance_step_kernel(int num_queries, int block_size,
+                                    int *seq_lens_ptr,      // num_seqs
+                                    int *slot_mapping_ptr,  // num_seqs
+                                    int *block_tables_ptr,  // num_seqs, stride
+                                    int64_t const block_table_stride) {
+  int thread_num = GetThreadNum();
+  int thread_id = GetThreadIdx();
+
+  constexpr int TILE_LEN = 1;
+  /* using vint = typename tcle::altivector<int, TCLE_SINGLE_VEC_BYTES>::VT; */
+  using vint = typename tcle::altivector<int, 32>::VT;
+  using vmask = typename tcle::altivector_to_mask<vint>::type;
+  const int vlength = tcle::altivector_step<vint>();
+
+  int num_stride = TILE_LEN * vlength;
+  int buffer_stride = num_stride * sizeof(int);
+
+  // generate [0,1,2...vlengh-1]
+  __local__ __attribute__((aligned(512))) __valigned__ int range[vlength];
+  for (int i = 0; i < vlength; i++) {
+    range[i] = i;
+  }
+
+  __local__ __attribute__((aligned(512)))
+  __valigned__ char l1_buffer[VDMEM_SIZE - vlength * sizeof(int)];
+  void *l1_seq_len_buffer = reinterpret_cast<void *>(l1_buffer);
+  void *l1_slot_num_buffer =
+      reinterpret_cast<void *>(l1_buffer + buffer_stride);
+  void *l1_block_tables_buffer =
+      reinterpret_cast<void *>(l1_buffer + buffer_stride * 2);
+
+  int *l1_seq_len = reinterpret_cast<int *>(l1_seq_len_buffer);
+  int *l1_slot_num = reinterpret_cast<int *>(l1_slot_num_buffer);
+  int *l1_block_tables = reinterpret_cast<int *>(l1_block_tables_buffer);
+
+  int thread_stride = std::max(DIV_CEIL(num_queries, thread_num), num_stride);
+  int thread_start = thread_id * thread_stride;
+  int thread_end = std::min((thread_id + 1) * thread_stride, num_queries);
+
+  // init dte
+  tops::private_dte seq_lens_ctx_in;
+  tops::private_dte seq_lens_ctx_out;
+  tops::private_dte block_tables_ctx;
+  tops::private_dte slot_mapping_ctx;
+  seq_lens_ctx_in.init();
+  seq_lens_ctx_out.init();
+  block_tables_ctx.init();
+  slot_mapping_ctx.init();
+
+  vmask mask;
+
+  vint v_block_size = vint(block_size);
+  vint v_block_stride = vint(block_table_stride);
+  tcle::leaptr<vint> l1_range_ptr = tcle::simple_leaptr<vint>(range);
+  vint v_range = l1_range_ptr.load();
+  vint v_block_base = v_range * v_block_stride;
+
+  for (int n = thread_start; n < thread_end; n += num_stride) {
+    int n_stride = std::min(num_stride, num_queries - n);  // actual n
+
+    tops::memcpy(seq_lens_ctx_in,
+                 tops::mdspan(tops::Private, l1_seq_len, n_stride),
+                 tops::mdspan(tops::Global, seq_lens_ptr + n, n_stride));
+
+    tops::memcpy(
+        block_tables_ctx,
+        tops::mdspan(tops::Private, l1_block_tables, n_stride,
+                     block_table_stride),
+        tops::mdspan(tops::Global, block_tables_ptr + n * block_table_stride,
+                     n_stride, block_table_stride));
+
+    vint v_seq_len[TILE_LEN];
+    vint v_block_index[TILE_LEN];
+    vint v_block_offset[TILE_LEN];
+    vint v_slot_num[TILE_LEN];
+
+    tcle::leaptr<vint> l1_seq_len_ptr =
+        tcle::simple_leaptr<vint>(reinterpret_cast<char *>(l1_seq_len_buffer));
+    tcle::leaptr<vint> l1_seq_len_save_ptr =
+        tcle::simple_leaptr<vint>(reinterpret_cast<char *>(l1_seq_len_buffer));
+    tcle::leaptr<vint> l1_slot_num_ptr =
+        tcle::simple_leaptr<vint>(reinterpret_cast<char *>(l1_slot_num_buffer));
+
+#pragma clang loop unroll(full)
+    for (int t = 0; t < TILE_LEN; t++) {
+      v_slot_num[t] = tops::vzero<vint>();
+      v_block_index[t] = tops::vzero<vint>();
+    }
+
+    for (int t = 0; t < n_stride; t += vlength) {
+      int t_stride = std::min(vlength, n_stride - t);
+
+      mask = v_range < vint(t_stride);
+
+      v_seq_len[t] = l1_seq_len_ptr.load();
+
+      v_block_index[t] = v_seq_len[t] / v_block_size;
+      v_block_index[t] += vint(t * block_table_stride);
+      v_block_index[t] += v_block_base;
+      v_block_index[t] =
+          tcle::vsel(mask, v_block_index[t] * vint(sizeof(int)), vint(0));
+      v_block_offset[t] = v_seq_len[t] % v_block_size;
+
+      v_slot_num[t] = tcle::gather<vint>(
+          (__TCLE_AS__ char *)(l1_block_tables_buffer), v_block_index[t]);
+      v_slot_num[t] *= v_block_size;
+      v_slot_num[t] += v_block_offset[t];
+
+      v_seq_len[t] += vint(1);
+
+      l1_seq_len_save_ptr.store(v_seq_len[t]);
+      l1_slot_num_ptr.store(v_slot_num[t]);
+    }
+    tcle::fence<0x3>();
+
+    tops::memcpy(seq_lens_ctx_out,
+                 tops::mdspan(tops::Global, seq_lens_ptr + n, n_stride),
+                 tops::mdspan(tops::Private, l1_seq_len, n_stride));
+    tops::memcpy(slot_mapping_ctx,
+                 tops::mdspan(tops::Global, slot_mapping_ptr + n, n_stride),
+                 tops::mdspan(tops::Private, l1_slot_num, n_stride));
+  }
+}
+
+void launch_advance_step_kernel(int64_t num_queries, int64_t block_size,
+                                int *seq_lens_ptr, int *slot_mapping_ptr,
+                                int *block_tables_ptr,
+                                int64_t const block_table_stride,
+                                int64_t num_blocks, int64_t num_threads) {
+  advance_step_kernel<<<num_blocks, num_threads>>>(
+      num_queries, block_size, seq_lens_ptr, slot_mapping_ptr, block_tables_ptr,
+      block_table_stride);
+}
+
+}  // namespace vllm_gcu::llm_ops
