@@ -1,0 +1,23 @@
+/**
+ * Copyright 2024 Enflame. All Rights Reserved.
+ */
+
+#include "gelu_quick.h"
+
+#include <topsaten/topsaten_vllm.h>
+
+#include "tops_extension/torch/GCUAten.h"
+#include "torch_gcu.h"
+
+namespace vllm_gcu::llm_ops {
+
+void gelu_quick(at::Tensor &out, const at::Tensor &input) {
+  const torch_gcu::OptionalGCUGuard device_guard(device_of(input));
+  const topsStream_t stream = torch_gcu::getCurrentGCUStream();
+
+  // TODO: workaround until gelu quick is implemented
+  ATEN_ATENOP_CHECK(
+      ATEN_ATENOP_CALL(topsvllm::topsvllmGeluFast)(out, input, stream));
+}
+
+}  // namespace vllm_gcu::llm_ops

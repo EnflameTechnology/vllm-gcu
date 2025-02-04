@@ -1,0 +1,155 @@
+- func: paged_attention_v1(Tensor(a!) out, Tensor query, Tensor key_cache, Tensor value_cache, int num_kv_heads, float scale, Tensor block_tables, Tensor context_lens, int block_size, int max_context_len, Tensor? alibi_slopes, str kv_cache_dtype, float k_scale, float v_scale, int tp_rank, int blocksparse_local_blocks, int blocksparse_vert_stride, int blocksparse_block_size, int blocksparse_head_sliding_step, float k_zero, float v_zero, Tensor? out_scales) -> ()
+  variants: function
+
+- func: paged_attention_v2(Tensor(a!) out, Tensor exp_sums, Tensor max_logits, Tensor tmp_output, Tensor query, Tensor key_cache, Tensor value_cache, int num_kv_heads, float scale, Tensor block_tables, Tensor context_lens, int block_size, int max_context_len, Tensor? alibi_slopes, str kv_cache_dtype, float k_scale, float v_scale, int tp_rank, int blocksparse_local_blocks, int blocksparse_vert_stride, int blocksparse_block_size, int blocksparse_head_sliding_step, float k_zero, float v_zero, Tensor? out_scales) -> ()
+  variants: function
+
+- func: silu_and_mul(Tensor(a!) out, Tensor input) -> ()
+  variants: function
+
+- func: gelu_and_mul(Tensor(a!) out, Tensor input) -> ()
+  variants: function
+
+- func: gelu_tanh_and_mul(Tensor(a!) out, Tensor input) -> ()
+  variants: function
+
+- func: gelu_new(Tensor(a!) out, Tensor input) -> ()
+  variants: function
+
+- func: gelu_fast(Tensor(a!) out, Tensor input) -> ()
+  variants: function
+
+- func: gelu_quick(Tensor(a!) out, Tensor input) -> ()
+  variants: function
+
+- func: rms_norm(Tensor(a!) out, Tensor input, Tensor weight, float epsilon) -> ()
+  variants: function
+
+- func: fused_add_rms_norm(Tensor(a!) input, Tensor(a!) residual, Tensor weight, float epsilon) -> ()
+  variants: function
+
+- func: rotary_embedding(Tensor positions, Tensor(a!) query, Tensor(a!) key, int head_size, Tensor cos_sin_cache, bool is_neox) -> ()
+  variants: function
+
+- func: awq_gemm_gcu(Tensor(a!) _in_feats, Tensor(a!) _kernel, Tensor(a!) _scaling_factors, Tensor(a!) _zeros, int split_k_iters, Tensor? bias, int group_size) -> Tensor
+  variants: function
+
+- func: awq_dequantize(Tensor(a!) _kernel, Tensor(a!) _scaling_factors, Tensor(a!) _zeros, int split_k_iters, int thx, int thy) -> Tensor
+  variants: function
+
+- func: squeezellm_gemm(Tensor(a!) vec, Tensor(a!) mat, Tensor(a!) mul, Tensor(a!) lookup_table) -> ()
+  variants: function
+
+- func: gptq_gemm_gcu(Tensor(a!) a, Tensor(a!) b_q_weight, Tensor(a!) b_gptq_qzeros, Tensor(a!) b_gptq_scales, Tensor(a!) b_g_idx, int bit, Tensor? bias, int group_size) -> Tensor
+  variants: function
+
+- func: gptq_shuffle(Tensor(a!) q_weight, Tensor(a!) q_perm) -> ()
+  variants: function
+
+- func: fused_moe_kernel(Tensor(a!) C, Tensor A, Tensor B, Tensor topk_weights, Tensor topk_ids, Tensor sorted_topk_ids, Tensor expert_ids, Tensor num_tokens_post_pad, bool mul_routed_weight, int topk, int block_size, Tensor? bias) -> ()
+  variants: function
+
+- func: fused_moe_quant_kernel(Tensor(a!) C, Tensor A, Tensor B, Tensor? A_scale, Tensor B_scale, int gs, Tensor? B_zp, Tensor topk_weights, Tensor topk_ids, Tensor sorted_token_ids, Tensor experts_ids, Tensor num_tokens_post_pad, bool mul_routed_weight, int topk, int block_size, Tensor? bias) -> ()
+  variants: function
+
+- func: topk_softmax(Tensor(a!) topk_weights, Tensor(a!) topk_indices, Tensor(a!) token_expert_indices, Tensor(a!) gating_output) -> ()
+  variants: function
+
+- func: context_attention_forward(Tensor q, Tensor k, Tensor v, Tensor(a!) o, Tensor key_cache, Tensor value_cache, Tensor block_tables, Tensor subquery_start_loc, Tensor seq_lens_tensor, Tensor context_lens, int max_query_len, Tensor? alibi_slopes, int? sliding_window) -> ()
+  variants: function
+
+- func: weight_only_quant(Tensor(a!) output, Tensor input, Tensor qweight, Tensor? bias, Tensor scale, int group_size) -> ()
+  variants: function
+
+- func: rms_norm_quant(Tensor(a!) output, Tensor input, Tensor weight, Tensor scaling, float epsilon) -> ()
+  variants: function
+
+- func: fused_add_rms_norm_quant(Tensor(a!) output, Tensor input, Tensor residual, Tensor weight, float epsilon, Tensor scaling) -> ()
+  variants: function
+
+- func: gelu_tanh_quant(Tensor(a!) out, Tensor in, Tensor scale) -> ()
+  variants: function
+
+- func: gelu_quant(Tensor(a!) out, Tensor in, Tensor scale) -> ()
+  variants: function
+
+- func: gelu_new_quant(Tensor(a!) out, Tensor in, Tensor scale) -> ()
+  variants: function
+
+- func: silu_quant(Tensor(a!) out, Tensor in, Tensor scale) -> ()
+  variants: function
+
+- func: gelu_fast_quant(Tensor(a!) out, Tensor in, Tensor scale) -> ()
+  variants: function
+
+- func: gelu_tanh_asym_quant(Tensor(a!) out, Tensor in, Tensor scale, Tensor qzero) -> ()
+  variants: function
+
+- func: gelu_asym_quant(Tensor(a!) out, Tensor in, Tensor scale, Tensor qzero) -> ()
+  variants: function
+
+- func: gelu_new_asym_quant(Tensor(a!) out, Tensor in, Tensor scale, Tensor qzero) -> ()
+  variants: function
+
+- func: silu_asym_quant(Tensor(a!) out, Tensor in, Tensor scale, Tensor qzero) -> ()
+  variants: function
+
+- func: gelu_fast_asym_quant(Tensor(a!) out, Tensor in, Tensor scale, Tensor qzero) -> ()
+  variants: function
+
+- func: static_scaled_int8_quant(Tensor(a!) output, Tensor input, Tensor scales, Tensor? azp) -> ()
+  variants: function
+
+- func: static_scaled_int8_dequant(Tensor(a!) output, Tensor input, Tensor scales) -> ()
+  variants: function
+
+- func: static_scaled_int8_asym_quant(Tensor(a!) output, Tensor input, Tensor scales, Tensor qzeros) -> ()
+  variants: function
+
+- func: static_scaled_int8_asym_dequant(Tensor(a!) output, Tensor input, Tensor scales, Tensor qzeros) -> ()
+  variants: function
+
+- func: silu_mul_quant(Tensor(a!) out, Tensor in, Tensor scaling) -> ()
+  variants: function
+
+- func: gelu_mul_quant(Tensor(a!) out, Tensor in, Tensor scaling) -> ()
+  variants: function
+
+- func: gelu_tanh_mul_quant(Tensor(a!) out, Tensor in, Tensor scaling) -> ()
+  variants: function
+
+- func: layer_norm_quant(Tensor(a!) output, Tensor input, Tensor scaling, int[] normalized_shape, Tensor? weight, Tensor? bias, float epsilon) -> ()
+  variants: function
+
+- func: dot_bias_quant(Tensor(a!) out, Tensor lhs, Tensor rhs, Tensor scale, Tensor? bias) -> ()
+  variants: function
+
+- func: memory_efficient_attention_alibi(Tensor(a!) output, Tensor query, Tensor key, Tensor value, Tensor alibi_slopes, float drop, float scale) -> ()
+  variants: function
+
+- func: dispatch_bgmv(Tensor(a!) y, Tensor x, Tensor w, Tensor indicies, int layer_idx, float scale) -> ()
+  variants: function
+
+- func: dispatch_bgmv_low_level(Tensor(a!) y, Tensor x, Tensor w, Tensor indicies, int layer_idx, float scale, int h_in, int h_out, int y_offset) -> ()
+  variants: function
+
+- func: advance_step_xformers(int num_seqs, int num_queries, int block_size, Tensor(a!) input_tokens, Tensor(a!) sampled_token_ids, Tensor(a!) input_positions, Tensor(a!) seq_lens, Tensor(a!) slot_mapping, Tensor(a!) block_tables) -> ()
+  variants: function
+
+- func: weak_ref_tensor(Tensor x) -> Tensor
+  variants: function
+
+- func: mul_and_silu(Tensor(a!) out, Tensor input) -> ()
+  variants: function
+
+- func: fatrelu_and_mul(Tensor(a!) out, Tensor input, float threshold) -> ()
+  variants: function
+
+- func: rms_norm_static_fp8_quant(Tensor(a!) result, Tensor input, Tensor weight, Tensor scale, float epsilon) -> ()
+  variants: function
+
+- func: fused_add_rms_norm_static_fp8_quant(Tensor(a!) result, Tensor input, Tensor(a!) residual, Tensor weight, Tensor scale, float epsilon) -> ()
+  variants: function
+
+- func: batched_rotary_embedding(Tensor positions, Tensor(a!) query, Tensor(a!) key, int head_size, Tensor cos_sin_cache, bool is_neox, int rot_dim, Tensor cos_sin_cache_offsets) -> ()
+  variants: function
