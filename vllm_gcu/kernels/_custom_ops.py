@@ -560,3 +560,39 @@ def per_token_group_quant_fp8(
     column_major_scales: bool = False,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     raise NotImplementedError
+
+
+def moe_align_block_size(
+    topk_ids: torch.Tensor,
+    num_experts: int,
+    block_size: int,
+    sorted_token_ids: torch.Tensor,
+    experts_ids: torch.Tensor,
+    num_tokens_post_pad: torch.Tensor,
+) -> None:
+    torch.ops._moe_C.moe_align_block_size(
+        topk_ids,
+        num_experts,
+        block_size,
+        sorted_token_ids,
+        experts_ids,
+        num_tokens_post_pad,
+    )
+
+
+def sgl_moe_align_block_size(
+    topk_ids: torch.Tensor,
+    num_experts: int,
+    block_size: int,
+    sorted_token_ids: torch.Tensor,
+    experts_ids: torch.Tensor,
+    num_tokens_post_pad: torch.Tensor,
+) -> None:
+    torch.ops._moe_C.sgl_moe_align_block_size(
+        topk_ids,
+        num_experts,
+        block_size,
+        sorted_token_ids,
+        experts_ids,
+        num_tokens_post_pad,
+    )
