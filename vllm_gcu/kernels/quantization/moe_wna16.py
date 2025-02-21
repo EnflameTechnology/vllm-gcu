@@ -521,7 +521,8 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
         scoring_func: str = "softmax",
         e_score_correction_bias: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        from vllm.model_executor.layers.fused_moe import fused_experts
+        # from vllm.model_executor.layers.fused_moe import fused_experts
+        from vllm_gcu.kernels.fused_moe import fused_experts_impl
 
         topk_weights, topk_ids = FusedMoE.select_experts(
             hidden_states=x,
@@ -539,7 +540,7 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
         weight_bits = self.quant_config.weight_bits
         has_zp = self.quant_config.has_zp
 
-        return fused_experts(
+        fused_experts_impl(
             x,
             layer.w13_qweight,
             layer.w2_qweight,
@@ -556,3 +557,4 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
             w2_zp=layer.w2_qzeros if has_zp else None,
             block_shape=[0, layer.group_size],
         )
+        return x

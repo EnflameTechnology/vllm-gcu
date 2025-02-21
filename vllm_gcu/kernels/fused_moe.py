@@ -2,21 +2,115 @@
 # coding=utf-8
 
 import functools
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import torch
 import vllm.envs as envs
+from vllm.distributed import (
+    get_tensor_model_parallel_rank,
+    get_tensor_model_parallel_world_size,
+)
 from vllm.logger import init_logger
 from vllm.model_executor.layers.fused_moe.fused_moe import (
     get_default_config,
     grouped_topk,
-    moe_align_block_size,
 )
+from vllm.model_executor.layers.quantization.base_config import QuantizationConfig
 from vllm.utils import vllm_lib
 
+from vllm.distributed.parallel_state import get_world_group
+
+import vllm_gcu.envs as gcu_envs
 from vllm_gcu.kernels import _custom_ops as ops
 
 logger = init_logger(__name__)
+
+
+def moe_align_block_size(
+    topk_ids: torch.Tensor,
+    block_size: int,
+    num_experts: int,
+    expert_map: torch.Tensor = None,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Aligns the token distribution across experts to be compatible with block
+    size for matrix multiplication.
+
+    Parameters:
+    - topk_ids: A tensor of shape [total_tokens, top_k] representing the
+        top-k expert indices for each token.
+    - block_size: The block size used in block matrix multiplication.
+    - num_experts: The total number of experts.
+
+    Returns:
+    - sorted_token_ids: A tensor containing the sorted token indices according
+        to their allocated expert.
+    - expert_ids: A tensor indicating the assigned expert index for each block.
+    - num_tokens_post_padded: The total number of tokens after padding,
+        ensuring divisibility by block_size.
+
+    This function pads the number of tokens that each expert needs to process
+    so that it is divisible by block_size.
+    Padding ensures that during block matrix multiplication, the dimensions
+    align correctly.
+
+    Example:
+    Given topk_ids = [[2, 3, 4], [1, 2, 4], [1, 3, 4], [1, 2, 3]],
+    block_size = 4, and num_experts = 4:
+    - We initially have 12 tokens (after repeating 'top_k' times) and 4 experts,
+        with each expert needing to process 3 tokens.
+    - As block_size is 4, we pad 1 token for each expert.
+    - First, flatten topk_ids to [2, 3, 4, 1, 2, 4, 1, 3, 4, 1, 2, 3].
+    - Then append padding tokens [12, 12, 12, 12] for each block.
+    - After sorting by expert index, we obtain token_ids
+        [3, 6, 9, 12, 0, 4, 10, 12, 1, 7, 11, 12, 2, 5, 8, 12].
+        Tokens 12 are non-existent (padding) and are ignored in
+        the subsequent matrix multiplication.
+    - The padding ensures that the total number of tokens is now divisible
+        by block_size for proper block matrix operations.
+    """
+    max_num_tokens_padded = topk_ids.numel() + num_experts * (block_size - 1)
+    sorted_ids = torch.empty(
+        (max_num_tokens_padded,), dtype=torch.int32, device=topk_ids.device
+    )
+    sorted_ids.fill_(topk_ids.numel())
+    max_num_m_blocks = max_num_tokens_padded // block_size
+    expert_ids = torch.zeros(
+        (max_num_m_blocks,), dtype=torch.int32, device=topk_ids.device
+    )
+    num_tokens_post_pad = torch.empty((1), dtype=torch.int32, device=topk_ids.device)
+    if num_experts >= 224:
+        if envs.VLLM_ENABLE_MOE_ALIGN_BLOCK_SIZE_TRITON:
+            moe_align_block_size_triton(
+                topk_ids,
+                num_experts,
+                block_size,
+                sorted_ids,
+                expert_ids,
+                num_tokens_post_pad,
+            )
+        else:
+            ops.sgl_moe_align_block_size(
+                topk_ids,
+                num_experts,
+                block_size,
+                sorted_ids,
+                expert_ids,
+                num_tokens_post_pad,
+            )
+    else:
+        ops.moe_align_block_size(
+            topk_ids,
+            num_experts,
+            block_size,
+            sorted_ids,
+            expert_ids,
+            num_tokens_post_pad,
+        )
+
+    if expert_map is not None:
+        expert_ids = expert_map[expert_ids]
+    return sorted_ids, expert_ids, num_tokens_post_pad
 
 
 def invoke_fused_moe_kernel(
@@ -253,6 +347,81 @@ def fused_experts_impl(
     a2_scale: Optional[torch.Tensor] = None,
     block_shape: Optional[List[int]] = None,
 ):
+    from vllm.distributed import get_world_group
+
+    if gcu_envs.VLLM_GCU_ENABLE_EXPERT_PARALLEL:
+        group = get_world_group().device_group
+        ep_size = get_world_group().world_size
+        ep_rank = get_world_group().rank_in_group
+        expert_per_rank = global_num_experts // ep_size
+
+        def get_ep_indices(topk_ids):
+            idx = torch.arange(0, topk_ids.shape[0], device=topk_ids.device)
+            idx_list = []
+            count_list = []
+            for i in range(ep_size):
+                mask = torch.logical_and(
+                    topk_ids >= (expert_per_rank * i),
+                    topk_ids < (expert_per_rank * (i + 1)),
+                )
+                mask = mask.sum(dim=1) > 0
+                count_list.append(mask.sum((0,), keepdim=True))
+                idx_list.append(idx[mask])
+            ep_count = torch.cat(count_list)
+            ep_token_indices = torch.cat(idx_list)
+            return ep_token_indices, ep_count
+
+        output_shape = hidden_states.shape
+        output_dtype = hidden_states.dtype
+        output_device = hidden_states.device
+        ep_token_indices, ep_split_size = get_ep_indices(topk_ids)
+        sp_split_size = torch.empty_like(ep_split_size)
+        torch.distributed.all_to_all_single(sp_split_size, ep_split_size, group=group)
+        recv_token_total = sp_split_size.sum().item()
+        sp_split_size = sp_split_size.cpu().tolist()
+        ep_split_size = ep_split_size.cpu().tolist()
+
+        send_hidden_states = hidden_states[ep_token_indices]
+        send_topk_ids = topk_ids[ep_token_indices]
+        send_topk_weights = topk_weights[ep_token_indices]
+
+        recv_hidden_states = torch.empty(
+            [recv_token_total] + list(hidden_states.shape[1:]),
+            dtype=hidden_states.dtype,
+            device=hidden_states.device,
+        )
+        recv_topk_ids = torch.empty(
+            [recv_token_total] + list(topk_ids.shape[1:]),
+            dtype=topk_ids.dtype,
+            device=topk_ids.device,
+        )
+        recv_topk_weights = torch.empty(
+            [recv_token_total] + list(topk_weights.shape[1:]),
+            dtype=topk_weights.dtype,
+            device=topk_weights.device,
+        )
+        torch.distributed.all_to_all_single(
+            recv_hidden_states,
+            send_hidden_states,
+            sp_split_size,
+            ep_split_size,
+            group=group,
+        )
+        torch.distributed.all_to_all_single(
+            recv_topk_ids, send_topk_ids, sp_split_size, ep_split_size, group=group
+        )
+        torch.distributed.all_to_all_single(
+            recv_topk_weights, send_topk_weights, sp_split_size, ep_split_size, group=group
+        )
+
+        ### EP ###
+        hidden_states_ori = hidden_states
+        hidden_states, topk_ids, topk_weights = (
+            recv_hidden_states,
+            recv_topk_ids,
+            recv_topk_weights,
+        )
+
     # Check constraints.
     if use_int4_w4a16:
         assert hidden_states.shape[1] // 2 == w1.shape[2], "Hidden size mismatch"
@@ -396,13 +565,272 @@ def fused_experts_impl(
             dim=1,
             out=out_hidden_states[begin_chunk_idx:end_chunk_idx],
         )
-    return out_hidden_states
+
+    if gcu_envs.VLLM_GCU_ENABLE_EXPERT_PARALLEL:
+        sp_hidden_states = torch.empty_like(send_hidden_states)
+        torch.distributed.all_to_all_single(
+            sp_hidden_states, out_hidden_states, ep_split_size, sp_split_size, group=group
+        )
+
+        ### SP ###
+        output = torch.zeros(output_shape, dtype=output_dtype, device=output_device)
+        output.scatter_add_(
+            0,
+            torch.broadcast_to(ep_token_indices.unsqueeze(1), sp_hidden_states.shape),
+            sp_hidden_states,
+        )
+        hidden_states_ori.copy_(output)
+        return output
+    else:
+        return out_hidden_states
 
 
 from vllm.model_executor.layers.fused_moe.layer import (
     FusedMoE,
+    FusedMoeWeightScaleSupported,
     UnquantizedFusedMoEMethod,
 )
+
+
+class EPFusedMoE(FusedMoE):
+    def __init__(
+        self,
+        num_experts: int,
+        top_k: int,
+        hidden_size: int,
+        intermediate_size: int,
+        params_dtype: Optional[torch.dtype] = None,
+        reduce_results: bool = False,
+        renormalize: bool = True,
+        use_grouped_topk: bool = False,
+        num_expert_group: Optional[int] = None,
+        topk_group: Optional[int] = None,
+        quant_config: Optional[QuantizationConfig] = None,
+        tp_size: Optional[int] = None,
+        ep_size: Optional[int] = None,
+        prefix: str = "",
+        custom_routing_function: Optional[Callable] = None,
+        scoring_func: str = "softmax",
+        e_score_correction_bias: Optional[torch.Tensor] = None,
+    ):
+
+        self.global_num_experts = num_experts
+        if gcu_envs.VLLM_GCU_ENABLE_EXPERT_PARALLEL:
+            self.ep_size = get_world_group().world_size
+            tp_size = 1
+        else:
+            self.ep_size = 1
+            tp_size = (
+                tp_size
+                if tp_size is not None
+                else get_tensor_model_parallel_world_size()
+            )
+
+        if self.ep_size > 1:
+            self.expert_map = torch.full(
+                (self.global_num_experts,), -1, dtype=torch.int32
+            )
+
+            local_num_experts = num_experts // self.ep_size
+            ep_rank = get_tensor_model_parallel_rank() // tp_size
+            if ep_rank < (self.ep_size - 1):
+                self.expert_map[
+                    ep_rank * local_num_experts : (ep_rank + 1) * local_num_experts
+                ] = torch.arange(0, local_num_experts, dtype=torch.int32)
+            else:
+                local_num_experts = num_experts - ep_rank * local_num_experts
+                self.expert_map[-local_num_experts:] = torch.arange(
+                    0, local_num_experts, dtype=torch.int32
+                )
+        else:
+            self.expert_map = None
+
+        super().__init__(
+            (
+                torch.sum(self.expert_map != -1)
+                if self.expert_map is not None
+                else num_experts
+            ),
+            top_k,
+            hidden_size,
+            intermediate_size,
+            params_dtype,
+            reduce_results,
+            renormalize,
+            use_grouped_topk,
+            num_expert_group,
+            topk_group,
+            quant_config,
+            tp_size,
+            prefix,
+            custom_routing_function,
+            scoring_func,
+            e_score_correction_bias,
+        )
+        self.tp_size = tp_size
+
+    def _map_global_expert_id_to_local_expert_id(self, expert_id: int) -> int:
+        if self.expert_map is None:
+            return expert_id
+        return self.expert_map[expert_id].item()
+
+    def weight_loader(
+        self,
+        param: torch.nn.Parameter,
+        loaded_weight: torch.Tensor,
+        weight_name: str,
+        shard_id: str,
+        expert_id: int,
+    ) -> None:
+        expert_id = self._map_global_expert_id_to_local_expert_id(expert_id)
+        if expert_id == -1:
+            return
+        loaded_weight = (
+            loaded_weight.t().contiguous()
+            if (
+                self.quant_method.__class__.__name__
+                == "CompressedTensorsWNA16MoEMethod"
+            )
+            else loaded_weight
+        )
+
+        if shard_id not in ("w1", "w2", "w3"):
+            raise ValueError(
+                f"shard_id must be ['w1','w2','w3'] but " f"got {shard_id}."
+            )
+
+        WEIGHT_SCALE_SUPPORTED = [e.value for e in FusedMoeWeightScaleSupported]
+        # Fetch the dim to shard the parameter/loaded weight
+        # based on the shard id. This will be whatever
+        # dimension intermediate_size_per_partition is used.
+        SHARD_ID_TO_SHARDED_DIM = {"w1": 0, "w2": 1, "w3": 0}
+
+        expert_data = param.data[expert_id]
+        tp_rank = get_tensor_model_parallel_rank() % self.tp_size
+
+        # is_transposed: if the dim to shard the weight
+        # should be flipped. Required by GPTQ, compressed-tensors
+        # should be whatever dimension intermediate_size_per_partition is
+        is_transposed = getattr(param, "is_transposed", False)
+        shard_dim = SHARD_ID_TO_SHARDED_DIM[shard_id]
+        if is_transposed:
+            shard_dim = int(not shard_dim)
+
+        # Case input scale: input_scale loading is only supported for fp8
+        if "input_scale" in weight_name:
+            # this is needed for compressed-tensors only
+            loaded_weight = loaded_weight.to(param.data.device)
+
+            if (
+                param.data[expert_id] != 1
+                and (param.data[expert_id] - loaded_weight).abs() > 1e-5
+            ):
+                raise ValueError(
+                    "input_scales of w1 and w3 of a layer "
+                    f"must be equal. But got {param.data[expert_id]} "
+                    f"vs. {loaded_weight}"
+                )
+
+            self._load_single_value(
+                param=param, loaded_weight=loaded_weight, expert_id=expert_id
+            )
+            return
+
+        # Case g_idx
+        if "g_idx" in weight_name:
+            self._load_g_idx(
+                shard_dim=0,
+                shard_id=shard_id,
+                loaded_weight=loaded_weight,
+                expert_data=expert_data,
+                tp_rank=tp_rank,
+            )
+            return
+
+        # Case weight scales and zero_points
+        if "scale" in weight_name or "zero" in weight_name:
+            # load the weight scales and zp based on the quantization scheme
+            # supported weight scales/zp can be found in
+            # FusedMoeWeightScaleSupported
+            # TODO @dsikka: once hardened, refactor to use vLLM Parameters
+            # specific to each case
+            quant_method = getattr(param, "quant_method", None)
+            if quant_method == FusedMoeWeightScaleSupported.CHANNEL.value:
+                self._load_per_channel_weight_scale(
+                    shard_id=shard_id,
+                    shard_dim=shard_dim,
+                    loaded_weight=loaded_weight,
+                    expert_data=expert_data,
+                    tp_rank=tp_rank,
+                )
+            elif quant_method in [
+                FusedMoeWeightScaleSupported.GROUP.value,
+                FusedMoeWeightScaleSupported.BLOCK.value,
+            ]:
+                self._load_model_weight_or_group_weight_scale(
+                    shard_id=shard_id,
+                    shard_dim=shard_dim,
+                    loaded_weight=loaded_weight,
+                    expert_data=expert_data,
+                    tp_rank=tp_rank,
+                    load_full_w2=getattr(param, "load_full_w2", False),
+                )
+            elif quant_method == FusedMoeWeightScaleSupported.TENSOR.value:
+                self._load_per_tensor_weight_scale(
+                    shard_id=shard_id,
+                    param=param,
+                    loaded_weight=loaded_weight,
+                    expert_id=expert_id,
+                )
+            else:
+                raise ValueError(
+                    f"quant method must be one of {WEIGHT_SCALE_SUPPORTED}"
+                )
+            return
+
+        # Case weight_shape
+        if "weight_shape" in weight_name:
+            # only required by compressed-tensors
+            self._load_single_value(
+                param=param, loaded_weight=loaded_weight, expert_id=expert_id
+            )
+            return
+
+        # Case model weights
+        if "weight" in weight_name:
+            self._load_model_weight_or_group_weight_scale(
+                shard_id=shard_id,
+                shard_dim=shard_dim,
+                loaded_weight=loaded_weight,
+                expert_data=expert_data,
+                tp_rank=tp_rank,
+            )
+            return
+
+    def forward(self, hidden_states: torch.Tensor, router_logits: torch.Tensor):
+        assert self.quant_method is not None
+
+        # Matrix multiply.
+        final_hidden_states = self.quant_method.apply(
+            layer=self,
+            x=hidden_states,
+            router_logits=router_logits,
+            top_k=self.top_k,
+            renormalize=self.renormalize,
+            use_grouped_topk=self.use_grouped_topk,
+            global_num_experts=self.global_num_experts,
+            expert_map=self.expert_map,
+            topk_group=self.topk_group,
+            num_expert_group=self.num_expert_group,
+            custom_routing_function=self.custom_routing_function,
+            scoring_func=self.scoring_func,
+            e_score_correction_bias=self.e_score_correction_bias,
+        )
+
+        if self.reduce_results and (self.tp_size > 1 or self.ep_size > 1):
+            final_hidden_states = tensor_model_parallel_all_reduce(final_hidden_states)
+
+        return final_hidden_states
 
 
 def forward_oot(

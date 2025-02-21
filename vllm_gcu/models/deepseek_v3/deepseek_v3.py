@@ -38,7 +38,6 @@ from vllm.distributed import (
     tensor_model_parallel_all_reduce,
 )
 from vllm.model_executor.layers.activation import SiluAndMul
-from vllm.model_executor.layers.fused_moe import FusedMoE
 from vllm.model_executor.layers.layernorm import RMSNorm
 from vllm.model_executor.layers.linear import (
     ColumnParallelLinear,
@@ -70,6 +69,22 @@ from vllm.model_executor.models.utils import (
 from vllm.model_executor.sampling_metadata import SamplingMetadata
 from vllm.sequence import IntermediateTensors
 
+import vllm_gcu.envs as gcu_envs
+from vllm_gcu.kernels.fused_moe import EPFusedMoE
+from vllm_gcu.kernels.linear import MergedReplicatedLinear
+
+
+def _get_seq_lens(device_group, attn_metadata: AttentionMetadata):
+    size = device_group.size()
+    seqlen = (
+        sum(attn_metadata.seq_lens)
+        if attn_metadata.prefill_metadata
+        else len(attn_metadata.seq_lens)
+    )
+    padded_seqlen = (seqlen + size - 1) // size * size
+
+    return seqlen, padded_seqlen
+
 
 class DeepseekV2MLP(nn.Module):
 
@@ -83,21 +98,37 @@ class DeepseekV2MLP(nn.Module):
         prefix: str = "",
     ) -> None:
         super().__init__()
-        self.gate_up_proj = MergedColumnParallelLinear(
-            hidden_size,
-            [intermediate_size] * 2,
-            bias=False,
-            quant_config=quant_config,
-            prefix=f"{prefix}.gate_up_proj",
-        )
-        self.down_proj = RowParallelLinear(
-            intermediate_size,
-            hidden_size,
-            bias=False,
-            quant_config=quant_config,
-            reduce_results=reduce_results,
-            prefix=f"{prefix}.down_proj",
-        )
+        if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
+            self.gate_up_proj = MergedReplicatedLinear(
+                hidden_size,
+                [intermediate_size] * 2,
+                bias=False,
+                quant_config=quant_config,
+                prefix=f"{prefix}.gate_up_proj",
+            )
+            self.down_proj = ReplicatedLinear(
+                intermediate_size,
+                hidden_size,
+                bias=False,
+                quant_config=quant_config,
+                prefix=f"{prefix}.down_proj",
+            )
+        else:
+            self.gate_up_proj = MergedColumnParallelLinear(
+                hidden_size,
+                [intermediate_size] * 2,
+                bias=False,
+                quant_config=quant_config,
+                prefix=f"{prefix}.gate_up_proj",
+            )
+            self.down_proj = RowParallelLinear(
+                intermediate_size,
+                hidden_size,
+                bias=False,
+                quant_config=quant_config,
+                reduce_results=reduce_results,
+                prefix=f"{prefix}.down_proj",
+            )
         if hidden_act != "silu":
             raise ValueError(
                 f"Unsupported activation: {hidden_act}. "
@@ -121,7 +152,6 @@ class DeepseekV2MoE(nn.Module):
         prefix: str = "",
     ):
         super().__init__()
-        self.tp_size = get_tensor_model_parallel_world_size()
         self.routed_scaling_factor = config.routed_scaling_factor
         self.n_shared_experts = config.n_shared_experts
         self.routed_scaling_factor = config.routed_scaling_factor
@@ -146,7 +176,7 @@ class DeepseekV2MoE(nn.Module):
         else:
             self.gate.e_score_correction_bias = None
 
-        self.experts = FusedMoE(
+        self.experts = EPFusedMoE(
             num_experts=config.n_routed_experts,
             top_k=config.num_experts_per_tok,
             hidden_size=config.hidden_size,
@@ -161,6 +191,7 @@ class DeepseekV2MoE(nn.Module):
             scoring_func=config.scoring_func,
             e_score_correction_bias=self.gate.e_score_correction_bias,
         )
+        self.tp_size = self.experts.tp_size
 
         if config.n_shared_experts is not None:
             intermediate_size = config.moe_intermediate_size * config.n_shared_experts
@@ -280,6 +311,7 @@ class DeepseekV2Attention(nn.Module):
             self.hidden_size,
             bias=False,
             quant_config=quant_config,
+            reduce_results=not gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL,
             prefix=f"{prefix}.o_proj",
         )
         if rope_scaling:
@@ -589,11 +621,20 @@ class DeepseekV2DecoderLayer(nn.Module):
         residual: Optional[torch.Tensor],
     ) -> torch.Tensor:
         # Self Attention
+
         if residual is None:
             residual = hidden_states
             hidden_states = self.input_layernorm(hidden_states)
         else:
             hidden_states, residual = self.input_layernorm(hidden_states, residual)
+
+        tp_group = get_tp_group().device_group
+        seqlen, padded_seqlen = _get_seq_lens(tp_group, attn_metadata)
+
+        if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
+            hidden_states = get_tp_group().all_gather(hidden_states, dim=0)
+            hidden_states = hidden_states[:seqlen]
+
         hidden_states = self.self_attn(
             positions=positions,
             hidden_states=hidden_states,
@@ -601,21 +642,26 @@ class DeepseekV2DecoderLayer(nn.Module):
             attn_metadata=attn_metadata,
         )
 
-        enable_sp = False
+        if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
+            hidden_states = torch.nn.functional.pad(
+                hidden_states,
+                (0, 0, 0, padded_seqlen - seqlen),
+                mode="constant",
+                value=0,
+            )
+            sp_hidden_states = list(hidden_states.chunk(tp_group.size(), dim=0))
+            torch.distributed.reduce_scatter_tensor(
+                sp_hidden_states[tp_group.rank()],
+                hidden_states,
+                group=tp_group,
+            )
+            hidden_states = sp_hidden_states[tp_group.rank()]
+
         # Fully Connected
-        if enable_sp:
-            hidden_states += residual
-            hidden_states = torch.distributed.reduce_scatter(
-                hidden_states, group=get_tp_group().device_group
-            )
-            hidden_states = self.post_attention_layernorm(hidden_states)
-            hidden_states = self.mlp(hidden_states)
-            hidden_states = get_tp_group().all_gather(hidden_states, dim=0)
-        else:
-            hidden_states, residual = self.post_attention_layernorm(
-                hidden_states, residual
-            )
-            hidden_states = self.mlp(hidden_states)
+        hidden_states, residual = self.post_attention_layernorm(hidden_states, residual)
+
+        hidden_states = self.mlp(hidden_states)
+
         return hidden_states, residual
 
 
@@ -675,12 +721,33 @@ class DeepseekV2Model(nn.Module):
         intermediate_tensors: Optional[IntermediateTensors],
         inputs_embeds: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, IntermediateTensors]:
+        tp_group = get_tp_group().device_group
         if get_pp_group().is_first_rank:
             if inputs_embeds is not None:
                 hidden_states = inputs_embeds
             else:
                 hidden_states = self.get_input_embeddings(input_ids)
             residual = None
+
+            if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
+                seqlen, padded_seqlen = _get_seq_lens(tp_group, attn_metadata)
+                hidden_states = torch.nn.functional.pad(
+                    hidden_states,
+                    (0, 0, 0, padded_seqlen - seqlen),
+                    mode="constant",
+                    value=0,
+                )
+
+                sp_hidden_states = list(hidden_states.chunk(tp_group.size(), dim=0))
+
+                torch.distributed.reduce_scatter_tensor(
+                    sp_hidden_states[tp_group.rank()],
+                    hidden_states,
+                    group=tp_group,
+                )
+
+                hidden_states = sp_hidden_states[tp_group.rank()]
+
         else:
             assert intermediate_tensors is not None
             hidden_states = intermediate_tensors["hidden_states"]
@@ -702,6 +769,11 @@ class DeepseekV2Model(nn.Module):
             )
 
         hidden_states, _ = self.norm(hidden_states, residual)
+
+        if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
+            hidden_states = get_tp_group().all_gather(hidden_states, dim=0)
+            seqlen, _ = _get_seq_lens(tp_group, attn_metadata)
+            hidden_states = hidden_states[:seqlen]
         return hidden_states
 
 
@@ -786,7 +858,7 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP):
 
         # Params for weights, fp8 weight scales, fp8 activation scales
         # (param_name, weight_name, expert_id, shard_id)
-        expert_params_mapping = FusedMoE.make_expert_params_mapping(
+        expert_params_mapping = EPFusedMoE.make_expert_params_mapping(
             ckpt_gate_proj_name="gate_proj",
             ckpt_down_proj_name="down_proj",
             ckpt_up_proj_name="up_proj",

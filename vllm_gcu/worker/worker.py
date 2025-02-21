@@ -152,8 +152,9 @@ class GCUWorker(LocalOrDistributedWorkerBase):
 
         global_world_size = self.parallel_config.world_size * data_parallel_size
         unique_rank = self.parallel_config.world_size * data_parallel_rank + self.rank
+        device_rank = unique_rank % torch.gcu.device_count()
 
-        self.device = torch.device(f"gcu:{unique_rank}")
+        self.device = torch.device(f"gcu:{device_rank}")
         torch.gcu.set_device(self.device)
         gc.collect()
         torch.gcu.empty_cache()
@@ -482,7 +483,7 @@ def init_worker_distributed_environment(
     data_parallel_rank = gcu_envs.VLLM_GCU_DATA_PARALLEL_RANK
 
     distributed_init_method = get_distributed_init_method(
-        "127.0.0.1", 54933
+        gcu_envs.VLLM_GCU_HOST_ID, 54933
     )  # magic number to init distributed group
 
     init_distributed_environment(
@@ -498,11 +499,11 @@ def init_worker_distributed_environment(
     )
 
     group = get_tp_group()
-    group.device = torch.device(f"gcu:{group.local_rank}")
+    group.device = torch.device(f"gcu:{group.local_rank % torch.gcu.device_count()}")
     group.pynccl_comm = PyEcclCommunicator(group=group.cpu_group, device=group.device)
 
     group = get_pp_group()
-    group.device = torch.device(f"gcu:{group.local_rank}")
+    group.device = torch.device(f"gcu:{group.local_rank % torch.gcu.device_count()}")
     group.pynccl_comm = PyEcclCommunicator(group=group.cpu_group, device=group.device)
     if data_parallel_size > 1:
         # disable pp when dp
@@ -514,7 +515,7 @@ def init_worker_distributed_environment(
         group.rank_in_group = ranks.index(group.local_rank)
 
     group = get_world_group()
-    group.device = torch.device(f"gcu:{group.local_rank}")
+    group.device = torch.device(f"gcu:{group.local_rank % torch.gcu.device_count()}")
     group.pynccl_comm = PyEcclCommunicator(group=group.cpu_group, device=group.device)
 
 
