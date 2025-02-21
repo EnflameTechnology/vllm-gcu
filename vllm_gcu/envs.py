@@ -9,7 +9,11 @@ environment_variables: Dict[str, Callable[[], Any]] = {
         os.getenv("VLLM_GCU_DATA_PARALLEL_RANK", "0")
     ),
     "VLLM_GCU_ENABLE_SEQUENCE_PARALLEL": lambda: bool(
-        os.getenv("VLLM_GCU_ENABLE_SEQUENCE_PARALLEL", "1")
+        int(os.getenv("VLLM_GCU_ENABLE_SEQUENCE_PARALLEL", "0"))
+    ),
+    "VLLM_GCU_HOST_ID": lambda: os.getenv("VLLM_GCU_HOST_ID", "127.0.0.1"),
+    "VLLM_GCU_ENABLE_EXPERT_PARALLEL": lambda: bool(
+        int(os.getenv("VLLM_GCU_ENABLE_EXPERT_PARALLEL", "0"))
     ),
 }
 
