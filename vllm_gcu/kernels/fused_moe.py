@@ -1,6 +1,11 @@
 #!/usr/bin/env python
 # coding=utf-8
 
+from vllm.model_executor.layers.fused_moe.layer import (
+    FusedMoE,
+    FusedMoeWeightScaleSupported,
+    UnquantizedFusedMoEMethod,
+)
 import functools
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -376,51 +381,40 @@ def fused_experts_impl(
         output_device = hidden_states.device
         ep_token_indices, ep_split_size = get_ep_indices(topk_ids)
         sp_split_size = torch.empty_like(ep_split_size)
-        torch.distributed.all_to_all_single(sp_split_size, ep_split_size, group=group)
-        recv_token_total = sp_split_size.sum().item()
+        torch.distributed.all_to_all_single(
+            sp_split_size, ep_split_size, group=group)
+        recv_token_total = sp_split_size.sum()
         sp_split_size = sp_split_size.cpu().tolist()
         ep_split_size = ep_split_size.cpu().tolist()
+        # TODO:convert maybe loss acc, use view dtype
+        send_packed = torch.cat((hidden_states,
+                                 topk_ids.to(hidden_states.dtype),
+                                 topk_weights.to(hidden_states.dtype)), dim=1)
+        send_packed_sorted = send_packed[ep_token_indices]
 
-        send_hidden_states = hidden_states[ep_token_indices]
-        send_topk_ids = topk_ids[ep_token_indices]
-        send_topk_weights = topk_weights[ep_token_indices]
-
-        recv_hidden_states = torch.empty(
-            [recv_token_total] + list(hidden_states.shape[1:]),
+        recv_packed = torch.empty(
+            (recv_token_total.item(),
+             hidden_states.shape[1]+topk_ids.shape[1]+topk_weights.shape[1]),
             dtype=hidden_states.dtype,
             device=hidden_states.device,
         )
-        recv_topk_ids = torch.empty(
-            [recv_token_total] + list(topk_ids.shape[1:]),
-            dtype=topk_ids.dtype,
-            device=topk_ids.device,
-        )
-        recv_topk_weights = torch.empty(
-            [recv_token_total] + list(topk_weights.shape[1:]),
-            dtype=topk_weights.dtype,
-            device=topk_weights.device,
-        )
+        recv_packed_valid = recv_packed[:recv_token_total]
+
         torch.distributed.all_to_all_single(
-            recv_hidden_states,
-            send_hidden_states,
+            recv_packed_valid,
+            send_packed_sorted,
             sp_split_size,
             ep_split_size,
             group=group,
         )
-        torch.distributed.all_to_all_single(
-            recv_topk_ids, send_topk_ids, sp_split_size, ep_split_size, group=group
-        )
-        torch.distributed.all_to_all_single(
-            recv_topk_weights, send_topk_weights, sp_split_size, ep_split_size, group=group
-        )
 
         ### EP ###
         hidden_states_ori = hidden_states
-        hidden_states, topk_ids, topk_weights = (
-            recv_hidden_states,
-            recv_topk_ids,
-            recv_topk_weights,
-        )
+        hidden_states = recv_packed_valid[:, 0:hidden_states.shape[1]].contiguous()
+        topk_ids = recv_packed_valid[:, hidden_states.shape[1]
+            :hidden_states.shape[1]+topk_ids.shape[1]].to(topk_ids.dtype)
+        topk_weights = recv_packed_valid[:, hidden_states.shape[1] +
+                                         topk_ids.shape[1]:].to(topk_weights.dtype)
 
     # Check constraints.
     if use_int4_w4a16:
@@ -432,7 +426,8 @@ def fused_experts_impl(
     assert hidden_states.is_contiguous(), "Hidden_states must be contiguous"
     assert w1.is_contiguous(), "Expert weights1 must be contiguous"
     assert w2.is_contiguous(), "Expert weights2 must be contiguous"
-    assert hidden_states.dtype in [torch.float32, torch.float16, torch.bfloat16]
+    assert hidden_states.dtype in [
+        torch.float32, torch.float16, torch.bfloat16]
 
     if use_fp8_w8a8 and use_int8_w8a16:
         # hack int8_w8a8 when both True
@@ -567,29 +562,28 @@ def fused_experts_impl(
         )
 
     if gcu_envs.VLLM_GCU_ENABLE_EXPERT_PARALLEL:
-        sp_hidden_states = torch.empty_like(send_hidden_states)
+        sp_hidden_states = torch.empty((
+            send_packed_sorted.shape[0],
+            hidden_states.shape[1]),
+            dtype=output_dtype,
+            device=output_device)
         torch.distributed.all_to_all_single(
             sp_hidden_states, out_hidden_states, ep_split_size, sp_split_size, group=group
         )
 
         ### SP ###
-        output = torch.zeros(output_shape, dtype=output_dtype, device=output_device)
+        output = torch.zeros(
+            output_shape, dtype=output_dtype, device=output_device)
         output.scatter_add_(
             0,
-            torch.broadcast_to(ep_token_indices.unsqueeze(1), sp_hidden_states.shape),
+            torch.broadcast_to(ep_token_indices.unsqueeze(1),
+                               sp_hidden_states.shape),
             sp_hidden_states,
         )
         hidden_states_ori.copy_(output)
         return output
     else:
         return out_hidden_states
-
-
-from vllm.model_executor.layers.fused_moe.layer import (
-    FusedMoE,
-    FusedMoeWeightScaleSupported,
-    UnquantizedFusedMoEMethod,
-)
 
 
 class EPFusedMoE(FusedMoE):
