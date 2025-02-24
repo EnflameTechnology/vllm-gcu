@@ -632,7 +632,7 @@ class EPFusedMoE(FusedMoE):
             )
 
             local_num_experts = num_experts // self.ep_size
-            ep_rank = get_tensor_model_parallel_rank() // tp_size
+            ep_rank = get_world_group().rank // tp_size
             if ep_rank < (self.ep_size - 1):
                 self.expert_map[
                     ep_rank * local_num_experts : (ep_rank + 1) * local_num_experts
