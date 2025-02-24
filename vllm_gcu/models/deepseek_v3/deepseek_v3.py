@@ -567,7 +567,7 @@ class DeepseekV2DecoderLayer(nn.Module):
         max_position_embeddings = getattr(config, "max_position_embeddings", 8192)
         # DecoderLayers are created with `make_layers` which passes the prefix
         # with the layer's index.
-        layer_idx = int(prefix.split(sep=".")[-1])
+        self.layer_idx = int(prefix.split(sep=".")[-1])
         if model_config.use_mla:
             attn_cls = DeepseekV2MLAAttention
         else:
@@ -591,8 +591,8 @@ class DeepseekV2DecoderLayer(nn.Module):
 
         if (
             config.n_routed_experts is not None
-            and layer_idx >= config.first_k_dense_replace
-            and layer_idx % config.moe_layer_freq == 0
+            and self.layer_idx >= config.first_k_dense_replace
+            and self.layer_idx % config.moe_layer_freq == 0
         ):
             self.mlp = DeepseekV2MoE(
                 config=config,
@@ -632,8 +632,18 @@ class DeepseekV2DecoderLayer(nn.Module):
         seqlen, padded_seqlen = _get_seq_lens(tp_group, attn_metadata)
 
         if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
-            hidden_states = get_tp_group().all_gather(hidden_states, dim=0)
-            hidden_states = hidden_states[:seqlen]
+            if self.layer_idx == 0:
+                residual = torch.nn.functional.pad(
+                    residual,
+                    (0, 0, 0, padded_seqlen - seqlen),
+                    mode="constant",
+                    value=0,
+                )
+                residual_list = list(residual.chunk(tp_group.size(), dim=0))
+                residual = residual_list[tp_group.rank()]
+            else:
+                hidden_states = get_tp_group().all_gather(hidden_states, dim=0)
+                hidden_states = hidden_states[:seqlen]
 
         hidden_states = self.self_attn(
             positions=positions,
@@ -728,25 +738,6 @@ class DeepseekV2Model(nn.Module):
             else:
                 hidden_states = self.get_input_embeddings(input_ids)
             residual = None
-
-            if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
-                seqlen, padded_seqlen = _get_seq_lens(tp_group, attn_metadata)
-                hidden_states = torch.nn.functional.pad(
-                    hidden_states,
-                    (0, 0, 0, padded_seqlen - seqlen),
-                    mode="constant",
-                    value=0,
-                )
-
-                sp_hidden_states = list(hidden_states.chunk(tp_group.size(), dim=0))
-
-                torch.distributed.reduce_scatter_tensor(
-                    sp_hidden_states[tp_group.rank()],
-                    hidden_states,
-                    group=tp_group,
-                )
-
-                hidden_states = sp_hidden_states[tp_group.rank()]
 
         else:
             assert intermediate_tensors is not None
