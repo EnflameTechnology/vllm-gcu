@@ -373,7 +373,14 @@ def concat_and_cache_mla(
     kv_cache_dtype: str,
     scale: torch.Tensor,
 ) -> None:
-    raise NotImplementedError
+    torch.ops._C_cache_ops.concat_and_cache_mla(
+        kv_c,
+        k_pe,
+        kv_cache,
+        slot_mapping,
+        kv_cache_dtype,
+        scale.unsqueeze(0) if len(scale.shape) == 0 else scale,
+    )
 
 
 def copy_blocks(

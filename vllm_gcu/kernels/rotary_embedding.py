@@ -4,7 +4,10 @@
 from typing import Optional, Tuple
 
 import torch
-from vllm.model_executor.layers.rotary_embedding import RotaryEmbedding
+from vllm.model_executor.layers.rotary_embedding import (
+    DeepseekScalingRotaryEmbedding,
+    RotaryEmbedding,
+)
 
 
 def forward_oot(
@@ -54,3 +57,4 @@ def forward_oot(
 
 
 RotaryEmbedding.forward_oot = forward_oot
+DeepseekScalingRotaryEmbedding.forward = forward_oot
