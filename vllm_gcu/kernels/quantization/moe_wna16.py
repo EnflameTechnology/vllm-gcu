@@ -128,6 +128,7 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
 
     def __init__(self, quant_config: MoeWNA16GCUConfig):
         self.quant_config = quant_config
+        self.processed = False
 
     def create_weights(
         self,
@@ -324,6 +325,9 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
         layer.group_size = self.quant_config.group_size
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
+        if self.processed:
+            return
+
         if self.quant_config.linear_quant_method == "gptq":
             if self.quant_config.weight_bits == 8:
                 assert torch.all(
@@ -511,6 +515,8 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
                 layer.w2_qzeros.data[i].copy_(w2[i][1])
                 layer.w13_scales.data[i].copy_(w13[i][2])
                 layer.w2_scales.data[i].copy_(w2[i][2])
+
+        self.processed = True
 
     def apply(
         self,

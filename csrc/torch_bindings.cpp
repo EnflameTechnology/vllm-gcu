@@ -6,6 +6,7 @@
 #include "src/awq_gemm_gcu.h"
 #include "src/batched_rotary_embedding.h"
 #include "src/cache_ops.h"
+#include "src/concat_and_cache_mla.h"
 #include "src/context_attention_forward.h"
 #include "src/dispatch_bgmv.h"
 #include "src/dispatch_bgmv_low_level.h"
@@ -636,8 +637,8 @@ TORCH_LIBRARY_EXPAND(CONCAT(TORCH_EXTENSION_NAME, _cache_ops), cache_ops) {
       "                     Tensor slot_mapping,"
       "                     str kv_cache_dtype,"
       "                     Tensor scale) -> ()");
-  // cache_ops.impl("concat_and_cache_mla", torch::kPrivateUse1,
-  // &concat_and_cache_mla);
+  cache_ops.impl("concat_and_cache_mla", torch::kPrivateUse1,
+                 &concat_and_cache_mla);
 
   // Convert the key and value cache to fp8 data type.
   cache_ops.def(
