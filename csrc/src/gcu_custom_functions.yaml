@@ -153,3 +153,6 @@
 
 - func: batched_rotary_embedding(Tensor positions, Tensor(a!) query, Tensor(a!) key, int head_size, Tensor cos_sin_cache, bool is_neox, int rot_dim, Tensor cos_sin_cache_offsets) -> ()
   variants: function
+
+- func: concat_and_cache_mla(Tensor kv_c, Tensor k_pe, Tensor(a!) kv_cache, Tensor slot_mapping, str kv_cache_dtype, Tensor scale) -> ()
+  variants: function

@@ -1,11 +1,6 @@
 #!/usr/bin/env python
 # coding=utf-8
 
-from vllm.model_executor.layers.fused_moe.layer import (
-    FusedMoE,
-    FusedMoeWeightScaleSupported,
-    UnquantizedFusedMoEMethod,
-)
 import functools
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -15,15 +10,20 @@ from vllm.distributed import (
     get_tensor_model_parallel_rank,
     get_tensor_model_parallel_world_size,
 )
+
+from vllm.distributed.parallel_state import get_world_group
 from vllm.logger import init_logger
 from vllm.model_executor.layers.fused_moe.fused_moe import (
     get_default_config,
     grouped_topk,
 )
+from vllm.model_executor.layers.fused_moe.layer import (
+    FusedMoE,
+    FusedMoeWeightScaleSupported,
+    UnquantizedFusedMoEMethod,
+)
 from vllm.model_executor.layers.quantization.base_config import QuantizationConfig
 from vllm.utils import vllm_lib
-
-from vllm.distributed.parallel_state import get_world_group
 
 import vllm_gcu.envs as gcu_envs
 from vllm_gcu.kernels import _custom_ops as ops
@@ -381,20 +381,26 @@ def fused_experts_impl(
         output_device = hidden_states.device
         ep_token_indices, ep_split_size = get_ep_indices(topk_ids)
         sp_split_size = torch.empty_like(ep_split_size)
-        torch.distributed.all_to_all_single(
-            sp_split_size, ep_split_size, group=group)
+        torch.distributed.all_to_all_single(sp_split_size, ep_split_size, group=group)
         recv_token_total = sp_split_size.sum()
         sp_split_size = sp_split_size.cpu().tolist()
         ep_split_size = ep_split_size.cpu().tolist()
         # TODO:convert maybe loss acc, use view dtype
-        send_packed = torch.cat((hidden_states,
-                                 topk_ids.to(hidden_states.dtype),
-                                 topk_weights.to(hidden_states.dtype)), dim=1)
+        send_packed = torch.cat(
+            (
+                hidden_states,
+                topk_ids.to(hidden_states.dtype),
+                topk_weights.to(hidden_states.dtype),
+            ),
+            dim=1,
+        )
         send_packed_sorted = send_packed[ep_token_indices]
 
         recv_packed = torch.empty(
-            (recv_token_total.item(),
-             hidden_states.shape[1]+topk_ids.shape[1]+topk_weights.shape[1]),
+            (
+                recv_token_total.item(),
+                hidden_states.shape[1] + topk_ids.shape[1] + topk_weights.shape[1],
+            ),
             dtype=hidden_states.dtype,
             device=hidden_states.device,
         )
@@ -410,11 +416,13 @@ def fused_experts_impl(
 
         ### EP ###
         hidden_states_ori = hidden_states
-        hidden_states = recv_packed_valid[:, 0:hidden_states.shape[1]].contiguous()
-        topk_ids = recv_packed_valid[:, hidden_states.shape[1]
-            :hidden_states.shape[1]+topk_ids.shape[1]].to(topk_ids.dtype)
-        topk_weights = recv_packed_valid[:, hidden_states.shape[1] +
-                                         topk_ids.shape[1]:].to(topk_weights.dtype)
+        hidden_states = recv_packed_valid[:, 0 : hidden_states.shape[1]].contiguous()
+        topk_ids = recv_packed_valid[
+            :, hidden_states.shape[1] : hidden_states.shape[1] + topk_ids.shape[1]
+        ].to(topk_ids.dtype)
+        topk_weights = recv_packed_valid[
+            :, hidden_states.shape[1] + topk_ids.shape[1] :
+        ].to(topk_weights.dtype)
 
     # Check constraints.
     if use_int4_w4a16:
@@ -426,8 +434,7 @@ def fused_experts_impl(
     assert hidden_states.is_contiguous(), "Hidden_states must be contiguous"
     assert w1.is_contiguous(), "Expert weights1 must be contiguous"
     assert w2.is_contiguous(), "Expert weights2 must be contiguous"
-    assert hidden_states.dtype in [
-        torch.float32, torch.float16, torch.bfloat16]
+    assert hidden_states.dtype in [torch.float32, torch.float16, torch.bfloat16]
 
     if use_fp8_w8a8 and use_int8_w8a16:
         # hack int8_w8a8 when both True
@@ -562,22 +569,24 @@ def fused_experts_impl(
         )
 
     if gcu_envs.VLLM_GCU_ENABLE_EXPERT_PARALLEL:
-        sp_hidden_states = torch.empty((
-            send_packed_sorted.shape[0],
-            hidden_states.shape[1]),
+        sp_hidden_states = torch.empty(
+            (send_packed_sorted.shape[0], hidden_states.shape[1]),
             dtype=output_dtype,
-            device=output_device)
+            device=output_device,
+        )
         torch.distributed.all_to_all_single(
-            sp_hidden_states, out_hidden_states, ep_split_size, sp_split_size, group=group
+            sp_hidden_states,
+            out_hidden_states,
+            ep_split_size,
+            sp_split_size,
+            group=group,
         )
 
         ### SP ###
-        output = torch.zeros(
-            output_shape, dtype=output_dtype, device=output_device)
+        output = torch.zeros(output_shape, dtype=output_dtype, device=output_device)
         output.scatter_add_(
             0,
-            torch.broadcast_to(ep_token_indices.unsqueeze(1),
-                               sp_hidden_states.shape),
+            torch.broadcast_to(ep_token_indices.unsqueeze(1), sp_hidden_states.shape),
             sp_hidden_states,
         )
         hidden_states_ori.copy_(output)
@@ -805,21 +814,36 @@ class EPFusedMoE(FusedMoE):
         assert self.quant_method is not None
 
         # Matrix multiply.
-        final_hidden_states = self.quant_method.apply(
-            layer=self,
-            x=hidden_states,
-            router_logits=router_logits,
-            top_k=self.top_k,
-            renormalize=self.renormalize,
-            use_grouped_topk=self.use_grouped_topk,
-            global_num_experts=self.global_num_experts,
-            expert_map=self.expert_map,
-            topk_group=self.topk_group,
-            num_expert_group=self.num_expert_group,
-            custom_routing_function=self.custom_routing_function,
-            scoring_func=self.scoring_func,
-            e_score_correction_bias=self.e_score_correction_bias,
-        )
+        if isinstance(self.quant_method, UnquantizedFusedMoEMethod):
+            final_hidden_states = self.quant_method.apply(
+                layer=self,
+                x=hidden_states,
+                router_logits=router_logits,
+                top_k=self.top_k,
+                renormalize=self.renormalize,
+                use_grouped_topk=self.use_grouped_topk,
+                topk_group=self.topk_group,
+                num_expert_group=self.num_expert_group,
+                custom_routing_function=self.custom_routing_function,
+                scoring_func=self.scoring_func,
+                e_score_correction_bias=self.e_score_correction_bias,
+            )
+        else:
+            final_hidden_states = self.quant_method.apply(
+                layer=self,
+                x=hidden_states,
+                router_logits=router_logits,
+                top_k=self.top_k,
+                renormalize=self.renormalize,
+                use_grouped_topk=self.use_grouped_topk,
+                global_num_experts=self.global_num_experts,
+                expert_map=self.expert_map,
+                topk_group=self.topk_group,
+                num_expert_group=self.num_expert_group,
+                custom_routing_function=self.custom_routing_function,
+                scoring_func=self.scoring_func,
+                e_score_correction_bias=self.e_score_correction_bias,
+            )
 
         if self.reduce_results and (self.tp_size > 1 or self.ep_size > 1):
             final_hidden_states = tensor_model_parallel_all_reduce(final_hidden_states)
@@ -844,8 +868,6 @@ def forward_oot(
     e_score_correction_bias: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
 
-    from vllm.model_executor.layers.fused_moe.fused_moe import fused_experts
-
     topk_weights, topk_ids = FusedMoE.select_experts(
         hidden_states=x,
         router_logits=router_logits,
@@ -859,7 +881,7 @@ def forward_oot(
         e_score_correction_bias=e_score_correction_bias,
     )
 
-    return fused_experts(
+    fused_experts_impl(
         hidden_states=x,
         w1=layer.w13_weight,
         w2=layer.w2_weight,
@@ -869,6 +891,8 @@ def forward_oot(
         global_num_experts=global_num_experts,
         expert_map=expert_map,
     )
+
+    return x
 
 
 UnquantizedFusedMoEMethod.forward_oot = forward_oot

@@ -43,7 +43,7 @@ class GCUPlatform(Platform):
             raise NotImplementedError
         if use_mla:
             logger.info("Using Triton MLA backend.")
-            return "vllm_gcu.attention.backends.triton_mla.TritonMLABackend"
+            return "vllm_gcu.attention.backends.mla.GCUMLABackend"
         if selected_backend == _Backend.FLASHINFER:
             logger.info("Using FlashInfer backend.")
             raise NotImplemented
