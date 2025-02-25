@@ -482,9 +482,11 @@ def init_worker_distributed_environment(
     data_parallel_size = gcu_envs.VLLM_GCU_DATA_PARALLEL_SIZE
     data_parallel_rank = gcu_envs.VLLM_GCU_DATA_PARALLEL_RANK
 
-    distributed_init_method = get_distributed_init_method(
-        gcu_envs.VLLM_GCU_HOST_ID, 54933
-    )  # magic number to init distributed group
+    if data_parallel_size > 1:
+        # when DP, use VLLM_GCU_PORT to establish connection
+        distributed_init_method = get_distributed_init_method(
+            gcu_envs.VLLM_GCU_HOST_ID, gcu_envs.VLLM_GCU_PORT
+        )
 
     init_distributed_environment(
         world_size,
