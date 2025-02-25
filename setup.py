@@ -40,8 +40,8 @@ else:
     import vllm
 
     VLLM_VERSION = vllm.__version__
-    tops_version = get_tops_version(f"{BASE_DIR}/.version")
-    VERSION = f"{VLLM_VERSION}+{get_tag(BASE_DIR, tops_version)}"
+    tops_version = get_tops_version(f"{ROOT_DIR}/.version")
+    VERSION = f"{VLLM_VERSION}+{get_tag(ROOT_DIR, tops_version)}"
 
 try:
     import tops_extension
