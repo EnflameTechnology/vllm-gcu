@@ -77,9 +77,9 @@ from vllm_gcu.kernels.linear import MergedReplicatedLinear
 def _get_seq_lens(device_group, attn_metadata: AttentionMetadata):
     size = device_group.size()
     seqlen = (
-        sum(attn_metadata.seq_lens)
+        attn_metadata.num_prefill_tokens
         if attn_metadata.prefill_metadata
-        else len(attn_metadata.seq_lens)
+        else attn_metadata.num_decode_tokens
     )
     padded_seqlen = (seqlen + size - 1) // size * size
 
