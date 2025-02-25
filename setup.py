@@ -11,23 +11,37 @@ from typing import List
 import torch
 
 from setuptools import Extension, find_packages, setup
-from tops_extension import (
-    TOPSATEN_HOME as _TOPSATEN_HOME,
-    TopsBuildExtension,
-    TOPSRT_HOME as _TOPSRT_HOME,
-)
+# from tops_extension import (
+#     TOPSATEN_HOME as _TOPSATEN_HOME,
+#     TopsBuildExtension,
+#     TOPSRT_HOME as _TOPSRT_HOME,
+# )
+from tops_extension import TopsBuildExtension
 from tops_extension.torch import TopsTorchExtension
 from tops_extension.torch.codegen_utils import gen_custom_ops
 from wheel.bdist_wheel import bdist_wheel
+from build_utils import get_tag, get_tops_version
 
 ROOT_DIR = os.path.dirname(__file__)
+
+try:
+    from tops_extension import TOPSATEN_HOME as _TOPSATEN_HOME
+except ImportError:
+    _TOPSATEN_HOME = os.getenv("TOPSATEN_HOME", None)
+
+try:
+    from tops_extension import TOPSRT_HOME as _TOPSRT_HOME
+except ImportError:
+    _TOPSRT_HOME = os.getenv("TOPSRT_HOME", None)
 
 if os.getenv("PY_PACKAGE_VERSION"):
     VERSION = os.getenv("PY_PACKAGE_VERSION")
 else:
     import vllm
 
-    VERSION = vllm.__version__
+    VLLM_VERSION = vllm.__version__
+    tops_version = get_tops_version(f"{BASE_DIR}/.version")
+    VERSION = f"{VLLM_VERSION}+{get_tag(BASE_DIR, tops_version)}"
 
 try:
     import tops_extension
