@@ -91,6 +91,7 @@ class GPTQGCULinearMethod(GPTQLinearMethod):
 
     def __init__(self, quant_config: GPTQGCUConfig):
         super().__init__(quant_config)
+        self.processed = False
 
     def create_weights(
         self,
@@ -185,6 +186,9 @@ class GPTQGCULinearMethod(GPTQLinearMethod):
             )
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
+        if self.processed:
+            return
+
         # for torch.compile
         layer.qweight = Parameter(layer.qweight.data, requires_grad=False)
         layer.qzeros = Parameter(layer.qzeros.data, requires_grad=False)
@@ -229,6 +233,8 @@ class GPTQGCULinearMethod(GPTQLinearMethod):
                 "Currently, only 4/8-bit weight quantization is "
                 f"supported for GPTQ on GCU, but got {self.weight_bits} bits."
             )
+
+        self.processed = True
 
     def apply(
         self,

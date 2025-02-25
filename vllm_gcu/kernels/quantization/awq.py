@@ -67,8 +67,11 @@ class AWQGCULinearMethod(AWQLinearMethod):
 
     def __init__(self, quant_config: AWQGCUConfig):
         self.quant_config = quant_config
+        self.processed = False
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
+        if self.processed:
+            return
         from vllm_gcu.kernels.quantization.rearrange import (
             rearrange_uint4_int32_uint8_awq,
         )
@@ -93,6 +96,8 @@ class AWQGCULinearMethod(AWQLinearMethod):
             layer.qweight.data = qweight.to(layer.qweight.device)
             torch.gcu.empty_cache()
         layer.qzeros.data = qzeros.to(layer.qweight.device)
+
+        self.processed = True
 
     def apply(
         self,
