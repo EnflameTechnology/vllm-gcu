@@ -1,0 +1,71 @@
+cmake_minimum_required(VERSION 3.18 FATAL_ERROR)
+
+#download i-cmake
+include(FetchContent)
+Set(FETCHCONTENT_QUIET FALSE)
+FetchContent_Declare(
+    I_CMAKE
+    GIT_REPOSITORY "git@git.enflame.cn:i/cmake.git"
+    GIT_TAG 1.4.97
+)
+FetchContent_MakeAvailable(I_CMAKE)
+set(CMAKE_MODULE_DIR "${i_cmake_SOURCE_DIR}")
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_MODULE_DIR}")
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
+set(DISABLE_GIT_SUBMODULE_CHECK ON)
+include(module_paths)
+
+project(vllm_gcu CXX C)
+include(fetchArtifactory)
+include(artifacts)
+include(global)
+
+# set(LOGGING_TAG 4.0.25)
+# FetchContent_Declare(sw_enflame.open_logging
+#     GIT_REPOSITORY git@git.enflame.cn:sw/enflame.open/logging.git
+#     GIT_TAG ${LOGGING_TAG}
+#     EXCLUDE_FROM_ALL)
+# FetchContent_MakeAvailable(sw_enflame.open_logging)
+
+set(CMAKE_FPKG_PYTHON_PACKAGES "python_packages")
+set(CMAKE_INSTALL_PYTHON_PACKAGES "${CMAKE_INSTALL_PREFIX}/${CMAKE_FPKG_PYTHON_PACKAGES}")
+file(MAKE_DIRECTORY ${CMAKE_INSTALL_PYTHON_PACKAGES})
+include(package_version)
+
+# init vllm version
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/requirements.txt" FILE_CONTENT)
+string(REGEX MATCH "vllm==([0-9]+\\.[0-9]+\\.[0-9]+[^ ]*)" VERSION_MATCH "${FILE_CONTENT}")
+set(VLLM_ORIGIN_VERSION ${CMAKE_MATCH_1})
+string(REPLACE "\n" "" VLLM_ORIGIN_VERSION "${VLLM_ORIGIN_VERSION}")
+message(STATUS "Found VLLM_ORIGIN VERSION: ${VLLM_ORIGIN_VERSION}")
+
+set(PACKAGE_VERSION ${VLLM_ORIGIN_VERSION}+${PACKAGE_VERSION})
+
+include(fetch_dependences)
+
+if (NOT TARGET package_all)
+    add_custom_target(package_all)
+endif()
+
+set(py_ver "3.10")
+set(py_ext "39")
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/dist/vllm_gcu-${PACKAGE_VERSION}-cp${py_ext}-abi3-linux_x86_64.whl
+    COMMAND sudo python${py_ver} -m pip install "${tops_extension_whl_FILE}"
+    COMMAND export PY_PACKAGE_VERSION=${PACKAGE_VERSION} && export TOPSRT_HOME=${TOPSRT_HOME} && export TOPSATEN_HOME=${TOPSATEN_HOME} && export TORCH_GCU_PATH=${torch_gcu_whl_SOURCE_DIR}/torch_gcu && python${py_ver} setup.py bdist_wheel --py-limited-api=cp${py_ext}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/setup.py
+    )
+
+add_custom_target(
+    package_vllm_gcu_whl
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/dist/vllm_gcu-${PACKAGE_VERSION}-cp${py_ext}-abi3-linux_x86_64.whl
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${CMAKE_CURRENT_SOURCE_DIR}/dist/vllm_gcu-${PACKAGE_VERSION}-cp${py_ext}-abi3-linux_x86_64.whl
+    ${CMAKE_INSTALL_PYTHON_PACKAGES}
+    COMMAND rm -rf ${CMAKE_CURRENT_SOURCE_DIR}/dist ${CMAKE_CURRENT_SOURCE_DIR}/build ${CMAKE_CURRENT_SOURCE_DIR}/vllm_gcu.egg-info
+)
+add_dependencies(package_all package_vllm_gcu_whl)
+
+install(DIRECTORY .epkg DESTINATION ${CMAKE_BINARY_DIR})
