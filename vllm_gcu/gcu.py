@@ -90,6 +90,7 @@ class GCUPlatform(Platform):
 
     @classmethod
     def check_and_update_config(cls, vllm_config: VllmConfig) -> None:
+        import vllm_gcu.envs as gcu_envs
         import vllm_gcu.kernels
 
         parallel_config = vllm_config.parallel_config
@@ -135,6 +136,14 @@ class GCUPlatform(Platform):
         vllm_config.quant_config = VllmConfig._get_quantization_config(
             model_config, vllm_config.load_config
         )
+
+        scheduler_config = vllm_config.scheduler_config
+        if (
+            gcu_envs.VLLM_GCU_DATA_PARALLEL_SIZE > 1
+            and gcu_envs.VLLM_GCU_ENABLE_EXPERT_PARALLEL
+        ):
+            # use prioritied scheduling when DP and EP
+            scheduler_config.policy = "priority"
 
         envs.VLLM_NO_USAGE_STATS = True
 

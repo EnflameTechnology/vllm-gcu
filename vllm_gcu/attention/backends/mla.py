@@ -761,7 +761,11 @@ class GCUMLAImpl(MLACommonImpl[GCUMLAMetadata]):
             process_attention_linear(layer)
             if not isinstance(layer.quant_method, UnquantizedLinearMethod):
                 eye = torch.eye(
-                    layer.input_size_per_partition,
+                    (
+                        layer.input_size_per_partition
+                        if hasattr(layer, "input_size_per_partition")
+                        else layer.input_size
+                    ),
                     dtype=act_dtype,
                     device=get_layer_weight(layer).device,
                 )

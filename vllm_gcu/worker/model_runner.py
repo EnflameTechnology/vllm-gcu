@@ -51,6 +51,8 @@ from vllm.worker.model_runner import (
 )
 from vllm.worker.model_runner_base import ModelRunnerBase
 
+import vllm_gcu.envs as gcu_envs
+
 from vllm_gcu.utils import dump_memory_snapshot_when_exception
 
 
@@ -907,6 +909,15 @@ class GCUModelRunner(GCUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
             model_input.async_callback()
 
         # Sample the next token.
+        if gcu_envs.VLLM_GCU_SAMPLER_ON_CPU:
+            logits = logits.cpu().to(torch.float32)
+            selected_token_indices = sampling_metadata.selected_token_indices
+            sampling_metadata.selected_token_indices = selected_token_indices.cpu()
+
+            categorized_sample_indices = sampling_metadata.categorized_sample_indices
+            sampling_metadata.categorized_sample_indices = {
+                i: tensor.cpu() for i, tensor in categorized_sample_indices.items()
+            }
         output: SamplerOutput = self.model.sample(
             logits=logits,
             sampling_metadata=model_input.sampling_metadata,
