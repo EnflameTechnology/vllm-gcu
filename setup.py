@@ -5,12 +5,15 @@ import io
 import os
 import re
 import shutil
+from distutils.command.build_py import build_py
 from distutils.command.clean import clean
 from typing import List
 
 import torch
+from build_utils import get_tag, get_tops_version
 
 from setuptools import Extension, find_packages, setup
+
 # from tops_extension import (
 #     TOPSATEN_HOME as _TOPSATEN_HOME,
 #     TopsBuildExtension,
@@ -20,7 +23,6 @@ from tops_extension import TopsBuildExtension
 from tops_extension.torch import TopsTorchExtension
 from tops_extension.torch.codegen_utils import gen_custom_ops
 from wheel.bdist_wheel import bdist_wheel
-from build_utils import get_tag, get_tops_version
 
 ROOT_DIR = os.path.dirname(__file__)
 
@@ -145,6 +147,32 @@ class VllmBdistWheel(bdist_wheel):
         self.py_limited_api = "cp38"
 
 
+class VllmPackageBuild(build_py, object):
+    def build_module(self, module, module_file, package):
+        if package == "benchmarks":
+            package = "vllm_utils"
+
+        return super().build_module(module, module_file, package)
+
+    def get_data_files(self):
+        data_files = super().get_data_files()
+        data = []
+
+        for data_file in data_files:
+            if data_file[0] == "benchmarks":
+                package, src_dir, build_dir, filenames = data_file
+                data_file = (
+                    package,
+                    src_dir,
+                    build_dir.replace("benchmarks", "vllm_utils"),
+                    filenames,
+                )
+
+            data.append(data_file)
+
+        return data
+
+
 class VllmClean(clean):
     def run(self):
         if os.path.exists(".gitignore"):
@@ -248,6 +276,7 @@ setup(
         "Topic :: Scientific/Engineering :: Artificial Intelligence",
     ],
     packages=find_packages(),
+    package_data={"benchmarks": ["structured_schemas/*"]},
     python_requires=">=3.8",
     install_requires=read_requirements(),
     ext_modules=ext_modules,
@@ -255,6 +284,7 @@ setup(
         "build_ext": VllmBuildExtension,
         "clean": VllmClean,
         "bdist_wheel": VllmBdistWheel,
+        "build_py": VllmPackageBuild,
     },
     extras_require={},
     entry_points={

@@ -16,6 +16,7 @@ environment_variables: Dict[str, Callable[[], Any]] = {
     ),
     "VLLM_GCU_HOST_ID": lambda: os.getenv("VLLM_GCU_HOST_ID", "127.0.0.1"),
     "VLLM_GCU_PORT": lambda: int(os.getenv("VLLM_GCU_PORT", 54933)),
+    "VLLM_GCU_SAMPLER_ON_CPU": lambda: int(os.getenv("VLLM_GCU_SAMPLER_ON_CPU", "0")),
 }
 
 
