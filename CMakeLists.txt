@@ -19,6 +19,7 @@ project(vllm_gcu CXX C)
 include(fetchArtifactory)
 include(artifacts)
 include(global)
+include(ictest)
 
 # set(LOGGING_TAG 4.0.25)
 # FetchContent_Declare(sw_enflame.open_logging
@@ -69,3 +70,28 @@ add_custom_target(
 add_dependencies(package_all package_vllm_gcu_whl)
 
 install(DIRECTORY .epkg DESTINATION ${CMAKE_BINARY_DIR})
+
+install(FILES cmake/env_config.json DESTINATION .)
+install(FILES cmake/package_info.json DESTINATION .)
+
+install (PROGRAMS ${i_cmake_SOURCE_DIR}/tools/setup_platform.py DESTINATION .)
+install (PROGRAMS ${i_cmake_SOURCE_DIR}/tools/setup_platform.sh DESTINATION .)
+install (DIRECTORY ${i_cmake_SOURCE_DIR}/tools/ DESTINATION . USE_SOURCE_PERMISSIONS)
+configure_file(ctest_install.cmake.in ctest_install.cmake @ONLY)
+install(SCRIPT ${CMAKE_CURRENT_BINARY_DIR}/ctest_install.cmake)
+install(FILES "${CMAKE_INSTALL_PREFIX}/CTestTestfile.cmake" DESTINATION .)
+
+file(GLOB test_files_script CONFIGURE_DEPENDS ${CMAKE_MODULE_DIR}/run_test/*)
+
+install(PROGRAMS ${test_files_script} DESTINATION .)
+install_module_package()
+
+install(CODE "
+        if (EXISTS ${CMAKE_BINARY_DIR}/DartConfiguration.tcl)
+            execute_process (COMMAND cp -af ${CMAKE_BINARY_DIR}/DartConfiguration.tcl ${CMAKE_BINARY_DIR}/.DartConfiguration.tcl)
+            execute_process (COMMAND sed -i s!${CMAKE_SOURCE_DIR}!.!g ${CMAKE_BINARY_DIR}/DartConfiguration.tcl)
+            execute_process (COMMAND sed -i s!${CMAKE_BINARY_DIR}!.!g ${CMAKE_BINARY_DIR}/DartConfiguration.tcl)
+            execute_process (COMMAND cp -af ${CMAKE_BINARY_DIR}/DartConfiguration.tcl ${CMAKE_INSTALL_PREFIX}/DartConfiguration.tcl)
+        endif ()
+        ")
+add_subdirectory(tests)
