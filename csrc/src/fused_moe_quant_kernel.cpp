@@ -37,23 +37,42 @@ void fused_moe_quant_kernel(
 
   TORCH_CHECK(!bias.has_value(), "bias should be None.");
 
-  if (A_scale.has_value()) {
+  auto use_legacy = c10::utils::check_env("VLLM_FUSED_MOE_IMPL_LEGACY");
+
+  if (A_scale.has_value()) {  // w8a8
     at::Tensor A_scale_tensor = A_scale.value();
-    ATEN_ATENOP_CHECK(
-        ATEN_ATENOP_CALL(topsvllm::topsvllmInvokeFusedMoeNonGatherQuantKernel)(
-            C, A, B, A_scale_tensor, B_scale, topk_weights, topk_ids,
-            sorted_token_ids, experts_ids, num_tokens_post_pad,
-            mul_routed_weight, topk, block_size, stream));
+    if (use_legacy) {
+      ATEN_ATENOP_CHECK(
+          ATEN_ATENOP_CALL(topsvllm::topsvllmInvokeFusedMoeQuantKernel)(
+              C, A, B, A_scale_tensor, B_scale, topk_weights, topk_ids,
+              sorted_token_ids, experts_ids, num_tokens_post_pad,
+              mul_routed_weight, topk, block_size, stream));
+    } else {
+      ATEN_ATENOP_CHECK(ATEN_ATENOP_CALL(
+          topsvllm::topsvllmInvokeFusedMoeNonGatherQuantKernel)(
+          C, A, B, A_scale_tensor, B_scale, topk_weights, topk_ids,
+          sorted_token_ids, experts_ids, num_tokens_post_pad, mul_routed_weight,
+          topk, block_size, stream));
+    }
   } else {
     at::Tensor B_zp_tensor;
     if (B_zp.has_value()) {
       B_zp_tensor = B_zp.value();
     }
-    ATEN_ATENOP_CHECK(
-        ATEN_ATENOP_CALL(topsvllm::topsvllmInvokeFusedMoeNonGatherQuantKernel)(
-            C, A, B, B_scale, gs, B_zp_tensor, topk_weights, topk_ids,
-            sorted_token_ids, experts_ids, num_tokens_post_pad,
-            mul_routed_weight, topk, block_size, stream));
+    if (use_legacy) {
+      ATEN_ATENOP_CHECK(
+          ATEN_ATENOP_CALL(topsvllm::topsvllmInvokeFusedMoeQuantKernel)(
+              C, A, B, B_scale, gs, B_zp_tensor, topk_weights, topk_ids,
+              sorted_token_ids, experts_ids, num_tokens_post_pad,
+              mul_routed_weight, topk, block_size, stream));
+
+    } else {
+      ATEN_ATENOP_CHECK(ATEN_ATENOP_CALL(
+          topsvllm::topsvllmInvokeFusedMoeNonGatherQuantKernel)(
+          C, A, B, B_scale, gs, B_zp_tensor, topk_weights, topk_ids,
+          sorted_token_ids, experts_ids, num_tokens_post_pad, mul_routed_weight,
+          topk, block_size, stream));
+    }
   }
 }
 
