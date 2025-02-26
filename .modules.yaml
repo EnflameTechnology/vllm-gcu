@@ -1,0 +1,17 @@
+default:
+  exclude: &default_exclude
+    - .*\.md
+    - (.+/)?\.owners
+    - (.+/)?\.gitignore
+
+# imports:
+#   - scripts/.modules.yaml
+#   - module1/.modules.yaml
+#   - module2/.modules.yaml
+
+modules:
+  - name: "fully_test"
+    match:
+      - .*
+    exclude:
+      - *default_exclude
