@@ -1,0 +1,39 @@
+# Find all the ctest files in ip suite
+file (GLOB ctest_file_list
+           @CMAKE_BINARY_DIR@/*/CTestTestfile.cmake
+           @CMAKE_BINARY_DIR@/tests/*/CTestTestfile.cmake
+)
+
+file (GLOB ctest_file_list_exclude
+           @CMAKE_BINARY_DIR@/sdk/runtime_build/*/CTestTestfile.cmake
+           )
+list(REMOVE_ITEM ctest_file_list ${ctest_file_list_exclude})
+
+# Write all ctests into one single file in the release folder
+file (REMOVE @CMAKE_INSTALL_PREFIX@/CTestTestfile.cmake)
+foreach (f IN LISTS ctest_file_list)
+    file (READ ${f} tests)
+    file (APPEND @CMAKE_INSTALL_PREFIX@/CTestTestfile.cmake "${tests}")
+endforeach ()
+
+# Change the working dir
+execute_process (COMMAND sed -i -e "s|WORKING_DIRECTORY \"@CMAKE_INSTALL_PREFIX@|WORKING_DIRECTORY \".|" @CMAKE_INSTALL_PREFIX@/CTestTestfile.cmake)
+execute_process (COMMAND sed -i -e "s| _BACKTRACE_TRIPLES \".*\")|)|" @CMAKE_INSTALL_PREFIX@/CTestTestfile.cmake)
+execute_process (COMMAND sed -i -e "/^#/d" @CMAKE_INSTALL_PREFIX@/CTestTestfile.cmake)
+execute_process (COMMAND sed -i -e "/^subdirs/d" @CMAKE_INSTALL_PREFIX@/CTestTestfile.cmake)
+execute_process (COMMAND sed -i -e "s|\"/.*/\\(.*gtest_filter\\)|\"\\1|" @CMAKE_INSTALL_PREFIX@/CTestTestfile.cmake)
+
+
+############################################################################################################################################################################
+# PURPOSE: post-processing, strip the ENVIRONMENT white-space,then into a compact, contiguous string
+#
+# SAMPLE_INPUT:  ENVIRONMENT "DTU_OPT_MODE=false;        BYPASS_ODMA_WORKAROUND=false;                          GTEST_FILTER=-HloProfileTest.ProfileSingleComputation
+#                                         :HloProfileTest.ProfileWhileComputation;"
+#
+# SAMPLE_OUTPUT: ENVIRONMENT "DTU_OPT_MODE=false;BYPASS_ODMA_WORKAROUND=false;GTEST_FILTER=-HloProfileTest.ProfileSingleComputation:HloProfileTest.ProfileWhileComputation;"
+#
+# CMAKE_SPECIFICATION: There should no white-space before the backslash
+#   EXAMPLE:GTEST_FILTER=-ArrayElementwiseOpTest.NegConstantC64\
+############################################################################################################################################################################
+
+execute_process (COMMAND sed -i -e ":a;s|ENVIRONMENT\\s*\"\\([^\"[:space:]]*\\)[[:space:]]|ENVIRONMENT \"\\1|;ta" @CMAKE_INSTALL_PREFIX@/CTestTestfile.cmake)

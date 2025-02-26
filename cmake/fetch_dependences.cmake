@@ -91,10 +91,21 @@ set(TOPS_EXTENSION_SEMI_NAME "")
 unset(TOPS_EXTENSION_LINK)
 set(tops_extension_link "${TOPS_EXTENSION_COMMITID}/tops_extension${TOPS_EXTENSION_SEMI_NAME}-${TOPS_EXTENSION_DAILY_TAG}+torch.${BUILD_TORCH_VERSION}-cp${TOPS_EXTENSION_PY_VER}-cp${TOPS_EXTENSION_PY_VER}-linux_${CMAKE_SYSTEM_PROCESSOR}.whl")
 
+set(CMAKE_FPKG_PYTHON_PACKAGES python_packages)
+set(CMAKE_FPKG_LIBDIR lib)
+set(CMAKE_INSTALL_PYTHON_PACKAGES ${CMAKE_INSTALL_PREFIX}/${CMAKE_FPKG_PYTHON_PACKAGES})
+set(CMAKE_INSTALL_LIB ${CMAKE_INSTALL_PREFIX}/${CMAKE_FPKG_LIBDIR})
+file(MAKE_DIRECTORY ${CMAKE_INSTALL_PYTHON_PACKAGES} ${CMAKE_INSTALL_LIB})
+
+set(PACKAGE_PYTHON_CMDS "mkdir -p ${CMAKE_FPKG_PYTHON_PACKAGES}; mv /FILE/ -t ${CMAKE_FPKG_PYTHON_PACKAGES}")
+set(PACKAGE_PYTHON_FILES "${CMAKE_FPKG_PYTHON_PACKAGES}//FILE/")
+set(PACKAGE_LIB_CMDS "mkdir -p ${CMAKE_FPKG_LIBDIR}; mv /FILE/ -t ${CMAKE_FPKG_LIBDIR}")
+set(PACKAGE_LIB_FILES "${CMAKE_FPKG_LIBDIR}//FILE/")
+
 fetchFromArtifactory(tops_extension_whl
     FILE ${TOPS_EXTENSION_PATH}/${tops_extension_link}
-    PKG_COMMNAD ${PACKAGE_CMDS}
-    PKG_FILES ${PACKAGE_FILES}
+    PKG_COMMNAD ${PACKAGE_PYTHON_CMDS}
+    PKG_FILES ${PACKAGE_PYTHON_FILES}
     BRANCH ${TOPS_EXTENSION_BRANCH}
     VERSION ${TOPS_EXTENSION_TORCH_DAILY_TAG}
 )
@@ -127,6 +138,8 @@ if (NOT DEFINED TOPSATEN_INSTALL_PREFIX)
     endif()
     fetchFromArtifactory(fetch_topsaten_deb
         ${TOPSATEN_LINK_CMD}
+        PKG_COMMAND ${PACKAGE_LIB_CMDS}
+        PKG_FILES ${PACKAGE_LIB_FILES}
         BRANCH ${TOPSOP_BRANCH}
         VERSION ${TOPSOP_PACKAGE_VERSION}
         EXTRACT ON
@@ -147,9 +160,6 @@ set(TORCH_GCU_SEMI_NAME "")
 
 # set(TORCH_GCU_XNAS_LINK "http://10.12.110.200:8080/release/torch-gcu-release/57/integration/efda744/")
 
-set(PACKAGE_CMDS "mkdir -p ${CMAKE_FPKG_PYTHON_PACKAGES}; mv /FILE/ -t ${CMAKE_FPKG_PYTHON_PACKAGES}")
-set(PACKAGE_FILES "${CMAKE_FPKG_PYTHON_PACKAGES}//FILE/")
-
 unset(TORCH_GCU_LINK)
 if(TORCH_GCU_XNAS_LINK)
     link_pattern_var("${TORCH_GCU_XNAS_LINK}"
@@ -169,9 +179,62 @@ if(NOT TORCH_GCU_LINK)
 endif()
 fetchFromArtifactory(torch_gcu_whl
     FILE ${TORCH_GCU_LINK}
-    PKG_COMMAND ${PACKAGE_CMDS}
-    PKG_FILES ${PACKAGE_FILES}
+    PKG_COMMAND ${PACKAGE_PYTHON_CMDS}
+    PKG_FILES ${PACKAGE_PYTHON_FILES}
     BRANCH ${TORCH_GCU_BRANCH}
     VERSION ${TORCH_GCU_DAILY_TAG}
     EXTRACT ON
 )
+
+# ######################################################
+# ###################  XFORMERS  #########################
+# ######################################################
+
+set(XFORMERS_PATH ${MODULE_PACKAGE_PATH}/xformers)
+set(XFORMERS_COMMITID 773583e)
+set(XFORMERS_BRANCH 0.0.28.post3)
+set(XFORMERS_DAILY_TAG 0.0.28.post3+torch.2.5.1.gcu.3.2.20250225)
+set(XFORMERS_PY_VER 310)
+set(XFORMERS_SEMI_NAME "")
+
+if (PROJECT_GIT_URL)
+    set(xformers_git_name "xformers_binary")
+    download_tx_git_project(${xformers_git_name})
+endif()
+unset(XFORMERS_LINK)
+if(PREBUILD_XFORMERS_XNAS_BASE)
+    link_pattern_var("${PREBUILD_XFORMERS_XNAS_BASE}"
+        VARS
+            XFORMERS_LINK
+        PATTERNS
+            "xformers-.*-cp${XFORMERS_PY_VER}-cp${XFORMERS_PY_VER}-linux_${CMAKE_SYSTEM_PROCESSOR}.whl"
+    )
+    message(STATUS "XFORMERS_LINK: ${XFORMERS_LINK}, XFORMERS_TEST_LINK: ${XFORMERS_TEST_LINK}")
+    if(NOT XFORMERS_LINK)
+        message(WARNING "Can not find some links from ${PREBUILD_XFORMERS_XNAS_BASE}")
+    endif()
+endif()
+set(xformers_link "${XFORMERS_COMMITID}/xformers${XFORMERS_SEMI_NAME}-${XFORMERS_DAILY_TAG}-cp${XFORMERS_PY_VER}-cp${XFORMERS_PY_VER}-linux_${CMAKE_SYSTEM_PROCESSOR}.whl")
+if(NOT XFORMERS_LINK)
+    set(XFORMERS_LINK ${XFORMERS_PATH}/${xformers_${BUILD_TORCH_VERSION}_${XFORMERS_PY_VER}_link})
+endif()
+
+if (NOT PROJECT_GIT_URL)
+    fetchFromArtifactory(xformers_whl
+        FILE ${XFORMERS_LINK}
+        PKG_COMMNAD ${PACKAGE_PYTHON_CMDS}
+        PKG_FILES ${PACKAGE_PYTHON_FILES}
+        BRANCH ${XFORMERS_BRANCH}
+        VERSION ${XFORMERS_DAILY_TAG}
+        PKG_ONLY ON
+    )
+else()
+    set(git_name "xformers_binary")
+    string(REGEX REPLACE "(.*)/(.*)" "\\2" xformers_binary_file_name "${XFORMERS_${BUILD_TORCH_VERSION}_LINK}")
+    set(fetch_file_name ${XFORMERS_COMMITID}/${xformers_binary_file_name})
+
+    download_tx_whl(${xformers_git_name} ${fetch_file_name})
+
+    set(xformers_${XFORMERS_PY_VER}_whl_${CMAKE_SYSTEM_PROCESSOR}_FILE ${CMAKE_CURRENT_BINARY_DIR}/${xformers_git_name}/${XFORMERS_COMMITID}/${xformers_binary_file_name})
+
+endif()

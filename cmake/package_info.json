@@ -1,0 +1,73 @@
+{
+    "torch-gcu":{
+        "type":["whl"],
+        "3.8_package_name":"torch_gcu-*{version}*-cp38*.whl",
+        "3.10_package_name":"torch_gcu-*{version}*-cp310*.whl"
+    },
+    "vllm-gcu":{
+        "type":["whl"],
+        "3.9_package_name":"vllm_gcu-*{version}*-cp39-abi3-*.whl",
+        "3.10_package_name":"vllm_gcu-*{version}*-cp39-abi3-*.whl"
+    },
+    "xformers":{
+        "type":["whl"],
+        "framework":"torch",
+        "3.8_package_name":"xformers-*{version}*-cp38-cp38-*.whl",
+        "3.9_package_name":"xformers-*{version}*-cp39-cp39-*.whl",
+        "3.10_package_name":"xformers-*{version}*-cp310-cp310-*.whl"
+    },
+    "tops-extension":{
+        "type":["whl"],
+        "framework":"torch",
+        "3.8_package_name":"tops_extension-*{version}*-cp38-cp38-*.whl",
+        "3.9_package_name":"tops_extension-*{version}*-cp39-cp39-*.whl",
+        "3.10_package_name":"tops_extension-*{version}*-cp310-cp310-*.whl"
+    },
+    "tops-sdk":{
+        "type":["deb", "rpm"],
+        "rpm_package_name":"tops-sdk*.rpm",
+        "deb_package_name":"tops-sdk*.deb"
+    },
+    "tops-eccl":{
+        "type":["deb", "rpm"],
+        "rpm_package_name":"tops-eccl*.rpm",
+        "deb_package_name":"tops-eccl*.deb"
+    },
+    "eccl":{
+        "type":["deb", "rpm"],
+        "deb_package_name":"eccl_[0-9][0-9a-z_\\.-]*.deb",
+        "rpm_package_name":"eccl-[0-9][0-9a-z_\\.-]*.rpm"
+    },
+    "topsfactor":{
+        "type":["deb", "rpm"],
+        "rpm_package_name":"topsfactor*.rpm",
+        "deb_package_name":"topsfactor*.deb"
+    },
+    "topsaten":{
+        "type":["deb", "rpm"],
+        "rpm_package_name":"topsaten*.rpm",
+        "deb_package_name":"topsaten*.deb"
+    },
+    "topsruntime":{
+        "type":["run"],
+        "run_package_name":"TopsPlatform",
+        "component_name":"topsruntime",
+        "rpm_package_name":"topsruntime-[0-9][0-9a-z_\\.-]*.rpm",
+        "deb_package_name":"topsruntime_[0-9][0-9a-z_\\.-]*.deb"
+    },
+    "topscc":{
+        "type":["run"],
+        "run_package_name":"TopsPlatform",
+        "component_name":"topscc",
+        "deb_package_name":"topscc_[0-9][0-9a-z_\\.-]*.deb",
+        "rpm_package_name":"topscc-[0-9][0-9a-z_\\.-]*.rpm"
+    },
+    "TopsPlatform":{
+        "type":["run"],
+        "rpm_run_package_name":"TopsPlatform_[0-9][0-9a-z_\\.-]*_rpm_*.run",
+        "deb_run_package_name":"TopsPlatform_[0-9][0-9a-z_\\.-]*_deb_*.run",
+        "install_command_template":"{package_path} -y -C {components} --container -v",
+        "uninstall_command_template":"{package_path} -y -C {components} --container --uninstall -v",
+        "component_option":"-y"
+    }
+}
