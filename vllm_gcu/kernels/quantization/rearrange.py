@@ -9,14 +9,8 @@ def rearrange_uint4_int32_uint8_gptq(
     bits = method.quant_config.weight_bits
     group_size = method.quant_config.group_size
     assert bits in [4], "only 4 bit gptq quant is supported."
+
     wf = torch.tensor(list(range(0, 32, bits)), dtype=torch.int32).unsqueeze(0)
-    zeros = torch.bitwise_right_shift(
-        torch.unsqueeze(qzeros, 2).expand(-1, -1, 32 // bits),
-        wf.unsqueeze(0),
-    ).to(torch.int8)
-    zeros = zeros + 1
-    zeros = torch.bitwise_and(zeros, (2**bits) - 1)
-    zeros = zeros.reshape(-1, 1, zeros.shape[1] * zeros.shape[2])
     scales = scales.reshape(-1, 1, scales.shape[-1])
 
     weight = torch.bitwise_right_shift(
@@ -26,8 +20,19 @@ def rearrange_uint4_int32_uint8_gptq(
     weight = torch.bitwise_and(weight, (2**bits) - 1)
     weight = weight.reshape(-1, weight.shape[2])
 
-    zeros = zeros * scales
-    zeros = zeros.reshape(-1, zeros.shape[2])
+    if qzeros:
+        zeros = torch.bitwise_right_shift(
+            torch.unsqueeze(qzeros, 2).expand(-1, -1, 32 // bits),
+            wf.unsqueeze(0),
+        ).to(torch.int8)
+        zeros = zeros + 1
+        zeros = torch.bitwise_and(zeros, (2**bits) - 1)
+        zeros = zeros.reshape(-1, 1, zeros.shape[1] * zeros.shape[2])
+
+        zeros = zeros * scales
+        zeros = zeros.reshape(-1, zeros.shape[2])
+    else:
+        zeros = None
 
     # weight rearrange
     if weight.shape[0] % rearrange_group != 0:

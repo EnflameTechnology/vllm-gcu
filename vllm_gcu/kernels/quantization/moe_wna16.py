@@ -350,20 +350,23 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
                 w13 = []
                 w2 = []
                 for i in range(expert_num):
-                    qweight13, qzeros13 = layer.w13_qweight[i], layer.w13_qzeros[i]
-                    qweight2, qzeros2 = layer.w2_qweight[i], layer.w2_qzeros[i]
+                    qweight13 = layer.w13_qweight[i]
+                    qzeros13 = layer.w13_qzeros[i] if self.quant_config.has_zp else None
+                    qweight2 = layer.w2_qweight[i]
+                    qzeros2 = layer.w2_qzeros[i] if self.quant_config.has_zp else None
+
                     g_idx13, scales13 = layer.w13_g_idx[i], layer.w13_scales[i]
                     g_idx2, scales2 = layer.w2_g_idx[i], layer.w2_scales[i]
                     qweight13, qzeros13 = rearrange_uint4_int32_uint8_gptq(
                         self,
                         qweight=qweight13.cpu(),
-                        qzeros=qzeros13.cpu(),
+                        qzeros=qzeros13.cpu() if qzeros13 else None,
                         scales=scales13.cpu(),
                     )
                     qweight2, qzeros2 = rearrange_uint4_int32_uint8_gptq(
                         self,
                         qweight=qweight2.cpu(),
-                        qzeros=qzeros2.cpu(),
+                        qzeros=qzeros2.cpu() if qzeros2 else None,
                         scales=scales2.cpu(),
                     )
                     # TODO: support weight shuffle
@@ -407,25 +410,29 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
                     layer.w2_qweight.data = layer.w2_qweight.data.view(
                         torch.uint8
                     ).reshape((expert_num,) + tuple(tmp_weight.shape))
-                layer.w13_qzeros.data = torch.empty(
-                    expert_num,
-                    *w13[0][1].shape,
-                    dtype=w13[0][1].dtype,
-                    device=layer.w13_qweight.data.device,
-                )
-                layer.w2_qzeros.data = torch.empty(
-                    expert_num,
-                    *w2[0][1].shape,
-                    dtype=w13[0][1].dtype,
-                    device=layer.w2_qweight.data.device,
-                )
+                if self.quant_config.has_zp:
+                    assert w13[0][1] is not None
+                    assert w2[0][1] is not None
+                    layer.w13_qzeros.data = torch.empty(
+                        expert_num,
+                        *w13[0][1].shape,
+                        dtype=w13[0][1].dtype,
+                        device=layer.w13_qweight.data.device,
+                    )
+                    layer.w2_qzeros.data = torch.empty(
+                        expert_num,
+                        *w2[0][1].shape,
+                        dtype=w13[0][1].dtype,
+                        device=layer.w2_qweight.data.device,
+                    )
                 for i in range(expert_num):
                     layer.w13_qweight.data[i].copy_(w13[i][0].T)
                     layer.w2_qweight.data[i].copy_(w2[i][0].T)
-                    layer.w13_qzeros.data[i].copy_(w13[i][1])
-                    layer.w2_qzeros.data[i].copy_(w2[i][1])
                     layer.w13_scales.data[i].copy_(w13[i][2])
                     layer.w2_scales.data[i].copy_(w2[i][2])
+                    if self.quant_config.has_zp:
+                        layer.w13_qzeros.data[i].copy_(w13[i][1])
+                        layer.w2_qzeros.data[i].copy_(w2[i][1])
             else:
                 raise ValueError(
                     "Currently, only 8-bit and 4-bit weight quantization is "
