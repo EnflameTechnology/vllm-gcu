@@ -37,6 +37,7 @@ def moe_align_block_size(
     block_size: int,
     num_experts: int,
     expert_map: torch.Tensor = None,
+    topk_ids_size = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Aligns the token distribution across experts to be compatible with block
@@ -85,11 +86,32 @@ def moe_align_block_size(
         (max_num_m_blocks,), dtype=torch.int32, device=topk_ids.device
     )
     num_tokens_post_pad = torch.empty((1), dtype=torch.int32, device=topk_ids.device)
-    if num_experts >= 224:
-        if envs.VLLM_ENABLE_MOE_ALIGN_BLOCK_SIZE_TRITON:
-            raise NotImplementedError
+
+    if topk_ids_size is not None:
+        ops.moe_align_block_size_pad(
+            topk_ids,
+            topk_ids_size.unsqueeze(0).to(torch.int32),
+            num_experts,
+            block_size,
+            sorted_ids,
+            expert_ids,
+            num_tokens_post_pad,
+        )
+    else:
+        if num_experts >= 224:
+            if envs.VLLM_ENABLE_MOE_ALIGN_BLOCK_SIZE_TRITON:
+                raise NotImplementedError
+            else:
+                ops.sgl_moe_align_block_size(
+                    topk_ids,
+                    num_experts,
+                    block_size,
+                    sorted_ids,
+                    expert_ids,
+                    num_tokens_post_pad,
+                )
         else:
-            ops.sgl_moe_align_block_size(
+            ops.moe_align_block_size(
                 topk_ids,
                 num_experts,
                 block_size,
@@ -97,15 +119,6 @@ def moe_align_block_size(
                 expert_ids,
                 num_tokens_post_pad,
             )
-    else:
-        ops.moe_align_block_size(
-            topk_ids,
-            num_experts,
-            block_size,
-            sorted_ids,
-            expert_ids,
-            num_tokens_post_pad,
-        )
 
     if expert_map is not None:
         expert_ids = expert_map[expert_ids]
@@ -348,32 +361,23 @@ def fused_experts_impl(
 ):
     from vllm.distributed import get_world_group
 
+    recv_token_total = None
     if gcu_envs.VLLM_GCU_ENABLE_EXPERT_PARALLEL:
         group = get_world_group().device_group
         ep_size = get_world_group().world_size
         ep_rank = get_world_group().rank_in_group
         expert_per_rank = global_num_experts // ep_size
 
-        def get_ep_indices(topk_ids):
-            idx = torch.arange(0, topk_ids.shape[0], device=topk_ids.device)
-            idx_list = []
-            count_list = []
-            for i in range(ep_size):
-                mask = torch.logical_and(
-                    topk_ids >= (expert_per_rank * i),
-                    topk_ids < (expert_per_rank * (i + 1)),
-                )
-                mask = mask.sum(dim=1) > 0
-                count_list.append(mask.sum((0,), keepdim=True))
-                idx_list.append(idx[mask])
-            ep_count = torch.cat(count_list)
-            ep_token_indices = torch.cat(idx_list)
-            return ep_token_indices, ep_count
-
         output_shape = hidden_states.shape
         output_dtype = hidden_states.dtype
         output_device = hidden_states.device
-        ep_token_indices, ep_split_size = get_ep_indices(topk_ids)
+        ep_split_size = torch.empty([ep_size], dtype=torch.int32, device=topk_ids.device)
+        ep_token_indices = torch.zeros([hidden_states.shape[0]*topk_ids.shape[1]], dtype=torch.int32, device=topk_ids.device)
+        send_token_total = torch.empty([1], dtype=torch.int32, device=topk_ids.device)
+        ops.get_ep_indices(ep_split_size, ep_token_indices, send_token_total, topk_ids, expert_per_rank, ep_size)
+        # ep_token_indices, ep_split_size = get_ep_indices(topk_ids)
+        # send_token_total = ep_split_size.sum()
+
         sp_split_size = torch.empty_like(ep_split_size)
         torch.distributed.all_to_all_single(sp_split_size, ep_split_size, group=group)
         recv_token_total = sp_split_size.sum()
@@ -398,11 +402,10 @@ def fused_experts_impl(
             dtype=hidden_states.dtype,
             device=hidden_states.device,
         )
-        recv_packed_valid = recv_packed[:recv_token_total]
 
         torch.distributed.all_to_all_single(
-            recv_packed_valid,
-            send_packed_sorted,
+            recv_packed[:recv_token_total],
+            send_packed_sorted[:send_token_total],
             sp_split_size,
             ep_split_size,
             group=group,
@@ -410,11 +413,11 @@ def fused_experts_impl(
 
         ### EP ###
         hidden_states_ori = hidden_states
-        hidden_states = recv_packed_valid[:, 0 : hidden_states.shape[1]].contiguous()
-        topk_ids = recv_packed_valid[
+        hidden_states = recv_packed[:, 0 : hidden_states.shape[1]].contiguous()
+        topk_ids = recv_packed[
             :, hidden_states.shape[1] : hidden_states.shape[1] + topk_ids.shape[1]
         ].to(topk_ids.dtype)
-        topk_weights = recv_packed_valid[
+        topk_weights = recv_packed[
             :, hidden_states.shape[1] + topk_ids.shape[1] :
         ].to(topk_weights.dtype)
 
@@ -489,6 +492,10 @@ def fused_experts_impl(
         )
         curr_hidden_states = hidden_states[begin_chunk_idx:end_chunk_idx]
         tokens_in_chunk, _ = curr_hidden_states.shape
+        valid_in_chunk = None
+        if recv_token_total is not None:
+            valid_in_chunk = torch.clamp(recv_token_total, min=0, max=tokens_in_chunk)
+            recv_token_total -= tokens_in_chunk
 
         if tokens_in_chunk == 0:
             break
@@ -507,7 +514,8 @@ def fused_experts_impl(
         curr_topk_weights = topk_weights[begin_chunk_idx:end_chunk_idx]
 
         sorted_token_ids, expert_ids, num_tokens_post_padded = moe_align_block_size(
-            curr_topk_ids, config["BLOCK_SIZE_M"], global_num_experts, expert_map
+            curr_topk_ids, config["BLOCK_SIZE_M"], global_num_experts, expert_map,
+            valid_in_chunk
         )
 
         invoke_fused_moe_kernel(
@@ -563,14 +571,14 @@ def fused_experts_impl(
         )
 
     if gcu_envs.VLLM_GCU_ENABLE_EXPERT_PARALLEL:
-        sp_hidden_states = torch.empty(
+        sp_hidden_states = torch.zeros(
             (send_packed_sorted.shape[0], hidden_states.shape[1]),
             dtype=output_dtype,
             device=output_device,
         )
         torch.distributed.all_to_all_single(
-            sp_hidden_states,
-            out_hidden_states,
+            sp_hidden_states[:send_token_total],
+            out_hidden_states[:recv_token_total],
             ep_split_size,
             sp_split_size,
             group=group,
@@ -580,7 +588,7 @@ def fused_experts_impl(
         output = torch.zeros(output_shape, dtype=output_dtype, device=output_device)
         output.scatter_add_(
             0,
-            torch.broadcast_to(ep_token_indices.unsqueeze(1), sp_hidden_states.shape),
+            torch.broadcast_to(ep_token_indices.to(torch.int64).unsqueeze(1), sp_hidden_states.shape),
             sp_hidden_states,
         )
         hidden_states_ori.copy_(output)
