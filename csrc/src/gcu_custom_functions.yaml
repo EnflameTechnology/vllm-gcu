@@ -159,3 +159,6 @@
 
 - func: fused_grouped_topk(Tensor(a!) topk_weights, Tensor(a!) topk_ids, Tensor gating_output, int topk, bool renormalize, int num_expert_group, int topk_group, Tensor e_score_correction_bias, str scoring_func) -> ()
   variants: function
+
+- func: get_ep_indices(Tensor(a!) ep_count, Tensor(a!) ep_token_indices, Tensor(a!) ep_valid_token_indices, Tensor topk_ids, int expert_per_rank, int ep_size) -> ()
+  variants: function
