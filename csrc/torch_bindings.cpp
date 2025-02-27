@@ -33,11 +33,13 @@
 #include "src/gelu_tanh_asym_quant.h"
 #include "src/gelu_tanh_mul_quant.h"
 #include "src/gelu_tanh_quant.h"
+#include "src/get_ep_indices.h"
 #include "src/gptq_gemm_gcu.h"
 #include "src/gptq_shuffle.h"
 #include "src/layer_norm_quant.h"
 #include "src/memory_efficient_attention_alibi.h"
 #include "src/moe_align_block_size.h"
+#include "src/moe_align_block_size_pad.h"
 #include "src/mul_and_silu.h"
 #include "src/paged_attention_v1.h"
 #include "src/paged_attention_v2.h"
@@ -503,6 +505,13 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
 
   ops.def("fused_moe_kernel", &fused_moe_kernel);
   ops.impl("fused_moe_kernel", c10::kPrivateUse1, &fused_moe_kernel);
+
+  ops.def("get_ep_indices", &get_ep_indices);
+  ops.impl("get_ep_indices", c10::kPrivateUse1, &get_ep_indices);
+
+  ops.def("moe_align_block_size_pad", &moe_align_block_size_pad);
+  ops.impl("moe_align_block_size_pad", c10::kPrivateUse1,
+           &moe_align_block_size_pad);
 
   ops.def("fused_moe_quant_kernel", &fused_moe_quant_kernel);
   ops.impl("fused_moe_quant_kernel", c10::kPrivateUse1,
