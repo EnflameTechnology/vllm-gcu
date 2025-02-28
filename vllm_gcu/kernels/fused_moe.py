@@ -909,46 +909,15 @@ def grouped_topk(
     e_score_correction_bias: Optional[torch.Tensor] = None,
 ):
     assert hidden_states.shape[0] == gating_output.shape[0], "Number of tokens mismatch"
-    if scoring_func == "softmax":
-        scores = torch.softmax(gating_output, dim=-1)
-    elif scoring_func == "sigmoid":
-        scores = gating_output.sigmoid()
-    else:
-        raise ValueError(f"Unsupported scoring function: {scoring_func}")
-    num_token = scores.shape[0]
-    if e_score_correction_bias is not None:
-        # Store original scores before applying correction bias. We use biased
-        # scores for expert selection but original scores for routing weights
-        original_scores = scores
-        scores = scores + e_score_correction_bias.unsqueeze(0)
-        group_scores = (
-            scores.view(num_token, num_expert_group, -1).topk(2, dim=-1)[0].sum(dim=-1)
-        )
-    else:
-        group_scores = (
-            scores.view(num_token, num_expert_group, -1).max(dim=-1).values
-        )  # [n, n_group]
-    group_idx = torch.topk(group_scores, k=topk_group, dim=-1, sorted=False)[
-        1
-    ]  # [n, top_k_group]
-    group_mask = torch.zeros_like(group_scores)  # [n, n_group]
-    group_mask.scatter_(1, group_idx, 1)  # [n, n_group]
-    score_mask = (
-        group_mask.unsqueeze(-1)
-        .expand(num_token, num_expert_group, scores.shape[-1] // num_expert_group)
-        .reshape(num_token, -1)
-    )  # [n, e]
-    tmp_scores = scores.masked_fill(~score_mask.bool(), float("-inf"))  # [n, e]
-
-    if e_score_correction_bias is not None:
-        topk_ids = torch.topk(tmp_scores, k=topk, dim=-1, sorted=False)[1]
-        # Use original unbiased scores for the routing weights
-        topk_weights = original_scores.gather(1, topk_ids)
-    else:
-        topk_weights, topk_ids = torch.topk(tmp_scores, k=topk, dim=-1, sorted=False)
-    if renormalize:
-        topk_weights = topk_weights / topk_weights.sum(dim=-1, keepdim=True)
-    return topk_weights.to(torch.float32), topk_ids.to(torch.int32)
+    
+    topk_weights = torch.zeros((gating_output.shape[0], topk),
+                               device=gating_output.device, dtype=torch.float32)
+    topk_ids = torch.zeros((gating_output.shape[0], topk), device=gating_output.device,
+                           dtype= torch.int32)
+    torch.ops._C.fused_grouped_topk(topk_weights, topk_ids, gating_output, topk,
+                                    renormalize, num_expert_group, topk_group,
+                                    e_score_correction_bias, scoring_func)
+    return topk_weights, topk_ids
 
 # [TODO] remove the monkey patch to fix official error
 if m := sys.modules.get("vllm.model_executor.layers.fused_moe", None):
