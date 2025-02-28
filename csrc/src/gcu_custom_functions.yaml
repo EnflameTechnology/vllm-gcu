@@ -156,3 +156,6 @@
 
 - func: concat_and_cache_mla(Tensor kv_c, Tensor k_pe, Tensor(a!) kv_cache, Tensor slot_mapping, str kv_cache_dtype, Tensor scale) -> ()
   variants: function
+
+- func: fused_grouped_topk(Tensor(a!) topk_weights, Tensor(a!) topk_ids, Tensor gating_output, int topk, bool renormalize, int num_expert_group, int topk_group, Tensor e_score_correction_bias, str scoring_func) -> ()
+  variants: function
