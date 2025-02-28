@@ -5,5 +5,6 @@ add_py_test (PROJECT scorpio
              OS ubuntu
              MODULE vllm
              ID 1
-             NAME test_template
-             COMMAND "echo test success")
+             NAME test_gcu_models
+             COMMAND "cd tests && \
+             python -m pytest test_offline_inference.py")
