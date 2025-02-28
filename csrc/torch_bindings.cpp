@@ -56,6 +56,7 @@
 #include "src/topk_softmax.h"
 #include "src/weak_ref_tensor.h"
 #include "src/weight_only_quant.h"
+#include "src/fused_grouped_topk.h"
 // Note on op signatures:
 // The X_meta signatures are for the meta functions corresponding to op X.
 // They must be kept in sync with the signature for X. Generally, only
@@ -589,6 +590,9 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
   ops.def("dispatch_bgmv_low_level", &dispatch_bgmv_low_level);
   ops.impl("dispatch_bgmv_low_level", c10::kPrivateUse1,
            &dispatch_bgmv_low_level);
+
+  ops.def("fused_grouped_topk", &fused_grouped_topk);
+  ops.impl("fused_grouped_topk", c10::kPrivateUse1, &fused_grouped_topk);
 }
 
 TORCH_LIBRARY_EXPAND(CONCAT(TORCH_EXTENSION_NAME, _cache_ops), cache_ops) {
