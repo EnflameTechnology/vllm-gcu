@@ -70,6 +70,7 @@ add_custom_target(
 add_dependencies(package_all package_vllm_gcu_whl)
 
 install(DIRECTORY .epkg DESTINATION ${CMAKE_BINARY_DIR})
+install(DIRECTORY tests DESTINATION .)
 
 install(FILES cmake/env_config.json DESTINATION .)
 install(FILES cmake/package_info.json DESTINATION .)
