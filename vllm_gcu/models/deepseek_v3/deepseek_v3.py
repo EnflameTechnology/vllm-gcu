@@ -150,6 +150,7 @@ class DeepseekV2MoE(nn.Module):
         config: PretrainedConfig,
         quant_config: Optional[QuantizationConfig] = None,
         prefix: str = "",
+        max_model_len=None,
     ):
         super().__init__()
         self.routed_scaling_factor = config.routed_scaling_factor
@@ -190,6 +191,7 @@ class DeepseekV2MoE(nn.Module):
             prefix=f"{prefix}.experts",
             scoring_func=config.scoring_func,
             e_score_correction_bias=self.gate.e_score_correction_bias,
+            max_model_len=max_model_len,
         )
         self.tp_size = self.experts.tp_size
 
@@ -560,6 +562,7 @@ class DeepseekV2DecoderLayer(nn.Module):
         model_config: ModelConfig,
         cache_config: Optional[CacheConfig] = None,
         quant_config: Optional[QuantizationConfig] = None,
+        scheduler_config = None,
     ) -> None:
         super().__init__()
         self.hidden_size = config.hidden_size
@@ -599,6 +602,7 @@ class DeepseekV2DecoderLayer(nn.Module):
                 config=config,
                 quant_config=quant_config,
                 prefix=f"{prefix}.mlp",
+                max_model_len=scheduler_config.max_num_batched_tokens
             )
         else:
             self.mlp = DeepseekV2MLP(
@@ -708,6 +712,7 @@ class DeepseekV2Model(nn.Module):
                 model_config=model_config,
                 cache_config=cache_config,
                 quant_config=quant_config,
+                scheduler_config=vllm_config.scheduler_config,
             ),
             prefix=f"{prefix}.layers",
         )

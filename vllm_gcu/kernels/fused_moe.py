@@ -28,6 +28,7 @@ from vllm.utils import vllm_lib
 
 import vllm_gcu.envs as gcu_envs
 from vllm_gcu.kernels import _custom_ops as ops
+from vllm_gcu.distributed.all_to_all import all_to_all_v2
 
 logger = init_logger(__name__)
 
@@ -351,6 +352,7 @@ def fused_experts_impl(
     use_int4_w4a16: bool = False,
     global_num_experts: int = -1,
     expert_map: Optional[torch.Tensor] = None,
+    max_model_len=None,
     w1_scale: Optional[torch.Tensor] = None,
     w2_scale: Optional[torch.Tensor] = None,
     w1_zp: Optional[torch.Tensor] = None,
@@ -363,26 +365,18 @@ def fused_experts_impl(
 
     recv_token_total = None
     if gcu_envs.VLLM_GCU_ENABLE_EXPERT_PARALLEL:
+        assert max_model_len is not None
+        dp_size = gcu_envs.VLLM_GCU_DATA_PARALLEL_SIZE
         group = get_world_group().device_group
         ep_size = get_world_group().world_size
         ep_rank = get_world_group().rank_in_group
         expert_per_rank = global_num_experts // ep_size
 
-        output_shape = hidden_states.shape
-        output_dtype = hidden_states.dtype
-        output_device = hidden_states.device
+        hidden_states_ori = hidden_states
         ep_split_size = torch.empty([ep_size], dtype=torch.int32, device=topk_ids.device)
         ep_token_indices = torch.zeros([hidden_states.shape[0]*topk_ids.shape[1]], dtype=torch.int32, device=topk_ids.device)
         send_token_total = torch.empty([1], dtype=torch.int32, device=topk_ids.device)
         ops.get_ep_indices(ep_split_size, ep_token_indices, send_token_total, topk_ids, expert_per_rank, ep_size)
-        # ep_token_indices, ep_split_size = get_ep_indices(topk_ids)
-        # send_token_total = ep_split_size.sum()
-
-        sp_split_size = torch.empty_like(ep_split_size)
-        torch.distributed.all_to_all_single(sp_split_size, ep_split_size, group=group)
-        recv_token_total = sp_split_size.sum()
-        sp_split_size = sp_split_size.cpu().tolist()
-        ep_split_size = ep_split_size.cpu().tolist()
         # TODO:convert maybe loss acc, use view dtype
         send_packed = torch.cat(
             (
@@ -393,26 +387,20 @@ def fused_experts_impl(
             dim=1,
         )
         send_packed_sorted = send_packed[ep_token_indices]
-
         recv_packed = torch.empty(
             (
-                recv_token_total.item(),
+                max_model_len * dp_size,
                 hidden_states.shape[1] + topk_ids.shape[1] + topk_weights.shape[1],
             ),
             dtype=hidden_states.dtype,
             device=hidden_states.device,
         )
 
-        torch.distributed.all_to_all_single(
-            recv_packed[:recv_token_total],
-            send_packed_sorted[:send_token_total],
-            sp_split_size,
-            ep_split_size,
-            group=group,
-        )
+        sp_split_size = torch.empty_like(ep_split_size)
+        all_to_all_v2(recv_packed, send_packed_sorted, sp_split_size, ep_split_size, group=group, flag=1)
+        recv_token_total = sp_split_size.sum()
 
         ### EP ###
-        hidden_states_ori = hidden_states
         hidden_states = recv_packed[:, 0 : hidden_states.shape[1]].contiguous()
         topk_ids = recv_packed[
             :, hidden_states.shape[1] : hidden_states.shape[1] + topk_ids.shape[1]
@@ -573,19 +561,20 @@ def fused_experts_impl(
     if gcu_envs.VLLM_GCU_ENABLE_EXPERT_PARALLEL:
         sp_hidden_states = torch.zeros(
             (send_packed_sorted.shape[0], hidden_states.shape[1]),
-            dtype=output_dtype,
-            device=output_device,
+            dtype=hidden_states_ori.dtype,
+            device=hidden_states_ori.device,
         )
-        torch.distributed.all_to_all_single(
-            sp_hidden_states[:send_token_total],
-            out_hidden_states[:recv_token_total],
+        all_to_all_v2(
+            sp_hidden_states,
+            out_hidden_states,
             ep_split_size,
             sp_split_size,
             group=group,
+            flag=0
         )
 
         ### SP ###
-        output = torch.zeros(output_shape, dtype=output_dtype, device=output_device)
+        output = torch.zeros_like(hidden_states_ori)
         output.scatter_add_(
             0,
             torch.broadcast_to(ep_token_indices.to(torch.int64).unsqueeze(1), sp_hidden_states.shape),
@@ -617,6 +606,7 @@ class EPFusedMoE(FusedMoE):
         custom_routing_function: Optional[Callable] = None,
         scoring_func: str = "softmax",
         e_score_correction_bias: Optional[torch.Tensor] = None,
+        max_model_len=None
     ):
 
         self.global_num_experts = num_experts
@@ -649,6 +639,7 @@ class EPFusedMoE(FusedMoE):
                 )
         else:
             self.expert_map = None
+        self.max_model_len = max_model_len
 
         super().__init__(
             (
@@ -840,6 +831,7 @@ class EPFusedMoE(FusedMoE):
                 use_grouped_topk=self.use_grouped_topk,
                 global_num_experts=self.global_num_experts,
                 expert_map=self.expert_map,
+                max_model_len=self.max_model_len,
                 topk_group=self.topk_group,
                 num_expert_group=self.num_expert_group,
                 custom_routing_function=self.custom_routing_function,
