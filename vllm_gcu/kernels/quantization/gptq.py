@@ -110,7 +110,9 @@ class GPTQGCULinearMethod(GPTQLinearMethod):
         ):
             assert self.quant_config.desc_act or self.quant_config.static_groups
 
-            scale_and_zero_size = input_size_per_partition // group_size
+            scale_and_zero_size = (
+                input_size_per_partition // self.quant_config.group_size
+            )
             scale_and_zero_input_dim = 0
             output_size_per_partition = sum(output_partition_sizes)
             weight_loader = extra_weight_attrs.get("weight_loader")

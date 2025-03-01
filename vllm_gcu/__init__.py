@@ -23,7 +23,10 @@ def set_use_mla(self, v):
 
 def get_use_mla(self):
     import vllm.envs as envs
-    return not envs.VLLM_MLA_DISABLE
+    if not self.is_deepseek_mla or envs.VLLM_MLA_DISABLE:
+        return False
+
+    return True
 
 
 setattr(ModelConfig, "use_mla", property(get_use_mla, set_use_mla))
