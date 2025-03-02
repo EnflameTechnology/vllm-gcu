@@ -20,7 +20,7 @@ def rearrange_uint4_int32_uint8_gptq(
     weight = torch.bitwise_and(weight, (2**bits) - 1)
     weight = weight.reshape(-1, weight.shape[2])
 
-    if qzeros:
+    if qzeros is not None:
         zeros = torch.bitwise_right_shift(
             torch.unsqueeze(qzeros, 2).expand(-1, -1, 32 // bits),
             wf.unsqueeze(0),
