@@ -485,6 +485,7 @@ class DeepseekV2MLAAttention(nn.Module):
             self.hidden_size,
             bias=False,
             quant_config=quant_config,
+            reduce_results=not gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL,
             prefix=f"{prefix}.o_proj",
         )
 
