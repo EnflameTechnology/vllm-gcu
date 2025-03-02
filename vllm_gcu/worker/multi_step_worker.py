@@ -10,10 +10,15 @@ from vllm.distributed import broadcast_tensor_dict, get_pp_group
 from vllm.model_executor.layers.sampler import SamplerOutput
 from vllm.sequence import ExecuteModelRequest
 from vllm.worker.model_runner_base import BroadcastableModelInput
-from vllm.worker.multi_step_model_runner import (MultiStepModelRunner,
-                                                 StatefulModelInput,
-                                                 MULTI_STEP_ATTENTION_BACKENDS)
+from vllm.worker.multi_step_model_runner import (
+    MULTI_STEP_ATTENTION_BACKENDS,
+    MultiStepModelRunner,
+    PythonizationCache,
+    StatefulModelInput,
+)
 from vllm.worker.worker_base import WorkerInput
+
+from vllm_gcu.worker.model_runner import GCUModelRunnerBase
 from vllm_gcu.worker.worker import GCUWorker
 
 MULTI_STEP_ATTENTION_BACKENDS += ["xformers"]
@@ -25,13 +30,28 @@ class MultiStepState:
     model_input: StatefulModelInput
 
 
+class GCUMultiStepModelRunner(MultiStepModelRunner):
+    def __init__(self, base_model_runner: GCUModelRunnerBase, *args, **kwargs):
+        GCUModelRunnerBase.__init__(self, *args, **kwargs)
+
+        self._base_model_runner: GCUModelRunnerBase = base_model_runner
+        self.is_multi_step = self.scheduler_config.is_multi_step
+        self.pinned_sampled_token_ids: Optional[torch.Tensor] = None
+
+        self.pythonization_cache = (
+            PythonizationCache()
+            if self.parallel_config.pipeline_parallel_size == 1
+            else None
+        )
+
+
 class GCUMultiStepWorker(GCUWorker):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         base_model_runner = self.model_runner
         # for multi-step model, wrap the model runner with MultiStepModelRunner
-        self.model_runner = MultiStepModelRunner(
+        self.model_runner = GCUMultiStepModelRunner(
             base_model_runner,
             vllm_config=base_model_runner.vllm_config,
             kv_cache_dtype=self.cache_config.cache_dtype,
@@ -39,8 +59,9 @@ class GCUMultiStepWorker(GCUWorker):
         )
 
         pipeline_parallel_size = self.parallel_config.pipeline_parallel_size
-        self.multi_step_states: List[
-            Optional[MultiStepState]] = [None] * pipeline_parallel_size
+        self.multi_step_states: List[Optional[MultiStepState]] = [
+            None
+        ] * pipeline_parallel_size
         self.temp_output = None
 
     def _get_driver_input_and_broadcast(
@@ -55,17 +76,19 @@ class GCUMultiStepWorker(GCUWorker):
         if is_first_multi_step:
             # on first step we prepare the worker input and model input normally
             worker_input: WorkerInput = self.prepare_worker_input(
-                execute_model_req=execute_model_req)
-            model_input: StatefulModelInput = (
-                self.model_runner.prepare_model_input(
-                    execute_model_req.seq_group_metadata_list,
-                    execute_model_req.virtual_engine,
-                    execute_model_req.finished_requests_ids))
+                execute_model_req=execute_model_req
+            )
+            model_input: StatefulModelInput = self.model_runner.prepare_model_input(
+                execute_model_req.seq_group_metadata_list,
+                execute_model_req.virtual_engine,
+                execute_model_req.finished_requests_ids,
+            )
 
             if execute_model_req.async_callback:
                 model_input.frozen_model_input = dataclasses.replace(  # type: ignore
                     model_input.frozen_model_input,
-                    async_callback=execute_model_req.async_callback)
+                    async_callback=execute_model_req.async_callback,
+                )
         else:
             # on subsequent steps we reuse the worker input and model input
             multi_step_state = self.multi_step_states[virtual_engine]
@@ -86,7 +109,8 @@ class GCUMultiStepWorker(GCUWorker):
             # we broadcast the last sampled token ids to all TP workers so they
             # can update their model input metadata in-place.
             self._prepare_last_sampled_token_ids_for_tp_workers(
-                execute_model_req=execute_model_req, model_input=model_input)
+                execute_model_req=execute_model_req, model_input=model_input
+            )
 
         if self.do_metadata_broadcast:
             broadcast_data = worker_input.as_broadcastable_tensor_dict()
@@ -102,18 +126,20 @@ class GCUMultiStepWorker(GCUWorker):
         execute_model_req: ExecuteModelRequest,
         model_input: StatefulModelInput,
     ) -> None:
-        """ 
-        Prepare the last sampled token ids for TP workers. If it's the last 
+        """
+        Prepare the last sampled token ids for TP workers. If it's the last
         PP rank, then the last sampled token ids are already in the model_input.
         If it is NOT the last PP rank, then we need to get the last sampled
         token that is cached in the execute_model_req.
         """
         if get_pp_group().is_last_rank:
-            assert model_input.cached_outputs[
-                -1].sampler_output.sampled_token_ids is None
+            assert (
+                model_input.cached_outputs[-1].sampler_output.sampled_token_ids is None
+            )
             assert model_input.cached_outputs[-1].sampled_token_ids is not None
             model_input.last_sampled_token_ids = model_input.cached_outputs[
-                -1].sampled_token_ids
+                -1
+            ].sampled_token_ids
             # free sampled token ids from the previous step if it has been
             # pythonized. Cannot free the last sampled token ids because
             # we need it for GPU advance_step.
@@ -125,10 +151,12 @@ class GCUMultiStepWorker(GCUWorker):
             # execute_model_req
             assert execute_model_req.last_sampled_token_ids is not None
             model_input.last_sampled_token_ids = (
-                execute_model_req.last_sampled_token_ids.cuda())
+                execute_model_req.last_sampled_token_ids.cuda()
+            )
             model_input.add_sampler_output(
                 SamplerOutput(outputs=[], sampled_token_ids=None),
-                model_input.last_sampled_token_ids)
+                model_input.last_sampled_token_ids,
+            )
 
             # free sampled token ids from the previous step.
             # TODO(will) we could reuse the sampled token ids tensor from
@@ -140,8 +168,7 @@ class GCUMultiStepWorker(GCUWorker):
     def prepare_input(
         self,
         execute_model_req: Optional[ExecuteModelRequest] = None,
-    ) -> Optional[Tuple[StatefulModelInput, WorkerInput, Dict[str,
-                                                              torch.Tensor]]]:
+    ) -> Optional[Tuple[StatefulModelInput, WorkerInput, Dict[str, torch.Tensor]]]:
         """
         Depending on the current state of the request and multi step worker,
         this method may skip the normal _prepare_model_input and
@@ -159,13 +186,15 @@ class GCUMultiStepWorker(GCUWorker):
                 return None
 
             virtual_engine = execute_model_req.virtual_engine
-            (model_input, worker_input,
-             kwargs) = self._get_driver_input_and_broadcast(execute_model_req)
+            (model_input, worker_input, kwargs) = self._get_driver_input_and_broadcast(
+                execute_model_req
+            )
             assert isinstance(model_input, StatefulModelInput)
             if execute_model_req.is_first_multi_step:
                 # cache the worker input and model input for the next steps
                 self.multi_step_states[virtual_engine] = MultiStepState(
-                    worker_input=worker_input, model_input=model_input)
+                    worker_input=worker_input, model_input=model_input
+                )
         # if TP workers
         else:
             broadcast_data = self._get_worker_input_from_broadcast()
@@ -193,7 +222,8 @@ class GCUMultiStepWorker(GCUWorker):
                 # advance_step
                 model_input.add_sampler_output(
                     SamplerOutput(outputs=[], sampled_token_ids=None),
-                    model_input.last_sampled_token_ids)
+                    model_input.last_sampled_token_ids,
+                )
 
         assert model_input is not None
         assert worker_input is not None

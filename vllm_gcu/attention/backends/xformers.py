@@ -337,6 +337,7 @@ class GCUXFormersMetadata(AttentionMetadata, PagedAttentionMetadata):
         block_size: int,
         num_seqs: int,
         num_queries: int,
+        turn_prefills_into_decodes: bool = False,
     ):
         """
         Update metadata in-place to advance one decode step.
@@ -347,6 +348,23 @@ class GCUXFormersMetadata(AttentionMetadata, PagedAttentionMetadata):
         if num_seqs != num_queries:
             assert num_seqs > num_queries
             assert self.use_cuda_graph
+
+        if turn_prefills_into_decodes:
+            # When Multi-Step is enabled with Chunked-Prefill, prefills and
+            # decodes are scheduled together. In the first step, all the
+            # prefills turn into decodes. This update reflects that
+            # conversion.
+            assert self.num_decode_tokens + self.num_prefills == num_seqs
+            self.num_decode_tokens += self.num_prefills
+            self.num_prefills = 0
+            self.num_prefill_tokens = 0
+            self.max_prefill_seq_len = 0
+            self.max_query_len = 1
+
+            self.slot_mapping = self.slot_mapping[:num_seqs]
+        else:
+            assert self.seq_lens is not None
+            assert self.max_decode_seq_len == max(self.seq_lens)
 
         assert self.num_prefills == 0
         assert self.num_prefill_tokens == 0
