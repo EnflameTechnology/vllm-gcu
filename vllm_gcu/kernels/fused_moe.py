@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding=utf-8
-import sys
 import functools
+import sys
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import torch
@@ -9,6 +9,7 @@ import vllm.envs as envs
 from vllm.distributed import (
     get_tensor_model_parallel_rank,
     get_tensor_model_parallel_world_size,
+    tensor_model_parallel_all_reduce,
 )
 
 from vllm.distributed.parallel_state import get_world_group
@@ -86,14 +87,7 @@ def moe_align_block_size(
     num_tokens_post_pad = torch.empty((1), dtype=torch.int32, device=topk_ids.device)
     if num_experts >= 224:
         if envs.VLLM_ENABLE_MOE_ALIGN_BLOCK_SIZE_TRITON:
-            moe_align_block_size_triton(
-                topk_ids,
-                num_experts,
-                block_size,
-                sorted_ids,
-                expert_ids,
-                num_tokens_post_pad,
-            )
+            raise NotImplementedError
         else:
             ops.sgl_moe_align_block_size(
                 topk_ids,
@@ -153,7 +147,7 @@ def invoke_fused_moe_kernel(
     elif use_int8_w8a16 or use_int4_w4a16:
         assert B_scale is not None
         assert block_shape and block_shape[0] == 0
-        assert B_zp is not None or B_zp.ndim == 3
+        assert B_zp is None or B_zp.ndim == 3
     elif use_int8_w8a8:
         assert A_scale is not None
         assert B_scale is not None
@@ -897,6 +891,7 @@ def forward_oot(
 
 UnquantizedFusedMoEMethod.forward_oot = forward_oot
 
+
 # This is used by the Deepseek-V2 and Deepseek-V3 model
 def grouped_topk(
     hidden_states: torch.Tensor,
@@ -909,15 +904,26 @@ def grouped_topk(
     e_score_correction_bias: Optional[torch.Tensor] = None,
 ):
     assert hidden_states.shape[0] == gating_output.shape[0], "Number of tokens mismatch"
-    
-    topk_weights = torch.zeros((gating_output.shape[0], topk),
-                               device=gating_output.device, dtype=torch.float32)
-    topk_ids = torch.zeros((gating_output.shape[0], topk), device=gating_output.device,
-                           dtype= torch.int32)
-    torch.ops._C.fused_grouped_topk(topk_weights, topk_ids, gating_output, topk,
-                                    renormalize, num_expert_group, topk_group,
-                                    e_score_correction_bias, scoring_func)
+
+    topk_weights = torch.zeros(
+        (gating_output.shape[0], topk), device=gating_output.device, dtype=torch.float32
+    )
+    topk_ids = torch.zeros(
+        (gating_output.shape[0], topk), device=gating_output.device, dtype=torch.int32
+    )
+    torch.ops._C.fused_grouped_topk(
+        topk_weights,
+        topk_ids,
+        gating_output,
+        topk,
+        renormalize,
+        num_expert_group,
+        topk_group,
+        e_score_correction_bias,
+        scoring_func,
+    )
     return topk_weights, topk_ids
+
 
 # [TODO] remove the monkey patch to fix official error
 if m := sys.modules.get("vllm.model_executor.layers.fused_moe", None):
