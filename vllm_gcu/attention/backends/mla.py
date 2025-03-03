@@ -915,7 +915,9 @@ class GCUMLAImpl(MLACommonImpl[GCUMLAMetadata]):
 
         original_query = q
 
-        attn_bias = BlockDiagonalCausalMask.from_seqlens(attn_metadata.seq_lens)
+        attn_bias = BlockDiagonalCausalMask.from_seqlens(
+            attn_metadata.seq_lens, device="gcu"
+        )
 
         kv_nope = self.kv_b_proj(kv_c_normed)[0].view(
             -1, self.num_heads, self.qk_nope_head_dim + self.v_head_dim
