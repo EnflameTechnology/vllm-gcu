@@ -553,6 +553,8 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
         weight_bits = self.quant_config.weight_bits
         has_zp = self.quant_config.has_zp
 
+        assert has_zp, "Op impl has bug when sym"
+
         fused_experts_impl(
             x,
             layer.w13_qweight,
