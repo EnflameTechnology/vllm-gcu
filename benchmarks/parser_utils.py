@@ -9,3 +9,6 @@ def override_parser(parser):
 
     # set disable_async_output_proc default True
     parser._option_string_actions["--disable-async-output-proc"].default = True
+
+    # set "gcu" to device
+    parser._option_string_actions["--device"].choices += ["gcu"]

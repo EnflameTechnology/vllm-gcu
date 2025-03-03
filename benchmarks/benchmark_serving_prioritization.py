@@ -31,11 +31,14 @@ import io
 import json
 import os
 import random
+import sys
 import time
 import warnings
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, AsyncGenerator, Collection, Dict, List, Optional, Tuple
+
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 import aiohttp
 
@@ -1365,4 +1368,3 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     main(args)
-
