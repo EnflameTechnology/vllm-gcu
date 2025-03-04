@@ -136,7 +136,7 @@ class DeepseekV2MLP(nn.Module):
             )
         self.act_fn = SiluAndMul()
 
-    def forward(self, x):
+    def forward(self, x, max_model_len=None):
         gate_up, _ = self.gate_up_proj(x)
         x = self.act_fn(gate_up)
         x, _ = self.down_proj(x)
@@ -205,7 +205,7 @@ class DeepseekV2MoE(nn.Module):
                 reduce_results=False,
             )
 
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+    def forward(self, hidden_states: torch.Tensor, max_model_len=None) -> torch.Tensor:
         num_tokens, hidden_dim = hidden_states.shape
         hidden_states = hidden_states.view(-1, hidden_dim)
         if self.n_shared_experts is not None:
@@ -213,7 +213,7 @@ class DeepseekV2MoE(nn.Module):
         # router_logits: (num_tokens, n_experts)
         router_logits, _ = self.gate(hidden_states)
         final_hidden_states = (
-            self.experts(hidden_states=hidden_states, router_logits=router_logits)
+            self.experts(hidden_states=hidden_states, router_logits=router_logits, max_model_len=max_model_len)
             * self.routed_scaling_factor
         )
         if shared_output is not None:
@@ -602,7 +602,6 @@ class DeepseekV2DecoderLayer(nn.Module):
                 config=config,
                 quant_config=quant_config,
                 prefix=f"{prefix}.mlp",
-                max_model_len=scheduler_config.max_num_batched_tokens
             )
         else:
             self.mlp = DeepseekV2MLP(
@@ -616,6 +615,8 @@ class DeepseekV2DecoderLayer(nn.Module):
         self.post_attention_layernorm = RMSNorm(
             config.hidden_size, eps=config.rms_norm_eps
         )
+        self.scheduler_config=scheduler_config
+        self.model_config = model_config
 
     def forward(
         self,
@@ -674,8 +675,9 @@ class DeepseekV2DecoderLayer(nn.Module):
 
         # Fully Connected
         hidden_states, residual = self.post_attention_layernorm(hidden_states, residual)
-
-        hidden_states = self.mlp(hidden_states)
+        use_max = (not gcu_envs.VLLM_GCU_DEBUG_PDONLY) or attn_metadata.num_prefills > 0
+        max_pad = self.scheduler_config.max_num_batched_tokens if use_max else self.scheduler_config.max_num_seqs
+        hidden_states = self.mlp(hidden_states, max_pad)
 
         return hidden_states, residual
 
