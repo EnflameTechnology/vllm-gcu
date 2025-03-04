@@ -804,7 +804,7 @@ class EPFusedMoE(FusedMoE):
             )
             return
 
-    def forward(self, hidden_states: torch.Tensor, router_logits: torch.Tensor):
+    def forward(self, hidden_states: torch.Tensor, router_logits: torch.Tensor, max_model_len=None):
         assert self.quant_method is not None
 
         # Matrix multiply.
@@ -832,7 +832,7 @@ class EPFusedMoE(FusedMoE):
                 use_grouped_topk=self.use_grouped_topk,
                 global_num_experts=self.global_num_experts,
                 expert_map=self.expert_map,
-                max_model_len=self.max_model_len,
+                max_model_len=max_model_len,
                 topk_group=self.topk_group,
                 num_expert_group=self.num_expert_group,
                 custom_routing_function=self.custom_routing_function,
