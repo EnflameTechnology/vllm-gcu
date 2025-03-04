@@ -94,7 +94,7 @@ def memory_profiling(
 
 
 def dump_memory_snapshot_when_exception(func):
-    n = os.environ.get("VLLM_DUMP_SNAPSHOT_EVERY_N_STEP", 0)
+    n = int(os.environ.get("VLLM_DUMP_SNAPSHOT_EVERY_N_STEP", 0))
     if n <= 0:
         return func
 
@@ -105,7 +105,7 @@ def dump_memory_snapshot_when_exception(func):
     def _wrapper(*args, **kwargs):
         nonlocal step
         rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
-        if step % int(n) == 0:
+        if step % n == 0:
             filename = f"/tmp/vllm_snapshot_rank{rank}_step{step}.pkl"
             torch.gcu.memory._dump_snapshot(filename)
         step += 1
