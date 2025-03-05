@@ -15,6 +15,7 @@
 #include "src/fused_add_rms_norm.h"
 #include "src/fused_add_rms_norm_quant.h"
 #include "src/fused_add_rms_norm_static_fp8_quant.h"
+#include "src/fused_grouped_topk.h"
 #include "src/fused_moe_kernel.h"
 #include "src/fused_moe_quant_kernel.h"
 #include "src/gelu_and_mul.h"
@@ -56,7 +57,6 @@
 #include "src/topk_softmax.h"
 #include "src/weak_ref_tensor.h"
 #include "src/weight_only_quant.h"
-#include "src/fused_grouped_topk.h"
 // Note on op signatures:
 // The X_meta signatures are for the meta functions corresponding to op X.
 // They must be kept in sync with the signature for X. Generally, only
@@ -651,12 +651,18 @@ TORCH_LIBRARY_EXPAND(CONCAT(TORCH_EXTENSION_NAME, _cache_ops), cache_ops) {
   // cache_ops.impl("convert_fp8", torch::kPrivateUse1, &convert_fp8);
 }
 
-TORCH_LIBRARY_IMPL(CONCAT(_moe, TORCH_EXTENSION_NAME), PrivateUse1, moe_ops) {
+TORCH_LIBRARY_FRAGMENT(CONCAT(_moe, TORCH_EXTENSION_NAME), moe_ops) {
   // Apply topk softmax to the gating outputs.
-  // moe_ops.def(
-  //     "topk_softmax(Tensor! topk_weights, Tensor! topk_indices, Tensor! "
-  //     "token_expert_indices, Tensor gating_output) -> ()");
-  moe_ops.impl("topk_softmax", &topk_softmax);
+  std::optional<c10::OperatorHandle> handle;
+
+  handle =
+      c10::Dispatcher::singleton().findSchema({"_moe_C::topk_softmax", ""});
+  if (!handle.has_value()) {
+    moe_ops.def(
+        "topk_softmax(Tensor! topk_weights, Tensor! topk_indices, Tensor! "
+        "token_expert_indices, Tensor gating_output) -> ()");
+  }
+  moe_ops.impl("topk_softmax", torch::kPrivateUse1, &topk_softmax);
 
   // Calculate the result of moe by summing up the partial results
   // from all selected experts.
@@ -665,20 +671,29 @@ TORCH_LIBRARY_IMPL(CONCAT(_moe, TORCH_EXTENSION_NAME), PrivateUse1, moe_ops) {
 
   // Aligning the number of tokens to be processed by each expert such
   // that it is divisible by the block size.
-  // moe_ops.def(
-  //     "moe_align_block_size(Tensor topk_ids, int num_experts,"
-  //     "                     int block_size, Tensor! sorted_token_ids,"
-  //     "                     Tensor! experts_ids,"
-  //     "                     Tensor! num_tokens_post_pad) -> ()");
-  moe_ops.impl("moe_align_block_size", &moe_align_block_size);
+  handle = c10::Dispatcher::singleton().findSchema(
+      {"_moe_C::moe_align_block_size", ""});
+  if (!handle.has_value()) {
+    moe_ops.def(
+        "moe_align_block_size(Tensor topk_ids, int num_experts,"
+        "                     int block_size, Tensor! sorted_token_ids,"
+        "                     Tensor! experts_ids,"
+        "                     Tensor! num_tokens_post_pad) -> ()");
+  }
+  moe_ops.impl("moe_align_block_size", torch::kPrivateUse1,
+               &moe_align_block_size);
 
   // temporarily adapted from
   // https://github.com/sgl-project/sglang/commit/ded9fcd09a43d5e7d5bb31a2bc3e9fc21bf65d2a
-  // moe_ops.def(
-  //     "sgl_moe_align_block_size(Tensor topk_ids, int num_experts,"
-  //     "                         int block_size, Tensor! sorted_token_ids,"
-  //     "                         Tensor! experts_ids,"
-  //     "                         Tensor! num_tokens_post_pad) -> ()");
+  handle = c10::Dispatcher::singleton().findSchema(
+      {"_moe_C::sgl_moe_align_block_size", ""});
+  if (!handle.has_value()) {
+    moe_ops.def(
+        "sgl_moe_align_block_size(Tensor topk_ids, int num_experts,"
+        "                         int block_size, Tensor! sorted_token_ids,"
+        "                         Tensor! experts_ids,"
+        "                         Tensor! num_tokens_post_pad) -> ()");
+  }
   moe_ops.impl("sgl_moe_align_block_size", torch::kPrivateUse1,
                &sgl_moe_align_block_size);
 
