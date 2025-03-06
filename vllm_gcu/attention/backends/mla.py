@@ -33,7 +33,10 @@ from vllm.model_executor.layers.quantization.compressed_tensors.schemes import (
     CompressedTensorsW8A8Fp8,
 )
 from vllm.model_executor.layers.quantization.fp8 import Fp8LinearMethod
-from vllm.model_executor.layers.quantization.utils.fp8_utils import is_fp8
+from vllm.model_executor.layers.quantization.utils.fp8_utils import (
+    current_platform_fp8_dtype,
+    is_fp8,
+)
 from vllm.model_executor.layers.quantization.utils.quant_utils import scaled_quantize
 from vllm.model_executor.model_loader.loader import device_loading_context
 
@@ -89,8 +92,7 @@ class GCUMLABackend(AttentionBackend):
         # ops.copy_blocks_mla(kv_caches, src_to_dists)
         raise NotImplementedError
 
-    staticmethod
-
+    @staticmethod
     def get_supported_head_sizes() -> List[int]:
         return [576]
 
@@ -361,7 +363,7 @@ class GCUMLAMetadata(MLACommonMetadata):
             block_size=block_size,
             input_tokens=model_input.input_tokens,
             sampled_token_ids=sampled_token_ids,
-            input_positions=model_input.input_positions,
+            input_positions=self.input_positions,
             seq_lens=self.seq_lens_tensor,
             slot_mapping=self.slot_mapping,
             block_tables=self.block_tables,
@@ -726,6 +728,8 @@ class GCUMLAImpl(MLACommonImpl[GCUMLAMetadata]):
                 # CompressedTensorsW8A8Fp8 the input is dynamic per-token
                 # we ignore if it is static-per-tensor since we are going to
                 # requantize after later anyways
+                from compressed_tensors.quantization import QuantizationStrategy
+
                 strategy = layer.scheme.strategy
                 if strategy == QuantizationStrategy.TENSOR:
                     return (1, -1), (-1, -1)  # per-token, per-tensor
