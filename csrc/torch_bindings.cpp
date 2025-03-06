@@ -40,6 +40,7 @@
 #include "src/memory_efficient_attention_alibi.h"
 #include "src/moe_align_block_size.h"
 #include "src/moe_align_block_size_pad.h"
+#include "src/moe_sum.h"
 #include "src/mul_and_silu.h"
 #include "src/paged_attention_v1.h"
 #include "src/paged_attention_v2.h"
@@ -49,6 +50,7 @@
 #include "src/rotary_embedding.h"
 #include "src/sgl_moe_align_block_size.h"
 #include "src/silu_and_mul.h"
+#include "src/silu_and_mul_pad.h"
 #include "src/silu_asym_quant.h"
 #include "src/silu_mul_quant.h"
 #include "src/silu_quant.h"
@@ -113,6 +115,9 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
   // Activation function used in SwiGLU.
   ops.def("silu_and_mul(Tensor! out, Tensor input) -> ()");
   ops.impl("silu_and_mul", torch::kPrivateUse1, &silu_and_mul);
+
+  ops.def("silu_and_mul_pad", &silu_and_mul_pad);
+  ops.impl("silu_and_mul_pad", torch::kPrivateUse1, &silu_and_mul_pad);
 
   ops.def("mul_and_silu(Tensor! out, Tensor input) -> ()");
   ops.impl("mul_and_silu", torch::kPrivateUse1, &mul_and_silu);
@@ -677,6 +682,11 @@ TORCH_LIBRARY_FRAGMENT(CONCAT(_moe, TORCH_EXTENSION_NAME), moe_ops) {
   // from all selected experts.
   // moe_ops.def("moe_sum(Tensor! input, Tensor output) -> ()");
   // moe_ops.impl("moe_sum", torch::kPrivateUse1, &moe_sum);
+
+  moe_ops.def(
+      "moe_sum_pad(Tensor(a!) out, Tensor input, Tensor size, int dim, bool "
+      "keepdim) -> ()");
+  moe_ops.impl("moe_sum_pad", torch::kPrivateUse1, &moe_sum);
 
   // Aligning the number of tokens to be processed by each expert such
   // that it is divisible by the block size.

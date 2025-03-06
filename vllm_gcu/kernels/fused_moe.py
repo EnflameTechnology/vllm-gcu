@@ -91,7 +91,7 @@ def moe_align_block_size(
     if topk_ids_size is not None:
         ops.moe_align_block_size_pad(
             topk_ids,
-            topk_ids_size.unsqueeze(0).to(torch.int32),
+            topk_ids_size,
             num_experts,
             block_size,
             sorted_ids,
@@ -146,6 +146,7 @@ def invoke_fused_moe_kernel(
     use_int4_w4a16: bool,
     use_int8_w8a8: bool,
     block_shape: Optional[List[int]] = None,
+    real_token_num=None
 ) -> None:
     assert topk_weights.stride(1) == 1
     assert sorted_token_ids.stride(0) == 1
@@ -199,6 +200,7 @@ def invoke_fused_moe_kernel(
             top_k,
             block_size,
             None,
+            real_token_num,
         )
     else:
         topk_weights = topk_weights.to(torch.float32)  # WA for grouped_topk
@@ -401,13 +403,11 @@ def fused_experts_impl(
         recv_token_total = sp_split_size.sum()
 
         ### EP ###
-        hidden_states = recv_packed[:, 0 : hidden_states.shape[1]].contiguous()
-        topk_ids = recv_packed[
-            :, hidden_states.shape[1] : hidden_states.shape[1] + topk_ids.shape[1]
-        ].to(topk_ids.dtype)
-        topk_weights = recv_packed[
-            :, hidden_states.shape[1] + topk_ids.shape[1] :
-        ].to(topk_weights.dtype)
+        hidden_states_, topk_ids_, topk_weights_ = torch.split(
+            recv_packed, [hidden_states.shape[1], topk_ids.shape[1], topk_weights.shape[1]], dim=1)
+        hidden_states = hidden_states_.contiguous()
+        topk_ids = topk_ids_.to(topk_ids.dtype)
+        topk_weights = topk_weights_.to(topk_weights.dtype)
 
     # Check constraints.
     if use_int4_w4a16:
@@ -480,10 +480,11 @@ def fused_experts_impl(
         )
         curr_hidden_states = hidden_states[begin_chunk_idx:end_chunk_idx]
         tokens_in_chunk, _ = curr_hidden_states.shape
-        valid_in_chunk = None
         if recv_token_total is not None:
-            valid_in_chunk = torch.clamp(recv_token_total, min=0, max=tokens_in_chunk)
+            valid_in_chunk = torch.clamp(recv_token_total, min=0, max=tokens_in_chunk).unsqueeze(0).to(torch.int32)
             recv_token_total -= tokens_in_chunk
+        else:
+            valid_in_chunk = torch.tensor([tokens_in_chunk], dtype=torch.int32, device=curr_hidden_states.device)
 
         if tokens_in_chunk == 0:
             break
@@ -526,9 +527,10 @@ def fused_experts_impl(
             use_int4_w4a16=use_int4_w4a16,
             use_int8_w8a8=use_int8_w8a8,
             block_shape=block_shape,
+            real_token_num=valid_in_chunk,
         )
 
-        torch.ops._C.silu_and_mul(intermediate_cache2, intermediate_cache1.view(-1, N))
+        torch.ops._C.silu_and_mul_pad(intermediate_cache2, intermediate_cache1.view(-1, N), valid_in_chunk*top_k_num)
 
         invoke_fused_moe_kernel(
             intermediate_cache2,
@@ -550,13 +552,12 @@ def fused_experts_impl(
             use_int4_w4a16=use_int4_w4a16,
             use_int8_w8a8=use_int8_w8a8,
             block_shape=block_shape,
+            real_token_num=valid_in_chunk,
         )
         # TODO: replace with moe_sum
-        torch.sum(
-            intermediate_cache3.view(*intermediate_cache3.shape),
-            dim=1,
-            out=out_hidden_states[begin_chunk_idx:end_chunk_idx],
-        )
+        torch.ops._moe_C.moe_sum_pad(out_hidden_states[begin_chunk_idx:end_chunk_idx],
+                                     intermediate_cache3.view(*intermediate_cache3.shape),
+                                     valid_in_chunk, 1, False)
 
     if gcu_envs.VLLM_GCU_ENABLE_EXPERT_PARALLEL:
         sp_hidden_states = torch.zeros(
@@ -575,9 +576,9 @@ def fused_experts_impl(
 
         ### SP ###
         output = torch.zeros_like(hidden_states_ori)
-        output.scatter_add_(
+        output.index_add_(
             0,
-            torch.broadcast_to(ep_token_indices.to(torch.int64).unsqueeze(1), sp_hidden_states.shape),
+            ep_token_indices.to(torch.int64),
             sp_hidden_states,
         )
         hidden_states_ori.copy_(output)

@@ -49,7 +49,7 @@
 - func: fused_moe_kernel(Tensor(a!) C, Tensor A, Tensor B, Tensor topk_weights, Tensor topk_ids, Tensor sorted_topk_ids, Tensor expert_ids, Tensor num_tokens_post_pad, bool mul_routed_weight, int topk, int block_size, Tensor? bias) -> ()
   variants: function
 
-- func: fused_moe_quant_kernel(Tensor(a!) C, Tensor A, Tensor B, Tensor? A_scale, Tensor B_scale, int gs, Tensor? B_zp, Tensor topk_weights, Tensor topk_ids, Tensor sorted_token_ids, Tensor experts_ids, Tensor num_tokens_post_pad, bool mul_routed_weight, int topk, int block_size, Tensor? bias) -> ()
+- func: fused_moe_quant_kernel(Tensor(a!) C, Tensor A, Tensor B, Tensor? A_scale, Tensor B_scale, int gs, Tensor? B_zp, Tensor topk_weights, Tensor topk_ids, Tensor sorted_token_ids, Tensor experts_ids, Tensor num_tokens_post_pad, bool mul_routed_weight, int topk, int block_size, Tensor? bias, Tensor? real_token_num) -> ()
   variants: function
 
 - func: topk_softmax(Tensor(a!) topk_weights, Tensor(a!) topk_indices, Tensor(a!) token_expert_indices, Tensor(a!) gating_output) -> ()
@@ -161,4 +161,10 @@
   variants: function
 
 - func: get_ep_indices(Tensor(a!) ep_count, Tensor(a!) ep_token_indices, Tensor(a!) ep_valid_token_indices, Tensor topk_ids, int expert_per_rank, int ep_size) -> ()
+  variants: function
+
+- func: silu_and_mul_pad(Tensor(a!) out, Tensor input, Tensor size) -> ()
+  variants: function
+
+- func: moe_sum(Tensor(a!) out, Tensor input, Tensor size, int dim, bool keepdim) -> ()
   variants: function
