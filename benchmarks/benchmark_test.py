@@ -154,13 +154,44 @@ def fake_requests(
     input_len: int,
     output_len: int,
     num_prompts: int,
+    random_prompt: bool,
     tokenizer: PreTrainedTokenizerBase,
 ) -> List[Tuple[str, str, int, int]]:
-    prompt = "hi" * input_len
-    special_tokens_len = len(tokenizer(prompt).input_ids) - input_len
-    if special_tokens_len > 0:
-        prompt = "hi" * (input_len - special_tokens_len)
-    fake_requests = [(prompt, None, input_len, output_len) for _ in range(num_prompts)]
+
+    if random_prompt:
+        fake_requests = []
+        vocab_size = tokenizer.vocab_size
+        for _ in range(num_prompts):
+            # Synthesize a prompt with the given input length.
+            candidate_ids = [
+                random.randint(0, vocab_size - 1)
+                for _ in range(args.input_len)
+            ]
+            # As tokenizer may add additional tokens like BOS, we need to try
+            # different lengths to get the desired input length.
+            while True:  # Max attempts to correct
+                prompt = tokenizer.decode(candidate_ids)
+                tokenized_len = len(tokenizer.encode(prompt))
+
+                if tokenized_len == input_len:
+                    break
+
+                # Adjust length based on difference
+                diff = input_len - tokenized_len
+                if diff > 0:
+                    candidate_ids.extend([
+                        random.randint(100, vocab_size - 100)
+                        for _ in range(diff)
+                    ])
+                else:
+                    candidate_ids = candidate_ids[:diff]
+            fake_requests.append((prompt, None, input_len, output_len))
+    else:
+        prompt = "hi" * input_len
+        special_tokens_len = len(tokenizer(prompt).input_ids) - input_len
+        if special_tokens_len > 0:
+            prompt = "hi" * (input_len - special_tokens_len)
+        fake_requests = [(prompt, None, input_len, output_len) for _ in range(num_prompts)]
     return fake_requests
 
 
@@ -520,8 +551,8 @@ def main(args: argparse.Namespace):
         )
     else:
         # Synthesize a prompt with the given input length.
-        requests = fake_requests(
-            args.input_len, args.output_len, args.num_prompts, tokenizer
+        requests = fake_requests( args.input_len,
+            args.output_len, args.num_prompts, args.random_prompt, tokenizer
         )
         if args.output_len == 1:
             num_iters = 10
@@ -669,6 +700,7 @@ if __name__ == "__main__":
         "--add-generation-prompt", type=bool, default=False, help="add-generation-promp"
     )
     parser.add_argument("--perf", action="store_true", help="readout perf")
+    parser.add_argument("--random-prompt", action="store_true", help="use real random prompts")
     parser.add_argument("--acc", action="store_true", help="evaluate on dataset")
     parser.add_argument(
         "--enable-async-output-proc",
