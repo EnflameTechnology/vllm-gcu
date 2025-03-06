@@ -46,12 +46,12 @@ class GCUPlatform(Platform):
             return "vllm_gcu.attention.backends.mla.GCUMLABackend"
         if selected_backend == _Backend.FLASHINFER:
             logger.info("Using FlashInfer backend.")
-            raise NotImplemented
+            raise NotImplementedError
         elif selected_backend == _Backend.XFORMERS:
             logger.info("Using XFormers backend.")
             return "vllm_gcu.attention.backends.xformers.GCUXFormersBackend"
         elif selected_backend:
-            raise NotImplemented(f"{selected_backend}")
+            raise NotImplementedError(f"{selected_backend}")
         return "vllm_gcu.attention.backends.xformers.GCUXFormersBackend"
 
     @classmethod
@@ -104,7 +104,10 @@ class GCUPlatform(Platform):
                     "vllm_gcu.worker.multi_step_worker.GCUMultiStepWorker"
                 )
             elif vllm_config.speculative_config:
-                raise NotImplementedError
+                parallel_config.worker_cls = (
+                    "vllm.spec_decode.spec_decode_worker.create_spec_worker"
+                )
+                parallel_config.sd_worker_cls = "vllm_gcu.worker.worker.GCUWorker"
             else:
                 parallel_config.worker_cls = "vllm_gcu.worker.worker.GCUWorker"
 

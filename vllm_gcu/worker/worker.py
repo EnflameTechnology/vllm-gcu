@@ -10,6 +10,7 @@ import torch_gcu
 import vllm.envs as envs
 from vllm.config import ParallelConfig, VllmConfig
 from vllm.distributed import (
+    ensure_kv_transfer_initialized,
     ensure_model_parallel_initialized,
     get_pp_group,
     get_tp_group,
@@ -94,12 +95,12 @@ class GCUWorker(LocalOrDistributedWorkerBase):
             else {"return_hidden_states": True}
         )
 
-        ModelRunnerClass: Type[GPUModelRunnerBase] = GCUModelRunner
+        ModelRunnerClass = GCUModelRunner
         if model_config.runner_type == "pooling":
             ModelRunnerClass = PoolingModelRunner
         elif self.model_config.is_encoder_decoder:
             ModelRunnerClass = EncoderDecoderModelRunner
-        self.model_runner: GPUModelRunnerBase = ModelRunnerClass(
+        self.model_runner = ModelRunnerClass(
             vllm_config=self.vllm_config,
             kv_cache_dtype=self.cache_config.cache_dtype,
             is_driver_worker=is_driver_worker,
@@ -165,7 +166,7 @@ class GCUWorker(LocalOrDistributedWorkerBase):
 
         # Initialize the distributed environment.
         init_worker_distributed_environment(
-            self.parallel_config,
+            self.vllm_config,
             global_world_size,
             unique_rank,
             self.distributed_init_method,
@@ -467,7 +468,7 @@ class GCUWorker(LocalOrDistributedWorkerBase):
 
 
 def init_worker_distributed_environment(
-    parallel_config: ParallelConfig,
+    vllm_config: VllmConfig,
     world_size: int,
     rank: int,
     distributed_init_method: Optional[str] = None,
@@ -478,6 +479,8 @@ def init_worker_distributed_environment(
 
     import vllm_gcu.envs as gcu_envs
     from vllm_gcu.distributed.parallel_state import initialize_data_parallel
+
+    parallel_config = vllm_config.parallel_config
 
     set_custom_all_reduce(not parallel_config.disable_custom_all_reduce)
 
@@ -501,6 +504,7 @@ def init_worker_distributed_environment(
         parallel_config.tensor_parallel_size,
         parallel_config.pipeline_parallel_size * data_parallel_size,
     )
+    ensure_kv_transfer_initialized(vllm_config)
 
     group = get_tp_group()
     group.device = torch.device(f"gcu:{group.local_rank % torch.gcu.device_count()}")

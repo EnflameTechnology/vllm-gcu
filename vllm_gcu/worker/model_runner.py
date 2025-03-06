@@ -17,8 +17,9 @@ from torch import nn
 from tqdm import tqdm
 from vllm.attention import AttentionMetadata, get_attn_backend
 from vllm.attention.backends.abstract import AttentionState
+from vllm.attention.backends.utils import CommonAttentionState
 from vllm.config import CompilationLevel, VllmConfig
-from vllm.distributed import get_pp_group
+from vllm.distributed import get_kv_transfer_group, get_pp_group
 from vllm.distributed.parallel_state import (
     get_tensor_model_parallel_rank,
     graph_capture,
@@ -28,20 +29,24 @@ from vllm.inputs import INPUT_REGISTRY, InputRegistry
 from vllm.logger import init_logger
 from vllm.lora.layers import LoRAMapping
 from vllm.lora.request import LoRARequest
+from vllm.lora.worker_manager import LRUCacheWorkerLoRAManager
 from vllm.model_executor import SamplingMetadata, SamplingMetadataCache
 from vllm.model_executor.layers.sampler import SamplerOutput
 from vllm.model_executor.model_loader import get_model
 from vllm.model_executor.model_loader.tensorizer import TensorizerConfig
+from vllm.model_executor.models import supports_lora, supports_multimodal
 from vllm.model_executor.models.utils import set_cpu_offload_max_bytes
 from vllm.multimodal import MULTIMODAL_REGISTRY, MultiModalKwargs, MultiModalRegistry
 from vllm.prompt_adapter.layers import PromptAdapterMapping
 from vllm.prompt_adapter.request import PromptAdapterRequest
+from vllm.prompt_adapter.worker_manager import LRUCacheWorkerPromptAdapterManager
 from vllm.sampling_params import SamplingParams
 from vllm.sequence import IntermediateTensors, SequenceGroupMetadata
 from vllm.utils import (
     DeviceMemoryProfiler,
     GiB_bytes,
     is_pin_memory_available,
+    PyObjectCache,
     supports_dynamo,
 )
 from vllm.worker.model_runner import (
@@ -911,11 +916,17 @@ class GCUModelRunner(GCUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
         # Sample the next token.
         if gcu_envs.VLLM_GCU_SAMPLER_ON_CPU:
             logits = logits.cpu().to(torch.float32)
-            selected_token_indices = sampling_metadata.selected_token_indices
-            sampling_metadata.selected_token_indices = selected_token_indices.cpu()
+            selected_token_indices = (
+                model_input.sampling_metadata.selected_token_indices
+            )
+            model_input.sampling_metadata.selected_token_indices = (
+                selected_token_indices.cpu()
+            )
 
-            categorized_sample_indices = sampling_metadata.categorized_sample_indices
-            sampling_metadata.categorized_sample_indices = {
+            categorized_sample_indices = (
+                model_input.sampling_metadata.categorized_sample_indices
+            )
+            model_input.sampling_metadata.categorized_sample_indices = {
                 i: tensor.cpu() for i, tensor in categorized_sample_indices.items()
             }
         output: SamplerOutput = self.model.sample(
