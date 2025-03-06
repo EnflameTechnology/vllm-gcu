@@ -31,7 +31,8 @@ void fused_moe_quant_kernel(
     const at::Tensor& topk_weights, const at::Tensor& topk_ids,
     const at::Tensor& sorted_token_ids, const at::Tensor& experts_ids,
     const at::Tensor& num_tokens_post_pad, bool mul_routed_weight, int64_t topk,
-    int64_t block_size, const c10::optional<at::Tensor>& bias) {
+    int64_t block_size, const c10::optional<at::Tensor>& bias,
+    const c10::optional<at::Tensor>& real_token_num) {
   const torch_gcu::OptionalGCUGuard device_guard(device_of(C));
   const topsStream_t stream = torch_gcu::getCurrentGCUStream();
 
@@ -59,19 +60,24 @@ void fused_moe_quant_kernel(
     if (B_zp.has_value()) {
       B_zp_tensor = B_zp.value();
     }
+    at::Tensor real_token_num_tensor;
+    if (real_token_num.has_value()) {
+      real_token_num_tensor = real_token_num.value();
+    }
+    at::Tensor bias_tensor;
     if (use_legacy) {
-      ATEN_ATENOP_CHECK(
-          ATEN_ATENOP_CALL(topsvllm::topsvllmInvokeFusedMoeQuantKernel)(
-              C, A, B, B_scale, gs, B_zp_tensor, topk_weights, topk_ids,
-              sorted_token_ids, experts_ids, num_tokens_post_pad,
-              mul_routed_weight, topk, block_size, stream));
+      ATEN_ATENOP_CHECK(ATEN_ATENOP_CALL(
+          topsvllm::topsvllmInvokeFusedMoeQuantKernel)(
+          C, A, B, B_scale, gs, B_zp_tensor, bias_tensor, topk_weights,
+          topk_ids, sorted_token_ids, experts_ids, num_tokens_post_pad,
+          real_token_num_tensor, mul_routed_weight, topk, block_size, stream));
 
     } else {
       ATEN_ATENOP_CHECK(ATEN_ATENOP_CALL(
           topsvllm::topsvllmInvokeFusedMoeNonGatherQuantKernel)(
-          C, A, B, B_scale, gs, B_zp_tensor, topk_weights, topk_ids,
-          sorted_token_ids, experts_ids, num_tokens_post_pad, mul_routed_weight,
-          topk, block_size, stream));
+          C, A, B, B_scale, gs, B_zp_tensor, bias_tensor, topk_weights,
+          topk_ids, sorted_token_ids, experts_ids, num_tokens_post_pad,
+          real_token_num_tensor, mul_routed_weight, topk, block_size, stream));
     }
   }
 }
