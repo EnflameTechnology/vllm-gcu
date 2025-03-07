@@ -4,6 +4,8 @@ import glob
 import io
 import os
 import re
+import sys
+import subprocess
 import shutil
 from distutils.command.build_py import build_py
 from distutils.command.clean import clean
@@ -276,7 +278,15 @@ setup(
         "Topic :: Scientific/Engineering :: Artificial Intelligence",
     ],
     packages=find_packages(),
-    package_data={"benchmarks": ["structured_schemas/*"]},
+    package_data={
+        "benchmarks": [
+            "structured_schemas/*",
+            "vision_language/*",
+            "vision_language/**/*",
+            "vision_language/**/**/*",
+            "vision_language/**/**/**/*",
+        ]
+    },
     python_requires=">=3.8",
     install_requires=read_requirements(),
     ext_modules=ext_modules,
