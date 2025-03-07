@@ -28,7 +28,8 @@ class AWQGCUConfig(AWQConfig):
             f"modules_to_not_convert={self.modules_to_not_convert})"
         )
 
-    def get_name(self) -> str:
+    @classmethod
+    def get_name(cls) -> str:
         return "awq_gcu"
 
     @classmethod
