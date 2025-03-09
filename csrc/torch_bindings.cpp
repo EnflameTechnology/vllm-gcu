@@ -11,6 +11,7 @@
 #include "src/dispatch_bgmv.h"
 #include "src/dispatch_bgmv_low_level.h"
 #include "src/dot_bias_quant.h"
+#include "src/dynamic_split.h"
 #include "src/fatrelu_and_mul.h"
 #include "src/fused_add_rms_norm.h"
 #include "src/fused_add_rms_norm_quant.h"
@@ -607,6 +608,9 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
 
   ops.def("fused_grouped_topk", &fused_grouped_topk);
   ops.impl("fused_grouped_topk", c10::kPrivateUse1, &fused_grouped_topk);
+
+  ops.def("dynamic_split", &dynamic_split);
+  ops.impl("dynamic_split", c10::kPrivateUse1, &dynamic_split);
 }
 
 TORCH_LIBRARY_EXPAND(CONCAT(TORCH_EXTENSION_NAME, _cache_ops), cache_ops) {
