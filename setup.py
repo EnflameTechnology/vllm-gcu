@@ -15,6 +15,7 @@ import torch
 from build_utils import get_tag, get_tops_version
 
 from setuptools import Extension, find_packages, setup
+from setuptools.command.install import install
 
 # from tops_extension import (
 #     TOPSATEN_HOME as _TOPSATEN_HOME,
@@ -175,6 +176,12 @@ class VllmPackageBuild(build_py, object):
         return data
 
 
+class VllmInstall(install):
+    def run(self):
+        self.run_command("build_py")
+        super().run()
+
+
 class VllmClean(clean):
     def run(self):
         if os.path.exists(".gitignore"):
@@ -292,9 +299,10 @@ setup(
     ext_modules=ext_modules,
     cmdclass={
         "build_ext": VllmBuildExtension,
-        "clean": VllmClean,
         "bdist_wheel": VllmBdistWheel,
         "build_py": VllmPackageBuild,
+        "install": VllmInstall,
+        "clean": VllmClean,
     },
     extras_require={},
     entry_points={
