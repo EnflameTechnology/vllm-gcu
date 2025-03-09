@@ -4,6 +4,7 @@ Attention layer with xFormers and PagedAttention.
 refer to vllm.attention.backends.xformers
 """
 from dataclasses import dataclass
+from itertools import accumulate
 from typing import Any, Dict, List, Optional, Tuple, Type
 
 import torch
@@ -16,13 +17,18 @@ from vllm.attention.backends.abstract import (
     AttentionType,
 )
 from vllm.attention.backends.utils import (
+    PAD_SLOT_ID,
     CommonAttentionState,
     CommonMetadataBuilder,
     get_num_prefill_decode_query_kv_tokens,
     get_seq_len_block_table_args,
     is_all_cross_attn_metadata_set,
     is_all_encoder_attn_metadata_set,
+    is_block_tables_empty,
+    compute_slot_mapping_start_idx,
+    compute_slot_mapping,   
 )
+from vllm.utils import async_tensor_h2d, make_tensor_with_pad
 from vllm.logger import init_logger
 from xformers import ops as xops
 from xformers.ops.fmha.attn_bias import (
@@ -254,6 +260,7 @@ class GCUXFormersMetadata(AttentionMetadata, PagedAttentionMetadata):
             enable_kv_scales_calculation=self.enable_kv_scales_calculation,
             seq_lens=seq_lens,
             seq_lens_tensor=seq_lens_tensor,
+            # max_decode_query_len=0,
             max_query_len=self.max_query_len,
             max_prefill_seq_len=self.max_prefill_seq_len,
             max_decode_seq_len=0,
@@ -300,7 +307,23 @@ class GCUXFormersMetadata(AttentionMetadata, PagedAttentionMetadata):
             if self.block_tables is None
             else self.block_tables[self.num_prefills :]
         )
-
+        if self.max_decode_query_len > 1:
+            query_start_loc = (
+                None
+                if self.query_start_loc is None
+                else self.query_start_loc[self.num_prefills:] -
+                                self.query_start_loc[self.num_prefills]
+            )
+            seq_start_loc = (
+                None
+                if self.seq_start_loc is None
+                else self.seq_start_loc[self.num_prefills:]
+            )
+        else:
+            query_start_loc=None
+            seq_start_loc=None
+            
+        # print("check")
         # Construct & cache decode-phase attention metadata structure
         self._cached_decode_metadata = GCUXFormersMetadata(
             num_prefills=0,
@@ -310,8 +333,13 @@ class GCUXFormersMetadata(AttentionMetadata, PagedAttentionMetadata):
             multi_modal_placeholder_index_maps=None,
             enable_kv_scales_calculation=True,
             seq_lens_tensor=seq_lens_tensor,
+            max_decode_query_len=self.max_decode_query_len,
+            # max_query_len=self.max_query_len,
             max_prefill_seq_len=0,
             max_decode_seq_len=self.max_decode_seq_len,
+            query_start_loc=query_start_loc,
+            # seq_start_loc=seq_start_loc,
+            # context_lens_tensor=None,
             block_tables=block_tables,
             use_cuda_graph=self.use_cuda_graph,
             # Begin encoder & cross attn fields below...
@@ -466,6 +494,152 @@ def _set_attn_bias(
 class GCUXFormersMetadataBuilder(CommonMetadataBuilder[GCUXFormersMetadata]):
 
     _metadata_cls = GCUXFormersMetadata
+    
+    def _add_seq_group(
+            self, inter_data: "ModelInputForGPUBuilder.InterDataForSeqGroup",
+            chunked_prefill_enabled: bool):
+        is_prompt = inter_data.is_prompt
+        block_tables = inter_data.block_tables
+
+        for (seq_id, token_len, seq_len, curr_seq_len, query_len, context_len,
+             curr_sliding_window_block) in zip(
+                 inter_data.seq_ids, [len(t) for t in inter_data.input_tokens],
+                 inter_data.orig_seq_lens, inter_data.seq_lens,
+                 inter_data.query_lens, inter_data.context_lens,
+                 inter_data.curr_sliding_window_blocks):
+            self.context_lens.append(context_len)
+            if is_prompt:
+                mm_maps = inter_data.multi_modal_placeholder_maps
+                if mm_maps:
+                    for modality, placeholders in mm_maps.items():
+                        self.multimodal_placeholder_maps[modality].extend(
+                            placeholders)
+
+                self.num_prefills += 1
+                self.num_prefill_tokens += token_len
+                self.prefill_seq_lens.append(seq_len)
+            else:
+                # assert query_len == 1, (
+                #     "seq_len: {}, context_len: {}, query_len: {}".format(
+                #         seq_len, context_len, query_len))
+                self.num_decode_tokens += query_len
+                self.curr_seq_lens.append(curr_seq_len)
+
+            # Compute block table.
+            # TODO(sang): Combine chunked prefill and prefix caching by
+            # only allowing multiple of block_size chunk size.
+            # NOTE: This only works for oooooooxxx style attention.
+            block_table = []
+            if inter_data.prefix_cache_hit:
+                block_table = block_tables[seq_id]
+            elif ((chunked_prefill_enabled or not is_prompt)
+                  and block_tables is not None):
+                if curr_sliding_window_block == 0:
+                    block_table = block_tables[seq_id]
+                else:
+                    block_table = block_tables[seq_id][
+                        -curr_sliding_window_block:]
+            self.block_tables.append(block_table)
+
+            # Compute slot mapping.
+            is_profile_run = is_block_tables_empty(block_tables)
+            start_idx = compute_slot_mapping_start_idx(is_prompt, query_len,
+                                                       context_len,
+                                                       self.sliding_window)
+            compute_slot_mapping(is_profile_run, self.slot_mapping, seq_id,
+                                 seq_len, context_len, start_idx,
+                                 self.block_size, inter_data.block_tables)
+
+    def build(self, seq_lens: List[int], query_lens: List[int],
+              cuda_graph_pad_size: int, batch_size: int):
+        """Build attention metadata with on-device tensors.
+
+        Args:
+            seq_lens: The maybe padded sequence lengths of the input sequences.
+            query_lens: The query lengths of the input sequences.
+            cuda_graph_pad_size: The padding size for cuda graph.
+                                 -1 if cuda graph is not used.
+            batch_size: The maybe padded batch size.
+        """
+        for inter_data in self.input_builder.inter_data_list:
+            self._add_seq_group(inter_data,
+                                self.input_builder.chunked_prefill_enabled)
+
+        device = self.runner.device
+        use_captured_graph = cuda_graph_pad_size != -1
+
+        max_query_len = max(query_lens)
+
+        decode_query_lens = query_lens[self.num_prefills:]
+        if len(decode_query_lens) > 0:
+            max_decode_query_len = max(decode_query_lens)
+        else:
+            max_decode_query_len = 1
+        max_prefill_seq_len = max(self.prefill_seq_lens, default=0)
+        max_decode_seq_len = max(self.curr_seq_lens, default=0)
+        num_decode_tokens = self.num_decode_tokens
+        query_start_loc = list(accumulate(query_lens, initial=0))
+        seq_start_loc = list(accumulate(seq_lens, initial=0))
+
+        if use_captured_graph:
+            self.slot_mapping.extend([PAD_SLOT_ID] * cuda_graph_pad_size)
+            self.block_tables.extend([] * cuda_graph_pad_size)
+            num_decode_tokens = batch_size
+
+            # The shape of graph_block_tables is
+            # [max batch size, max context len // block size].
+            input_block_tables = self.runner.graph_block_tables[:batch_size]
+            for i, block_table in enumerate(self.block_tables):
+                if block_table:
+                    input_block_tables[i, :len(block_table)] = block_table
+            block_tables = torch.from_numpy(input_block_tables).to(
+                device, non_blocking=True)
+        else:
+            block_tables = make_tensor_with_pad(
+                self.block_tables,
+                pad=0,
+                dtype=torch.int,
+                device=device,
+            )
+        assert max_query_len > 0, "query_lens: {}".format(query_lens)
+
+        assert device is not None
+        context_lens_tensor = async_tensor_h2d(self.context_lens, torch.int,
+                                               device, self.runner.pin_memory)
+        seq_lens_tensor = async_tensor_h2d(seq_lens, torch.int, device,
+                                           self.runner.pin_memory)
+        slot_mapping_tensor = async_tensor_h2d(self.slot_mapping, torch.long,
+                                               device, self.runner.pin_memory)
+        query_start_loc_tensor = async_tensor_h2d(query_start_loc, torch.int32,
+                                                  device,
+                                                  self.runner.pin_memory)
+        seq_start_loc_tensor = async_tensor_h2d(seq_start_loc, torch.int32,
+                                                device, self.runner.pin_memory)
+        placeholder_index_maps = {
+            modality: placeholder_map.index_map()
+            for modality, placeholder_map in
+            self.multimodal_placeholder_maps.items()
+        }
+
+        return self._metadata_cls(  # type: ignore
+            num_prefills=self.num_prefills,
+            slot_mapping=slot_mapping_tensor,
+            multi_modal_placeholder_index_maps=placeholder_index_maps,
+            enable_kv_scales_calculation=True,
+            num_prefill_tokens=self.num_prefill_tokens,
+            num_decode_tokens=num_decode_tokens,
+            seq_lens=seq_lens,
+            seq_lens_tensor=seq_lens_tensor,
+            max_query_len=max_query_len,
+            max_decode_query_len=max_decode_query_len,
+            max_prefill_seq_len=max_prefill_seq_len,
+            max_decode_seq_len=max_decode_seq_len,
+            query_start_loc=query_start_loc_tensor,
+            seq_start_loc=seq_start_loc_tensor,
+            context_lens_tensor=context_lens_tensor,
+            block_tables=block_tables,
+            use_cuda_graph=use_captured_graph,
+        )
 
 
 class GCUXFormersImpl(AttentionImpl[GCUXFormersMetadata]):
@@ -736,30 +910,57 @@ class GCUXFormersImpl(AttentionImpl[GCUXFormersMetadata]):
             assert (
                 attn_type != AttentionType.ENCODER_ONLY
             ), "Encoder-only models should not have decode metadata."
+            if decode_meta.max_decode_query_len > 1:
+                from flash_attn.vllm_flash_attn import flash_attn_varlen_func
+                
+                num_blocks, num_kv_heads, head_size, block_size = value_cache.shape[0],value_cache.shape[1], value_cache.shape[2], value_cache.shape[3]
 
-            (
-                seq_lens_arg,
-                max_seq_len_arg,
-                block_tables_arg,
-            ) = get_seq_len_block_table_args(decode_meta, False, attn_type)
+                # # gcu:原始存，是按照[num_blocks, num_kv_heads, block_size, head_size]的顺序存的。
+                key_cache = torch.as_strided(key_cache, size=(num_blocks, block_size, num_kv_heads, head_size), stride=(head_size*block_size*num_kv_heads,  head_size, head_size*block_size, 1))
+                value_cache = torch.as_strided(value_cache, size=(num_blocks, block_size, num_kv_heads, head_size), stride=(head_size*block_size*num_kv_heads,  head_size, head_size*block_size, 1))
 
-            output[num_prefill_query_tokens:] = PagedAttention.forward_decode(
-                decode_query,
-                key_cache,
-                value_cache,
-                block_tables_arg,
-                seq_lens_arg,
-                max_seq_len_arg,
-                self.kv_cache_dtype,
-                self.num_kv_heads,
-                self.scale,
-                self.alibi_slopes,
-                layer._k_scale_float,
-                layer._v_scale_float,
-                k_zero_float=k_zero_float,
-                v_zero_float=v_zero_float,
-                out_scales=layer.out_scales if hasattr(layer, "out_scales") else None,
-            )
+                flash_attn_varlen_func(
+                    q=decode_query,
+                    k=key_cache,
+                    v=value_cache,
+                    cu_seqlens_q=decode_meta.query_start_loc,
+                    max_seqlen_q=decode_meta.max_decode_query_len,
+                    seqused_k=decode_meta.seq_lens_tensor,
+                    max_seqlen_k=decode_meta.max_decode_seq_len,
+                    softmax_scale=self.scale,
+                    causal=True,
+                    window_size=self.sliding_window,
+                    alibi_slopes=self.alibi_slopes,
+                    softcap=0.0,
+                    block_table=decode_meta.block_tables,
+                    out=output[num_prefill_query_tokens:],
+                    fa_version=2,
+                )
+
+            else:
+                (
+                    seq_lens_arg,
+                    max_seq_len_arg,
+                    block_tables_arg,
+                ) = get_seq_len_block_table_args(decode_meta, False, attn_type)
+
+                output[num_prefill_query_tokens:] = PagedAttention.forward_decode(
+                    decode_query,
+                    key_cache,
+                    value_cache,
+                    block_tables_arg,
+                    seq_lens_arg,
+                    max_seq_len_arg,
+                    self.kv_cache_dtype,
+                    self.num_kv_heads,
+                    self.scale,
+                    self.alibi_slopes,
+                    layer._k_scale_float,
+                    layer._v_scale_float,
+                    k_zero_float=k_zero_float,
+                    v_zero_float=v_zero_float,
+                    out_scales=layer.out_scales if hasattr(layer, "out_scales") else None,
+                )
 
         # Reshape the output tensor.
         return output.view(-1, self.num_heads * self.head_size)
