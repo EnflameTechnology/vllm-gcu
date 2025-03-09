@@ -42,17 +42,13 @@ TASK_MAP = {
 }
 
 
-def sample_requests(
+def read_dataset(
     dataset_path: str,
     num_requests: int,
     tokenizer: PreTrainedTokenizerBase,
     fixed_output_len: Optional[int],
     chat_template: Optional[str] = None,
-    add_generation_prompt: Optional[bool] = False,
-) -> List[Tuple[str, str, int, int]]:
-    if fixed_output_len is not None and fixed_output_len < 4:
-        raise ValueError("output_len too small")
-
+    add_generation_prompt: Optional[bool] = False):
     # Load the dataset.
     with open(dataset_path) as f:
         dataset = json.load(f)
@@ -100,6 +96,22 @@ def sample_requests(
         tokenized_dataset.append(
             (prompts[i], completion, prompt_token_ids[i], output_len)
         )
+    return tokenized_dataset, template_original_prompts
+
+def sample_requests(
+    dataset_path: str,
+    num_requests: int,
+    tokenizer: PreTrainedTokenizerBase,
+    fixed_output_len: Optional[int],
+    chat_template: Optional[str] = None,
+    add_generation_prompt: Optional[bool] = False,
+) -> List[Tuple[str, str, int, int]]:
+    if fixed_output_len is not None and fixed_output_len < 4:
+        raise ValueError("output_len too small")
+
+    tokenized_dataset, template_original_prompts = \
+        read_dataset(dataset_path, num_requests, tokenizer,
+                     fixed_output_len, chat_template, add_generation_prompt)
 
     # Filter out too long sequences.
     filtered_dataset: List[Tuple[str, str, int, int]] = []
@@ -155,6 +167,9 @@ def fake_requests(
     output_len: int,
     num_prompts: int,
     random_prompt: bool,
+    dataset_for_perf: str,
+    chat_template: Optional[str],
+    add_generation_prompt: Optional[bool],
     tokenizer: PreTrainedTokenizerBase,
 ) -> List[Tuple[str, str, int, int]]:
 
@@ -185,7 +200,47 @@ def fake_requests(
                     ])
                 else:
                     candidate_ids = candidate_ids[:diff]
+            print(f"fake prompt:{prompt}")
             fake_requests.append((prompt, None, input_len, output_len))
+    elif dataset_for_perf:
+        tokenized_dataset, _ = \
+            read_dataset(dataset_for_perf, num_prompts, tokenizer,
+                        output_len, chat_template, add_generation_prompt)
+
+        # Filter out too long sequences.
+        vocab_size = tokenizer.vocab_size
+        filtered_dataset: List[Tuple[str, str, int, int]] = []
+        for prompt, completion, prompt_token_ids, output_len in tokenized_dataset:
+            prompt_len = len(prompt_token_ids)
+            if prompt_len < input_len:
+                # Prune too short sequences.
+                continue
+            else:
+                candidate_ids = prompt_token_ids[:input_len]
+
+                while True:  # Max attempts to correct
+                    prompt = tokenizer.decode(candidate_ids)
+                    tokenized_len = len(tokenizer.encode(prompt))
+
+                    if tokenized_len == input_len:
+                        break
+                    
+                    # Adjust length based on difference
+                    diff = input_len - tokenized_len
+                    if diff > 0:
+                        candidate_ids.extend([
+                            random.randint(100, vocab_size - 100)
+                            for _ in range(diff)
+                        ])
+                    else:
+                        candidate_ids = candidate_ids[:diff]
+                filtered_dataset.append((prompt, None, prompt_len, output_len))
+
+            # if len(fake_requests) == num_prompts:
+            #     break
+        fake_requests = random.sample(filtered_dataset, num_prompts)
+        for fake_prompt,_,_,_ in fake_requests:
+            print(f"fake_prompt:{fake_prompt}")
     else:
         prompt = "hi" * input_len
         special_tokens_len = len(tokenizer(prompt).input_ids) - input_len
@@ -552,7 +607,9 @@ def main(args: argparse.Namespace):
     else:
         # Synthesize a prompt with the given input length.
         requests = fake_requests( args.input_len,
-            args.output_len, args.num_prompts, args.random_prompt, tokenizer
+            args.output_len, args.num_prompts,
+            args.random_prompt, args.dataset_for_perf,
+            args.template, args.add_generation_prompt, tokenizer
         )
         if args.output_len == 1:
             num_iters = 10
@@ -701,6 +758,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--perf", action="store_true", help="readout perf")
     parser.add_argument("--random-prompt", action="store_true", help="use real random prompts")
+    parser.add_argument("--dataset-for-perf", type=str, default=None, help="Path to the dataset for perf.")
     parser.add_argument("--acc", action="store_true", help="evaluate on dataset")
     parser.add_argument(
         "--enable-async-output-proc",
@@ -721,6 +779,9 @@ if __name__ == "__main__":
     override_parser(parser)
 
     args = parser.parse_args()
+    if args.perf:
+        assert (args.random_prompt and (args.dataset_for_perf is not None)) == False, \
+            "Cannot enable both random-prompt mode and dataset-for-perf mode simultaneously"
     print("Warning: This version of vllm defaults to --disable-async-output-proc")
     args.disable_async_output_proc = not args.enable_async_output_proc
     if args.async_engine:
