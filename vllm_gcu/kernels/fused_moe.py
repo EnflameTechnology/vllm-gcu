@@ -400,12 +400,28 @@ def fused_experts_impl(
 
         sp_split_size = torch.empty_like(ep_split_size)
         all_to_all_v2(recv_packed, send_packed_sorted, sp_split_size, ep_split_size, group=group, flag=1)
-        recv_token_total = sp_split_size.sum()
+        recv_token_total = torch.sum(sp_split_size, 0, True)
 
         ### EP ###
-        hidden_states_, topk_ids_, topk_weights_ = torch.split(
-            recv_packed, [hidden_states.shape[1], topk_ids.shape[1], topk_weights.shape[1]], dim=1)
-        hidden_states = hidden_states_.contiguous()
+        hidden_states = torch.empty(
+            (recv_packed.shape[0], hidden_states.shape[1]),
+            dtype=hidden_states.dtype,
+            device=hidden_states.device,
+        )
+        topk_ids_ = torch.empty(
+            (recv_packed.shape[0], topk_ids.shape[1]),
+            dtype=hidden_states.dtype,
+            device=hidden_states.device,
+        )
+        topk_weights_ = torch.empty(
+            (recv_packed.shape[0], topk_weights.shape[1]),
+            dtype=hidden_states.dtype,
+            device=hidden_states.device,
+        )
+        torch.ops._C.dynamic_split([hidden_states, topk_ids_, topk_weights_],
+                                   recv_packed, recv_token_total.to(torch.uint32),
+                                   [hidden_states.shape[1], topk_ids.shape[1],
+                                       topk_weights.shape[1]], 1)
         topk_ids = topk_ids_.to(topk_ids.dtype)
         topk_weights = topk_weights_.to(topk_weights.dtype)
 
@@ -481,7 +497,7 @@ def fused_experts_impl(
         curr_hidden_states = hidden_states[begin_chunk_idx:end_chunk_idx]
         tokens_in_chunk, _ = curr_hidden_states.shape
         if recv_token_total is not None:
-            valid_in_chunk = torch.clamp(recv_token_total, min=0, max=tokens_in_chunk).unsqueeze(0).to(torch.int32)
+            valid_in_chunk = torch.clamp(recv_token_total, min=0, max=tokens_in_chunk)
             recv_token_total -= tokens_in_chunk
         else:
             valid_in_chunk = torch.full((1,), tokens_in_chunk, dtype=torch.int32, device=curr_hidden_states.device)
@@ -575,13 +591,16 @@ def fused_experts_impl(
         )
 
         ### SP ###
-        output = torch.zeros_like(hidden_states_ori)
+        if inplace:
+            output = hidden_states_ori
+            output.fill_(0)
+        else:
+            output = torch.zeros_like(hidden_states_ori)
         output.index_add_(
             0,
             ep_token_indices.to(torch.int64),
             sp_hidden_states,
         )
-        hidden_states_ori.copy_(output)
         return output
     else:
         return out_hidden_states

@@ -168,3 +168,6 @@
 
 - func: moe_sum(Tensor(a!) out, Tensor input, Tensor size, int dim, bool keepdim) -> ()
   variants: function
+
+- func: dynamic_split(Tensor[] out, Tensor input, Tensor size, int[] split_sizes, int dim) -> ()
+  variants: function
