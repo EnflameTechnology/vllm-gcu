@@ -287,11 +287,11 @@ setup(
     packages=find_packages(),
     package_data={
         "benchmarks": [
-            "structured_schemas/*",
-            "vision_language/*",
-            "vision_language/**/*",
-            "vision_language/**/**/*",
-            "vision_language/**/**/**/*",
+            "**/*",
+            "**/**/*",
+            "**/**/**/*",
+            "**/**/**/**/*",
+            "**/**/**/**/**/*",
         ]
     },
     python_requires=">=3.8",
