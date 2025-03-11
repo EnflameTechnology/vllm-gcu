@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # coding=utf-8
+import math
 import functools
 import sys
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -355,6 +356,8 @@ def fused_experts_impl(
     global_num_experts: int = -1,
     expert_map: Optional[torch.Tensor] = None,
     max_model_len=None,
+    shared_experts=None,
+    routed_scaling_factor=None,
     w1_scale: Optional[torch.Tensor] = None,
     w2_scale: Optional[torch.Tensor] = None,
     w1_zp: Optional[torch.Tensor] = None,
@@ -366,6 +369,7 @@ def fused_experts_impl(
     from vllm.distributed import get_world_group
 
     recv_token_total = None
+    shared_output = None
     if gcu_envs.VLLM_GCU_ENABLE_EXPERT_PARALLEL:
         assert max_model_len is not None
         dp_size = gcu_envs.VLLM_GCU_DATA_PARALLEL_SIZE
@@ -406,7 +410,11 @@ def fused_experts_impl(
         )
 
         sp_split_size = torch.empty_like(ep_split_size)
+
         all_to_all_v2(recv_packed, send_packed_sorted, sp_split_size, ep_split_size, group=group, flag=1)
+        if shared_experts is not None:
+            assert routed_scaling_factor is not None
+            shared_output = shared_experts(hidden_states_ori)
         recv_token_total = torch.sum(sp_split_size, 0, True, dtype=torch.int32)
 
         ### EP ###
@@ -496,7 +504,8 @@ def fused_experts_impl(
     else:
         out_hidden_states = torch.empty_like(hidden_states)
 
-    for chunk in range((num_tokens // CHUNK_SIZE) + 1):
+    chunk_num = (num_tokens // CHUNK_SIZE) + 1
+    for chunk in range(chunk_num):
         begin_chunk_idx, end_chunk_idx = (
             chunk * CHUNK_SIZE,
             min((chunk + 1) * CHUNK_SIZE, num_tokens),
@@ -504,8 +513,11 @@ def fused_experts_impl(
         curr_hidden_states = hidden_states[begin_chunk_idx:end_chunk_idx]
         tokens_in_chunk, _ = curr_hidden_states.shape
         if recv_token_total is not None:
-            valid_in_chunk = torch.clamp(recv_token_total, min=0, max=tokens_in_chunk)
-            recv_token_total -= tokens_in_chunk
+            if chunk_num > 1:
+                valid_in_chunk = torch.clamp(recv_token_total, min=0, max=tokens_in_chunk)
+                recv_token_total -= tokens_in_chunk
+            else:
+                valid_in_chunk = recv_token_total
         else:
             valid_in_chunk = torch.full((1,), tokens_in_chunk, dtype=torch.int32, device=curr_hidden_states.device)
 
@@ -553,7 +565,7 @@ def fused_experts_impl(
             real_token_num=valid_in_chunk,
         )
 
-        torch.ops._C.silu_and_mul_pad(intermediate_cache2, intermediate_cache1.view(-1, N), valid_in_chunk*top_k_num)
+        torch.ops._C.silu_and_mul_pad(intermediate_cache2.view(M, top_k_num, N//2), intermediate_cache1, valid_in_chunk)
 
         invoke_fused_moe_kernel(
             intermediate_cache2,
@@ -596,17 +608,24 @@ def fused_experts_impl(
             group=group,
             flag=0
         )
-
-        ### SP ###
-        if inplace:
-            output = hidden_states_ori
-            output.fill_(0)
+        if shared_output is not None:
+            if inplace:
+                output = hidden_states_ori
+                output.copy_(shared_output)
+            else:
+                output = shared_output
         else:
-            output = torch.zeros_like(hidden_states_ori)
+            routed_scaling_factor = 1.0
+            if inplace:
+                output = hidden_states_ori
+                output.fill_(0)
+            else:
+                output = torch.zeros_like(hidden_states_ori)
         output.index_add_(
             0,
             ep_token_indices,
             sp_hidden_states,
+            alpha=routed_scaling_factor,
         )
         return output
     else:
@@ -830,7 +849,7 @@ class EPFusedMoE(FusedMoE):
             )
             return
 
-    def forward(self, hidden_states: torch.Tensor, router_logits: torch.Tensor, max_model_len=None):
+    def forward(self, hidden_states: torch.Tensor, router_logits: torch.Tensor, max_model_len=None, shared_experts=None, routed_scaling_factor=None):
         assert self.quant_method is not None
 
         # Matrix multiply.
@@ -859,6 +878,8 @@ class EPFusedMoE(FusedMoE):
                 global_num_experts=self.global_num_experts,
                 expert_map=self.expert_map,
                 max_model_len=max_model_len,
+                shared_experts=shared_experts,
+                routed_scaling_factor=routed_scaling_factor,
                 topk_group=self.topk_group,
                 num_expert_group=self.num_expert_group,
                 custom_routing_function=self.custom_routing_function,
@@ -932,10 +953,10 @@ def grouped_topk(
 ):
     assert hidden_states.shape[0] == gating_output.shape[0], "Number of tokens mismatch"
 
-    topk_weights = torch.zeros(
+    topk_weights = torch.empty(
         (gating_output.shape[0], topk), device=gating_output.device, dtype=torch.float32
     )
-    topk_ids = torch.zeros(
+    topk_ids = torch.empty(
         (gating_output.shape[0], topk), device=gating_output.device, dtype=torch.int32
     )
     torch.ops._C.fused_grouped_topk(

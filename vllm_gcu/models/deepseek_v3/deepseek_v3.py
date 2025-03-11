@@ -208,13 +208,15 @@ class DeepseekV2MoE(nn.Module):
     def forward(self, hidden_states: torch.Tensor, max_model_len=None) -> torch.Tensor:
         num_tokens, hidden_dim = hidden_states.shape
         hidden_states = hidden_states.view(-1, hidden_dim)
-        if self.n_shared_experts is not None:
-            shared_output = self.shared_experts(hidden_states)
+        shared_output = None
         # router_logits: (num_tokens, n_experts)
         router_logits, _ = self.gate(hidden_states)
         final_hidden_states = (
-            self.experts(hidden_states=hidden_states, router_logits=router_logits, max_model_len=max_model_len)
-            * self.routed_scaling_factor
+            self.experts(hidden_states=hidden_states,
+                         router_logits=router_logits,
+                         max_model_len=max_model_len,
+                         shared_experts=self.shared_experts,
+                         routed_scaling_factor=self.routed_scaling_factor)
         )
         if shared_output is not None:
             final_hidden_states = final_hidden_states + shared_output
