@@ -122,7 +122,7 @@ def moe_align_block_size(
             )
 
     if expert_map is not None:
-        expert_ids = expert_map[expert_ids]
+        expert_ids = expert_map[expert_ids.to(torch.int64)]
     return sorted_ids, expert_ids, num_tokens_post_pad
 
 
@@ -379,20 +379,27 @@ def fused_experts_impl(
         ep_token_indices = torch.zeros([hidden_states.shape[0]*topk_ids.shape[1]], dtype=torch.int32, device=topk_ids.device)
         send_token_total = torch.empty([1], dtype=torch.int32, device=topk_ids.device)
         ops.get_ep_indices(ep_split_size, ep_token_indices, send_token_total, topk_ids, expert_per_rank, ep_size)
-        # TODO:convert maybe loss acc, use view dtype
+
+        topk_ids_width = topk_ids.shape[1] * topk_ids.element_size()
+        assert topk_ids_width % hidden_states.element_size() == 0
+        topk_ids_width //= hidden_states.element_size()
+        topk_weights_width = topk_weights.shape[1] * topk_weights.element_size()
+        assert topk_weights_width % hidden_states.element_size() == 0
+        topk_weights_width //= hidden_states.element_size()
+
         send_packed = torch.cat(
             (
                 hidden_states,
-                topk_ids.to(hidden_states.dtype),
-                topk_weights.to(hidden_states.dtype),
+                topk_ids.view(hidden_states.dtype),
+                topk_weights.view(hidden_states.dtype),
             ),
             dim=1,
         )
-        send_packed_sorted = send_packed[ep_token_indices]
+        send_packed_sorted = send_packed[ep_token_indices.to(torch.int64)]
         recv_packed = torch.empty(
             (
                 max_model_len * dp_size,
-                hidden_states.shape[1] + topk_ids.shape[1] + topk_weights.shape[1],
+                hidden_states.shape[1] + topk_ids_width + topk_weights_width,
             ),
             dtype=hidden_states.dtype,
             device=hidden_states.device,
@@ -400,7 +407,7 @@ def fused_experts_impl(
 
         sp_split_size = torch.empty_like(ep_split_size)
         all_to_all_v2(recv_packed, send_packed_sorted, sp_split_size, ep_split_size, group=group, flag=1)
-        recv_token_total = torch.sum(sp_split_size, 0, True)
+        recv_token_total = torch.sum(sp_split_size, 0, True, dtype=torch.int32)
 
         ### EP ###
         hidden_states = torch.empty(
@@ -409,21 +416,21 @@ def fused_experts_impl(
             device=hidden_states.device,
         )
         topk_ids_ = torch.empty(
-            (recv_packed.shape[0], topk_ids.shape[1]),
+            (recv_packed.shape[0], topk_ids_width),
             dtype=hidden_states.dtype,
             device=hidden_states.device,
         )
         topk_weights_ = torch.empty(
-            (recv_packed.shape[0], topk_weights.shape[1]),
+            (recv_packed.shape[0], topk_weights_width),
             dtype=hidden_states.dtype,
             device=hidden_states.device,
         )
         torch.ops._C.dynamic_split([hidden_states, topk_ids_, topk_weights_],
                                    recv_packed, recv_token_total.to(torch.uint32),
-                                   [hidden_states.shape[1], topk_ids.shape[1],
-                                       topk_weights.shape[1]], 1)
-        topk_ids = topk_ids_.to(topk_ids.dtype)
-        topk_weights = topk_weights_.to(topk_weights.dtype)
+                                   [hidden_states.shape[1], topk_ids_width,
+                                       topk_weights_width], 1)
+        topk_ids = topk_ids_.view(topk_ids.dtype)
+        topk_weights = topk_weights_.view(topk_weights.dtype)
 
     # Check constraints.
     if use_int4_w4a16:
@@ -598,7 +605,7 @@ def fused_experts_impl(
             output = torch.zeros_like(hidden_states_ori)
         output.index_add_(
             0,
-            ep_token_indices.to(torch.int64),
+            ep_token_indices,
             sp_hidden_states,
         )
         return output
