@@ -484,7 +484,7 @@ def fused_experts_impl(
             valid_in_chunk = torch.clamp(recv_token_total, min=0, max=tokens_in_chunk).unsqueeze(0).to(torch.int32)
             recv_token_total -= tokens_in_chunk
         else:
-            valid_in_chunk = torch.tensor([tokens_in_chunk], dtype=torch.int32, device=curr_hidden_states.device)
+            valid_in_chunk = torch.full((1,), tokens_in_chunk, dtype=torch.int32, device=curr_hidden_states.device)
 
         if tokens_in_chunk == 0:
             break
