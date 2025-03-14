@@ -82,11 +82,12 @@ def moe_align_block_size(
     sorted_ids = torch.empty(
         (max_num_tokens_padded,), dtype=torch.int32, device=topk_ids.device
     )
-    sorted_ids.fill_(topk_ids.numel())
+    # sorted_ids.fill_(topk_ids.numel())
     max_num_m_blocks = max_num_tokens_padded // block_size
-    expert_ids = torch.zeros(
+    expert_ids = torch.empty(
         (max_num_m_blocks,), dtype=torch.int32, device=topk_ids.device
     )
+    # expert_ids.fill_(0)
     num_tokens_post_pad = torch.empty((1), dtype=torch.int32, device=topk_ids.device)
 
     if topk_ids_size is not None:
@@ -380,7 +381,7 @@ def fused_experts_impl(
 
         hidden_states_ori = hidden_states
         ep_split_size = torch.empty([ep_size], dtype=torch.int32, device=topk_ids.device)
-        ep_token_indices = torch.zeros([hidden_states.shape[0]*topk_ids.shape[1]], dtype=torch.int32, device=topk_ids.device)
+        ep_token_indices = torch.empty([hidden_states.shape[0]*topk_ids.shape[1]], dtype=torch.int32, device=topk_ids.device)
         send_token_total = torch.empty([1], dtype=torch.int32, device=topk_ids.device)
         ops.get_ep_indices(ep_split_size, ep_token_indices, send_token_total, topk_ids, expert_per_rank, ep_size)
 
