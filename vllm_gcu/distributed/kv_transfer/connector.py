@@ -8,6 +8,7 @@ from vllm.distributed.kv_transfer.kv_connector.simple_connector import SimpleCon
 from vllm.distributed.kv_transfer.kv_lookup_buffer.simple_buffer import SimpleBuffer
 from vllm.logger import init_logger
 from vllm.sequence import IntermediateTensors
+from vllm.worker.model_runner import ModelInputForGPUWithSamplingMetadata
 
 import vllm_gcu.kernels._custom_ops as ops
 from vllm_gcu.attention.backends.mla import GCUMLAMetadata

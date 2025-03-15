@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 # coding=utf-8
-from fractions import Fraction
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import torch
 from torch.nn.parameter import Parameter
@@ -34,9 +33,10 @@ class GPTQGCUConfig(GPTQConfig):
         group_size: int,
         desc_act: bool,
         lm_head_quantized: bool,
+        dynamic: Dict[str, Dict[str, Union[int, bool]]],
         static_groups: bool = True,
     ) -> None:
-        super().__init__(weight_bits, group_size, desc_act, lm_head_quantized)
+        super().__init__(weight_bits, group_size, desc_act, lm_head_quantized, dynamic)
         self.static_groups = static_groups
 
     def __repr__(self) -> str:
@@ -62,8 +62,11 @@ class GPTQGCUConfig(GPTQConfig):
         desc_act = cls.get_from_keys(config, ["desc_act"])
         lm_head_quantized = cls.get_from_keys_or(config, ["lm_head"], default=False)
         static_groups = cls.get_from_keys_or(config, ["static_groups"], default=True)
+        dynamic = cls.get_from_keys_or(config, ["dynamic"], default={})
 
-        return cls(weight_bits, group_size, desc_act, lm_head_quantized, static_groups)
+        return cls(
+            weight_bits, group_size, desc_act, lm_head_quantized, static_groups, dynamic
+        )
 
     def get_quant_method(
         self, layer: torch.nn.Module, prefix: str
@@ -76,7 +79,11 @@ class GPTQGCUConfig(GPTQConfig):
 
     @classmethod
     def override_quantization_method(cls, hf_quant_cfg, user_quant) -> Optional[str]:
-        if "quant_method" in hf_quant_cfg and hf_quant_cfg["quant_method"] == "gptq":
+        if (
+            "quant_method" in hf_quant_cfg
+            and hf_quant_cfg["quant_method"] == "gptq"
+            and user_quant == "gptq"
+        ):
             return cls.get_name()
         return None
 
@@ -113,7 +120,6 @@ class GPTQGCULinearMethod(GPTQLinearMethod):
             scale_and_zero_size = (
                 input_size_per_partition // self.quant_config.group_size
             )
-            scale_and_zero_input_dim = 0
             output_size_per_partition = sum(output_partition_sizes)
             weight_loader = extra_weight_attrs.get("weight_loader")
 
