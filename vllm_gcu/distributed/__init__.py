@@ -1,3 +1,2 @@
-import vllm_gcu.distributed.kv_transfer
-import vllm_gcu.distributed.parallel_state
-from vllm_gcu.distributed.pyeccl import PyEcclCommunicator
+import vllm_gcu.distributed.kv_transfer  # noqa: F401
+import vllm_gcu.distributed.parallel_state  # noqa: F401

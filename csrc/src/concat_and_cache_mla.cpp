@@ -29,10 +29,15 @@ void concat_and_cache_mla(const at::Tensor &kv_c, const at::Tensor &k_pe,
   const torch_gcu::OptionalGCUGuard device_guard(device_of(kv_c));
   const topsStream_t stream = torch_gcu::getCurrentGCUStream();
 
+  at::Tensor scale_tensor = scale;
+  if (scale.dim() == 0) {
+    scale_tensor = scale.unsqueeze(0);
+  }
+
   const char *kv_dtype = kv_cache_dtype.data();
   //   const float scale_value = 1.0f;
   ATEN_ATENOP_CHECK(ATEN_ATENOP_CALL(topsvllm::topsvllmConcatAndCacheMla)(
-      kv_cache, kv_c, k_pe, slot_mapping, kv_dtype, scale, stream));
+      kv_cache, kv_c, k_pe, slot_mapping, kv_dtype, scale_tensor, stream));
 }
 
 }  // namespace vllm_gcu::llm_ops

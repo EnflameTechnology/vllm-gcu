@@ -1,17 +1,108 @@
 from typing import Optional
 
 import torch
-from vllm.distributed.parallel_state import (
-    all_reduce,
-    GroupCoordinator,
-    init_model_parallel_group,
-)
-from vllm.utils import vllm_lib
+import torch_gcu
+from torch.distributed import ProcessGroup
+from vllm.distributed.parallel_state import GroupCoordinator
 
 from vllm_gcu.distributed.pyeccl import PyEcclCommunicator
 
 
-vllm_lib.impl("all_reduce", all_reduce, dispatch_key="PrivateUse1")
+def all_to_all_v2(
+    output: torch.Tensor,
+    input: torch.Tensor,
+    output_split_sizes: Optional[torch.Tensor] = None,
+    input_split_sizes: Optional[torch.Tensor] = None,
+    group: Optional["ProcessGroup"] = None,
+    flag: Optional[int] = None,
+) -> None:
+    torch_gcu.distributed.all_to_all_vd(
+        output, input, output_split_sizes, input_split_sizes, group=group, flag=flag
+    )
+
+
+def all_to_all_v2_bypass(
+    output: torch.Tensor,
+    input: torch.Tensor,
+    output_split_sizes: Optional[torch.Tensor] = None,
+    input_split_sizes: Optional[torch.Tensor] = None,
+    group: Optional[ProcessGroup] = None,
+    flag: Optional[int] = None,
+) -> None:
+    if flag == 1:
+        output_split_sizes.copy_(input_split_sizes)
+    if output.numel() > input.numel():
+        output.view(-1)[: input.numel()].copy_(input.view(-1))
+    else:
+        output.view(-1).copy_(input.view(-1)[: output.numel()])
+
+
+def all_to_all_cpu(
+    output, input, output_split_size=None, input_split_size=None, group=None
+) -> None:
+    output_ori = output
+    output = output.cpu()
+    input = input.cpu()
+    world_size = torch.distributed.get_world_size(group)
+    rank = torch.distributed.get_rank(group)
+    if output_split_size is None:
+        output_split_size = [output.shape[0] // world_size] * world_size
+    if input_split_size is None:
+        input_split_size = [input.shape[0] // world_size] * world_size
+    s1 = 0
+    s2 = 0
+    input_offsets = []
+    output_offsets = []
+    for i in range(world_size):
+        input_offsets.append(s1)
+        s1 += input_split_size[i]
+        output_offsets.append(s2)
+        s2 += output_split_size[i]
+
+    for send_rank in range(world_size):
+        for recv_rank in range(world_size):
+            send_buffer = input[
+                input_offsets[recv_rank] : input_offsets[recv_rank]
+                + input_split_size[recv_rank]
+            ]
+            recv_buffer = output[
+                output_offsets[send_rank] : output_offsets[send_rank]
+                + output_split_size[send_rank]
+            ]
+            if send_rank == recv_rank:
+                if rank == send_rank:
+                    recv_buffer.copy_(send_buffer)
+            else:
+                if rank == send_rank:
+                    torch.distributed.send(send_buffer, recv_rank, group=group)
+                if rank == recv_rank:
+                    torch.distributed.recv(recv_buffer, send_rank, group=group)
+    output_ori.copy_(output)
+
+
+def all_to_all_v2_ref(
+    output,
+    input,
+    output_split_sizes=None,
+    input_split_sizes=None,
+    group=None,
+    flag=None,
+) -> None:
+    assert output.is_contiguous()
+    assert input.is_contiguous()
+    if flag == 1:
+        torch.distributed.all_to_all_single(
+            output_split_sizes, input_split_sizes, group=group
+        )
+    assert output.shape[0] >= output_split_sizes.sum().item()
+    assert input.shape[0] >= input_split_sizes.sum().item()
+    torch.distributed.all_to_all_single(
+        output[: output_split_sizes.sum().item()],
+        input[: input_split_sizes.sum().item()],
+        output_split_sizes.cpu().tolist(),
+        input_split_sizes.cpu().tolist(),
+        group=group,
+    )
 
 
 class GroupWrapper:
@@ -32,40 +123,3 @@ class GroupWrapper:
         return torch.distributed.all_to_all(
             output, input, output_split_sizes, input_split_sizes
         )
-
-
-_DP = None
-
-
-def get_dp_group() -> GroupCoordinator:
-    assert _DP is not None
-    return _DP
-
-
-get_data_parallel_group = get_dp_group
-
-
-def initialize_data_parallel(
-    data_parallel_size: int,
-    global_world_size,
-    unique_rank,
-    backend: Optional[str] = None,
-):
-    world_size: int = torch.distributed.get_world_size()
-    backend = backend or torch.distributed.get_backend(get_world_group().device_group)
-
-    num_data_parallel_groups: int = world_size // data_parallel_size
-
-    global _DP
-    assert _DP is None, "data parallel group is already initialized"
-
-    group_ranks = []
-    for i in range(num_data_parallel_groups):
-        ranks = list(range(i, world_size, num_data_parallel_groups))
-        group_ranks.append(ranks)
-
-    _DP = GroupWrapper(
-        init_model_parallel_group(
-            group_ranks, get_world_group().local_rank, backend, group_name="dp"
-        )
-    )

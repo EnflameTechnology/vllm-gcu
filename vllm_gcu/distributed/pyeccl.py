@@ -6,7 +6,6 @@ import torch.distributed as dist
 from torch.distributed import ProcessGroup, ReduceOp
 from vllm.distributed.utils import StatelessProcessGroup
 from vllm.logger import init_logger
-from vllm.utils import current_stream
 
 from vllm_gcu.distributed.pyeccl_wrapper import (
     buffer_type,
@@ -105,14 +104,14 @@ class PyEcclCommunicator:
                 self.world_size, self.unique_id, self.rank
             )
 
-            stream = current_stream()
+            stream = torch.gcu.current_stream()
             # A small all_reduce for warmup.
             data = torch.zeros(1, device=device)
             self.all_reduce(data)
             stream.synchronize()
             del data
 
-        #TODO something error when pyeccl with graph, seems related to stream
+        # TODO something error when pyeccl with graph, seems related to stream
         self.disabled = True
 
     def all_reduce(
@@ -132,7 +131,7 @@ class PyEcclCommunicator:
         out_tensor = in_tensor.clone()
 
         if stream is None:
-            stream = current_stream()
+            stream = torch.gcu.current_stream()
         self.eccl.ecclAllReduce(
             buffer_type(out_tensor.data_ptr()),
             buffer_type(out_tensor.data_ptr()),
@@ -157,7 +156,7 @@ class PyEcclCommunicator:
             f"but the input tensor is on {input_tensor.device}"
         )
         if stream is None:
-            stream = current_stream()
+            stream = torch.gcu.current_stream()
         self.eccl.ecclAllGather(
             buffer_type(input_tensor.data_ptr()),
             buffer_type(output_tensor.data_ptr()),
@@ -184,7 +183,7 @@ class PyEcclCommunicator:
             f"but the input tensor is on {input_tensor.device}"
         )
         if stream is None:
-            stream = current_stream()
+            stream = torch.gcu.current_stream()
         self.eccl.ecclReduceScatter(
             buffer_type(input_tensor.data_ptr()),
             buffer_type(output_tensor.data_ptr()),
@@ -203,7 +202,7 @@ class PyEcclCommunicator:
             f"but the input tensor is on {tensor.device}"
         )
         if stream is None:
-            stream = current_stream()
+            stream = torch.gcu.current_stream()
         self.eccl.ecclSend(
             buffer_type(tensor.data_ptr()),
             tensor.numel(),
@@ -221,7 +220,7 @@ class PyEcclCommunicator:
             f"but the input tensor is on {tensor.device}"
         )
         if stream is None:
-            stream = current_stream()
+            stream = torch.gcu.current_stream()
         self.eccl.ecclRecv(
             buffer_type(tensor.data_ptr()),
             tensor.numel(),
@@ -239,7 +238,7 @@ class PyEcclCommunicator:
             f"but the input tensor is on {tensor.device}"
         )
         if stream is None:
-            stream = current_stream()
+            stream = torch.gcu.current_stream()
         if src == self.rank:
             sendbuff = buffer_type(tensor.data_ptr())
             # ECCL requires the sender also to have a receive buffer

@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 import torch
@@ -7,15 +6,6 @@ from vllm_gcu.kernels import _custom_ops as ops
 
 # Should be the same as PARTITION_SIZE in `paged_attention_v2_launcher`.
 _PARTITION_SIZE = 512
-
-
-@dataclass
-class PagedAttentionMetadata:
-    """Metadata for PagedAttention."""
-
-    seq_lens_tensor: Optional[torch.Tensor]
-    max_decode_seq_len: int
-    block_tables: Optional[torch.Tensor]
 
 
 class PagedAttention:
@@ -111,13 +101,6 @@ class PagedAttention:
         block_size = value_cache.shape[3]
         num_seqs, num_heads, head_size = query.shape
         max_num_partitions = (max_seq_len + _PARTITION_SIZE - 1) // _PARTITION_SIZE
-        # NOTE(woosuk): We use a simple heuristic to decide whether to use
-        # PagedAttention V1 or V2. If the number of partitions is 1, we use
-        # V1 to avoid the overhead of reduction. Also, if the number of
-        # sequences or heads is large, we use V1 since there is enough work
-        # to parallelize.
-        # TODO(woosuk): Tune this heuristic.
-        # For context len > 8192, use V2 kernel to avoid shared memory shortage.
         use_v1 = max_seq_len <= 8192 and (
             max_num_partitions == 1 or num_seqs * num_heads > 512
         )
@@ -202,7 +185,6 @@ class PagedAttention:
         block_tables: torch.Tensor,
         query_start_loc: torch.Tensor,
         seq_lens_tensor: torch.Tensor,
-        context_lens: torch.Tensor,
         max_query_len: int,
         alibi_slopes: Optional[torch.Tensor],
         sliding_window: Optional[int],
@@ -221,7 +203,7 @@ class PagedAttention:
             # query_start_loc is (batch_size + 1,)
             query_start_loc[:-1],
             seq_lens_tensor,
-            context_lens,
+            query_start_loc.diff(),
             max_query_len,
             alibi_slopes,
             sliding_window,

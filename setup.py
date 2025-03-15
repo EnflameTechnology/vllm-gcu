@@ -4,24 +4,19 @@ import glob
 import io
 import os
 import re
-import sys
-import subprocess
 import shutil
+import subprocess
+import sys
 from distutils.command.build_py import build_py
 from distutils.command.clean import clean
 from typing import List
 
 import torch
-from build_utils import get_tag, get_tops_version
+from packaging.version import Version
 
 from setuptools import Extension, find_packages, setup
 from setuptools.command.install import install
 
-# from tops_extension import (
-#     TOPSATEN_HOME as _TOPSATEN_HOME,
-#     TopsBuildExtension,
-#     TOPSRT_HOME as _TOPSRT_HOME,
-# )
 from tops_extension import TopsBuildExtension
 from tops_extension.torch import TopsTorchExtension
 from tops_extension.torch.codegen_utils import gen_custom_ops
@@ -39,14 +34,49 @@ try:
 except ImportError:
     _TOPSRT_HOME = os.getenv("TOPSRT_HOME", None)
 
-if os.getenv("PY_PACKAGE_VERSION"):
-    VERSION = os.getenv("PY_PACKAGE_VERSION")
-else:
-    import vllm
 
-    VLLM_VERSION = vllm.__version__
-    tops_version = get_tops_version(f"{ROOT_DIR}/.version")
-    VERSION = f"{VLLM_VERSION}+{get_tag(ROOT_DIR, tops_version)}"
+def get_version():
+    py_package_version = os.getenv("PY_PACKAGE_VERSION", None)
+    if py_package_version is not None:
+        return py_package_version
+
+    try:
+        import vllm
+
+        py_package_version = vllm.__version__
+    except ImportError:
+        py_package_version = "0.8.0"
+
+    def get_tag() -> str:
+        package_version = os.getenv("PACKAGE_VERSION", default="")
+        if package_version == "" or package_version == "123.456":
+            tops_version = "unknown"
+
+            version_file = f"{ROOT_DIR}/.version"
+            if os.path.exists(version_file):
+                with open(version_file, "r") as file:
+                    tops_version = file.read().strip()
+
+            commit = (
+                subprocess.check_output(
+                    ["git", "show", "-s", "--date=format:'%Y%m%d'", "--format=%cd"],
+                    cwd=ROOT_DIR,
+                )
+                .decode("ascii")
+                .strip()
+                .replace("'", "")
+            )
+            package_version = f"{tops_version}.{commit}"
+
+        return package_version
+
+    try:
+        version = f"{py_package_version}+{get_tag()}"
+        Version(version)
+        return version
+    except Exception:
+        return py_package_version
+
 
 try:
     import tops_extension
@@ -73,7 +103,13 @@ CXX_FLAGS = [
     "-Wno-write-strings",
     f"-D_GLIBCXX_USE_CXX11_ABI={ABI}",
 ]
-TOPSCC_FLAGS = ["-std=c++17", "-Wno-unused-result", f"-D_GLIBCXX_USE_CXX11_ABI={ABI}"]
+TOPSCC_FLAGS = [
+    "-std=c++17",
+    "-Wno-unused-result",
+    "-Wno-unused-function",
+    "-Wno-unused-variable",
+    f"-D_GLIBCXX_USE_CXX11_ABI={ABI}",
+]
 
 
 def get_path(*filepath) -> str:
@@ -85,7 +121,7 @@ def get_library_path(library_name):
     python_version = f"{sys.version_info.major}.{sys.version_info.minor}"
     UN_KNOWN_VERSION = "Unknown"
 
-    command = ["python{}".format(python_version), "-m", "pip", "show", library_name]
+    command = [f"python{python_version}", "-m", "pip", "show", library_name]
     result = subprocess.run(
         command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
     )
@@ -223,7 +259,12 @@ def _get_all_sources(path: str):
     src_path = os.path.join(ROOT_DIR, path)
     assert os.path.exists(src_path), f"{src_path} not exists"
 
-    patterns = ["/**/*.cpp", "/**/*.cc", "/**/*.tops", "/**/gcu_custom_functions.yaml"]
+    patterns = [
+        "/**/*.cpp",
+        "/**/*.cc",
+        "/**/*.tops",
+        "/**/gcu_custom_functions.yaml",
+    ]
     return [
         f for pattern in patterns for f in glob.glob(path + pattern, recursive=True)
     ]
@@ -252,7 +293,12 @@ ext_modules.append(
     TopsTorchExtension(
         name="vllm_gcu._C",
         sources=_get_all_sources("csrc"),
-        libraries=["torch_extension", "tops_extension", "topsaten", "torch_gcu"],
+        libraries=[
+            "torch_extension",
+            "tops_extension",
+            "topsaten",
+            "torch_gcu",
+        ],
         extra_compile_args={
             "cxx": CXX_FLAGS,
             "topscc": TOPSCC_FLAGS.copy(),
@@ -268,7 +314,7 @@ ext_modules.append(
 
 setup(
     name="vllm_gcu",
-    version=VERSION,
+    version=get_version(),
     author="Enflame",
     license="Apache 2.0",
     description=("GCU plugin backend for vLLM"),
@@ -307,7 +353,7 @@ setup(
     extras_require={},
     entry_points={
         "vllm.general_plugins": [
-            "register_custom_models = vllm_gcu:register_custom_models"
+            "register_custom_models = vllm_gcu.models:register_custom_models"
         ],
         "vllm.platform_plugins": [
             "register_platform_plugins = vllm_gcu:register_platform_plugins"

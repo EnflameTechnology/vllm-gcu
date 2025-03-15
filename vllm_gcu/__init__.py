@@ -1,32 +1,52 @@
 #!/usr/bin/env python
 # coding=utf-8
+from logging.config import dictConfig
 from typing import Optional
 
-import tops_extension.torch
-import torch
-import torch_gcu
-from torch_gcu import transfer_to_gcu
-from vllm.config import ModelConfig
+import torch_gcu  # noqa: F401
+import torch_gcu.transfer_to_gcu  # noqa: F401
 
-import vllm_gcu.distributed
-from vllm_gcu.models import register_custom_models
+from vllm.logger import DEFAULT_LOGGING_CONFIG, VLLM_LOGGING_LEVEL
 
 
 def register_platform_plugins() -> Optional[str]:
     return "vllm_gcu.gcu.GCUPlatform"
 
 
-# TODO: delete after v0.7.3
-def set_use_mla(self, v):
-    pass
+VLLM_GCU_LOGGING_PREFIX = "(Module: VLLM_GCU)"
+_FORMAT = (
+    f"{VLLM_GCU_LOGGING_PREFIX} %(levelname)s %(asctime)s "
+    "[%(filename)s:%(lineno)d] %(message)s"
+)
+_DATE_FORMAT = "%m-%d %H:%M:%S"
 
+DEFAULT_LOGGING_CONFIG.update(
+    {
+        "formatters": {
+            "vllm_gcu": {
+                "class": "vllm.logging_utils.NewLineFormatter",
+                "datefmt": _DATE_FORMAT,
+                "format": _FORMAT,
+            },
+        },
+        "handlers": {
+            "vllm_gcu": {
+                "class": "logging.StreamHandler",
+                "formatter": "vllm_gcu",
+                "level": VLLM_LOGGING_LEVEL,
+                "stream": "ext://sys.stdout",
+            },
+        },
+        "loggers": {
+            "vllm_gcu": {
+                "handlers": ["vllm_gcu"],
+                "level": "DEBUG",
+                "propagate": False,
+            },
+        },
+        "version": 1,
+        "disable_existing_loggers": False,
+    }
+)
 
-def get_use_mla(self):
-    import vllm.envs as envs
-    if not self.is_deepseek_mla or envs.VLLM_MLA_DISABLE:
-        return False
-
-    return True
-
-
-setattr(ModelConfig, "use_mla", property(get_use_mla, set_use_mla))
+dictConfig(DEFAULT_LOGGING_CONFIG)

@@ -4,3 +4,4 @@ vllm_gcu.egg-info
 *.pyc
 __pycache__
 *.h
+_C.abi3.so

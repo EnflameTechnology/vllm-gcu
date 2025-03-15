@@ -156,6 +156,14 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
   ops.impl("advance_step_xformers", torch::kPrivateUse1,
            &advance_step_xformers);
 
+  ops.def(
+      "advance_step_flashattn(int num_seqs, int num_queries, int block_size, "
+      "Tensor! input_tokens, Tensor sampled_token_ids, "
+      "Tensor! input_positions, Tensor! seq_lens, Tensor! slot_mapping, "
+      "Tensor block_tables) -> ()");
+  ops.impl("advance_step_flashattn", torch::kPrivateUse1,
+           &advance_step_xformers);
+
   // Layernorm
   // Apply Root Mean Square (RMS) Normalization to the input tensor.
   ops.def(

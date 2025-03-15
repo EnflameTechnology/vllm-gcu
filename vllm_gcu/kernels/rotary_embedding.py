@@ -56,5 +56,44 @@ def forward_oot(
     return query, key
 
 
+def deepseek_oot(
+    self,
+    positions: torch.Tensor,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    offsets: Optional[torch.Tensor] = None,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    from vllm_gcu.kernels import _custom_ops as ops
+
+    self.cos_sin_cache = self.cos_sin_cache.to(query.device, dtype=query.dtype)
+
+    assert offsets is None
+    assert query.ndim == 3
+    assert key.ndim == 3
+
+    # Expect as a outplace op
+    query = query.clone()
+    key = key.clone()
+
+    q_shape = query.shape
+    k_shape = key.shape
+
+    query = query.reshape(query.shape[0], -1)
+    key = key.reshape(key.shape[0], -1)
+    ops.rotary_embedding(
+        positions,
+        query,
+        key,
+        self.head_size,
+        self.cos_sin_cache,
+        self.is_neox_style,
+    )
+
+    query = query.reshape(q_shape)
+    key = key.reshape(k_shape)
+
+    return query, key
+
+
 RotaryEmbedding.forward_oot = forward_oot
-DeepseekScalingRotaryEmbedding.forward = forward_oot
+DeepseekScalingRotaryEmbedding.forward = deepseek_oot

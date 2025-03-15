@@ -1,5 +1,4 @@
 import torch
-import torch_gcu
 from vllm.distributed.kv_transfer.kv_pipe.pynccl_pipe import PyNcclPipe
 
 

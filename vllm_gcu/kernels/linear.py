@@ -3,13 +3,7 @@ from typing import Optional
 import torch
 from torch.nn.parameter import Parameter
 from vllm.logger import init_logger
-from vllm.model_executor.layers.linear import (
-    adjust_bitsandbytes_4bit_shard,
-    adjust_marlin_shard,
-    adjust_scalar_to_fused_array,
-    LinearBase,
-    ReplicatedLinear,
-)
+from vllm.model_executor.layers.linear import ReplicatedLinear
 from vllm.model_executor.layers.quantization.base_config import QuantizationConfig
 from vllm.model_executor.parameter import (
     BasevLLMParameter,
