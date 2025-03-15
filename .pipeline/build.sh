@@ -36,8 +36,9 @@ function zx_normal_build() {
   echo `pwd`
   PROJECT_GIT_URL="git@git.tencent.com:sy-zx/enflame_caps"
   sudo python3.10 -m pip install torch==2.5.1
-  mkdir -p ${BUILD_ROOT_DIR}/cmake_build
+  mkdir -p ${BUILD_ROOT_DIR}/cmake_build/ci
   cd ${BUILD_ROOT_DIR}/cmake_build
+  touch ${BUILD_ROOT_DIR}/cmake_build/ci/module_packages.json
   if [ -d "tops_extension_binary" ]; then
     echo "tops_extension_binary is already exist"
   else
