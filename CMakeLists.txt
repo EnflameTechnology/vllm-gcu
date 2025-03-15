@@ -36,6 +36,7 @@ include(ictest)
 set(CMAKE_FPKG_PYTHON_PACKAGES "python_packages")
 set(CMAKE_INSTALL_PYTHON_PACKAGES "${CMAKE_INSTALL_PREFIX}/${CMAKE_FPKG_PYTHON_PACKAGES}")
 file(MAKE_DIRECTORY ${CMAKE_INSTALL_PYTHON_PACKAGES})
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}ci/module_packages.json" "{}")
 include(package_version)
 
 # init vllm version
