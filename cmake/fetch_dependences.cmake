@@ -41,6 +41,73 @@ macro(getNASPackageName)
     unset(_PKG_TYPE)
 endmacro()
 
+function(download_tx_project repo_name fetch_file_name)
+    execute_process(
+        COMMAND bash -c "cd ${repo_name} && git lfs pull --include=${fetch_file_name}"
+        RESULT_VARIABLE res_val
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    )
+
+    if(res_val)
+        message(FATAL_ERROR "can't get lfs: cd ${repo_name} && git lfs pull --include=${fetch_file_name}")
+    endif()
+endfunction()
+
+# function(download_tx_tar repo_name fetch_file_name)
+#     message("---begin download ${repo_name}: load file ${fetch_file_name}---")
+#     download_tx_project(${repo_name} ${fetch_file_name})
+#     set(tar_name ${CMAKE_CURRENT_BINARY_DIR}/${repo_name}/${fetch_file_name})
+#     file(ARCHIVE_EXTRACT INPUT "${tar_name}" DESTINATION "${CMAKE_CURRENT_BINARY_DIR}/${git_name}")
+#     message("---${repo_name} source dir: ${CMAKE_CURRENT_BINARY_DIR}/${git_name}---")
+# endfunction()
+
+function(download_tx_whl repo_name fetch_file_name)
+    message("---begin download ${repo_name}: load file ${fetch_file_name}---")
+    download_tx_project(${repo_name} ${fetch_file_name})
+    if (fetch_file_name MATCHES "_cape")
+        string(REGEX REPLACE "_cape" "" fetch_output_file_name "${fetch_file_name}")
+        if (NOT EXISTS "${CMAKE_CURRENT_BINARY_DIR}/${repo_name}/${fetch_output_file_name}")
+            execute_process(
+                COMMAND mv "${fetch_file_name}" "${fetch_output_file_name}"
+                WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/${repo_name}
+            )
+            message("---Renamed ${fetch_file_name} to ${fetch_output_file_name}---")
+            set(fetch_file_name ${fetch_output_file_name})
+        endif()
+    else()
+        message("---No '_cape' found in ${fetch_file_name}, skipping rename.---")
+    endif()
+    
+    execute_process(
+        COMMAND unzip -o ${CMAKE_CURRENT_BINARY_DIR}/${repo_name}/${fetch_file_name} -d ${CMAKE_CURRENT_BINARY_DIR}/${repo_name}
+        RESULT_VARIABLE res_val
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    )
+
+    if(res_val)
+        message(FATAL_ERROR "FAILED: unzip -o ${CMAKE_CURRENT_BINARY_DIR}/${repo_name}/${fetch_file_name} -d ${CMAKE_CURRENT_BINARY_DIR}/${repo_name}")
+    endif()
+
+endfunction()
+
+function(download_tx_deb  repo_name fetch_file_name)
+    message("---begin download ${repo_name}: load file ${fetch_file_name}---")
+    download_tx_project(${repo_name} ${fetch_file_name})
+    set(deb_name ${CMAKE_CURRENT_BINARY_DIR}/${repo_name}/${fetch_file_name})
+
+    execute_process(
+        COMMAND dpkg-deb --extract ${deb_name} ${CMAKE_CURRENT_BINARY_DIR}/${repo_name}
+        RESULT_VARIABLE res_val
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    )
+
+    if(res_val)
+        message(FATAL_ERROR "FAILED: dpkg-deb --extract ${deb_name} ${CMAKE_CURRENT_BINARY_DIR}/${repo_name}")
+    endif()
+
+    message("---${repo_name} source dir: ${CMAKE_CURRENT_BINARY_DIR}/${repo_name}---")
+endfunction()
+
 ##########################################
 ########## fetchFromArtifactory ##########
 ##########################################
@@ -102,13 +169,23 @@ set(PACKAGE_PYTHON_FILES "${CMAKE_FPKG_PYTHON_PACKAGES}//FILE/")
 set(PACKAGE_LIB_CMDS "mkdir -p ${CMAKE_FPKG_LIBDIR}; mv /FILE/ -t ${CMAKE_FPKG_LIBDIR}")
 set(PACKAGE_LIB_FILES "${CMAKE_FPKG_LIBDIR}//FILE/")
 
-fetchFromArtifactory(tops_extension_whl
-    FILE ${TOPS_EXTENSION_PATH}/${tops_extension_link}
-    PKG_COMMNAD ${PACKAGE_PYTHON_CMDS}
-    PKG_FILES ${PACKAGE_PYTHON_FILES}
-    BRANCH ${TOPS_EXTENSION_BRANCH}
-    VERSION ${TOPS_EXTENSION_TORCH_DAILY_TAG}
-)
+if(NOT PROJECT_GIT_URL)
+    fetchFromArtifactory(tops_extension_whl
+        FILE ${TOPS_EXTENSION_PATH}/${tops_extension_link}
+        PKG_COMMNAD ${PACKAGE_PYTHON_CMDS}
+        PKG_FILES ${PACKAGE_PYTHON_FILES}
+        BRANCH ${TOPS_EXTENSION_BRANCH}
+        VERSION ${TOPS_EXTENSION_TORCH_DAILY_TAG}
+    )
+else()
+    set(tops_extension_git_name "tops_extension_binary")
+    download_tx_whl(${tops_extension_git_name} ${tops_extension_link})
+    set(tops_extension_whl_FILE ${CMAKE_CURRENT_BINARY_DIR}/${tops_extension_git_name}/${tops_extension_link})
+    if (tops_extension_whl_FILE MATCHES "_cape")
+        string(REGEX REPLACE "_cape" "" tops_extension_whl_FILE "${tops_extension_whl_FILE}")
+    endif()
+    set(tops_extension_whl_SOURCE_DIR ${CMAKE_CURRENT_BINARY_DIR}/${tops_extension_git_name})
+endif()
 
 set(TOPSOP_PATH module_package/topsop)
 set(TOPSOP_DOWN_MODE FILE)
@@ -136,15 +213,26 @@ if (NOT DEFINED TOPSATEN_INSTALL_PREFIX)
     else()
         set(TOPSATEN_LINK_CMD ${TOPSOP_DOWN_MODE} ${TOPSOP_PATH}/${TOPSOP_COMMITID}/topsaten${TOPSOP_SEMI_NAME}_${TOPSOP_PACKAGE_VERSION}-1_${_DEB_PACKAGE_ARCHITECTURE}.deb)
     endif()
-    fetchFromArtifactory(fetch_topsaten_deb
-        ${TOPSATEN_LINK_CMD}
-        PKG_COMMAND ${PACKAGE_LIB_CMDS}
-        PKG_FILES ${PACKAGE_LIB_FILES}
-        BRANCH ${TOPSOP_BRANCH}
-        VERSION ${TOPSOP_PACKAGE_VERSION}
-        EXTRACT ON
-    )
-    set(TOPSATEN_HOME "${fetch_topsaten_deb_SOURCE_DIR}/usr")
+    if (NOT PROJECT_GIT_URL)
+        fetchFromArtifactory(fetch_topsaten_deb
+            ${TOPSATEN_LINK_CMD}
+            PKG_COMMAND ${PACKAGE_LIB_CMDS}
+            PKG_FILES ${PACKAGE_LIB_FILES}
+            BRANCH ${TOPSOP_BRANCH}
+            VERSION ${TOPSOP_PACKAGE_VERSION}
+            EXTRACT ON
+        )
+        set(TOPSATEN_HOME "${fetch_topsaten_deb_SOURCE_DIR}/usr")
+    else()
+        set(topsop_git_name "topsaten_binary")
+        string(REGEX REPLACE "(.*)/(.*)" "\\2" topsaten_binary_file_name "${TOPSATEN_LINK_CMD}")
+        set(fetch_file_name ${TOPSOP_COMMITID}/${topsaten_binary_file_name})
+
+        download_tx_deb(${topsop_git_name} ${fetch_file_name})
+
+        set(fetch_topsaten_deb_FILE ${CMAKE_CURRENT_BINARY_DIR}/${topsop_git_name}/${TOPSOP_COMMITID}/${topsaten_binary_file_name})
+        set(TOPSATEN_HOME ${CMAKE_CURRENT_BINARY_DIR}/${topsop_git_name}/usr)
+    endif()
     message(STATUS "TOPSATEN_HOME : ${TOPSATEN_HOME}")
 endif()
 ####################################################
@@ -156,7 +244,6 @@ set(TORCH_GCU_COMMITID dc3a3ed)
 set(TORCH_GCU_BRANCH 2.x)
 set(TORCH_GCU_DAILY_TAG 3.3.1.1)
 set(TORCH_GCU_PY_VER 310)
-set(TORCH_GCU_SEMI_NAME "")
 
 # set(TORCH_GCU_XNAS_LINK "http://10.12.110.200:8080/release/torch-gcu-release/57/integration/efda744/")
 
@@ -166,26 +253,34 @@ if(TORCH_GCU_XNAS_LINK)
         VARS
             TORCH_GCU_LINK
         PATTERNS
-            "torch_gcu${TORCH_GCU_SEMI_NAME}-${BUILD_TORCH_VERSION}.*-cp${TORCH_GCU_PY_VER}-cp${TORCH_GCU_PY_VER}-linux_${CMAKE_SYSTEM_PROCESSOR}.whl"
+            "torch_gcu-${BUILD_TORCH_VERSION}.*-cp${TORCH_GCU_PY_VER}-cp${TORCH_GCU_PY_VER}-linux_${CMAKE_SYSTEM_PROCESSOR}.whl"
     )
     message(STATUS "TORCH_GCU_LINK: ${TORCH_GCU_LINK}")
     if(NOT TORCH_GCU_LINK)
         message(WARNING "Can not find some links from ${TORCH_GCU_XNAS_LINK}")
     endif()
 endif()
-set(torch_gcu_link "${TORCH_GCU_COMMITID}/torch_gcu${TORCH_GCU_SEMI_NAME}-${BUILD_TORCH_VERSION}+${TORCH_GCU_DAILY_TAG}-cp${TORCH_GCU_PY_VER}-cp${TORCH_GCU_PY_VER}-linux_${CMAKE_SYSTEM_PROCESSOR}.whl")
+set(torch_gcu_link "${TORCH_GCU_COMMITID}/torch_gcu-${BUILD_TORCH_VERSION}+${TORCH_GCU_DAILY_TAG}-cp${TORCH_GCU_PY_VER}-cp${TORCH_GCU_PY_VER}-linux_${CMAKE_SYSTEM_PROCESSOR}.whl")
 if(NOT TORCH_GCU_LINK)
     set(TORCH_GCU_LINK ${TORCH_GCU_PATH}/${torch_gcu_link})
 endif()
-fetchFromArtifactory(torch_gcu_whl
-    FILE ${TORCH_GCU_LINK}
-    PKG_COMMAND ${PACKAGE_PYTHON_CMDS}
-    PKG_FILES ${PACKAGE_PYTHON_FILES}
-    BRANCH ${TORCH_GCU_BRANCH}
-    VERSION ${TORCH_GCU_DAILY_TAG}
-    EXTRACT ON
-)
+if(NOT PROJECT_GIT_URL)
+    fetchFromArtifactory(torch_gcu_whl
+        FILE ${TORCH_GCU_LINK}
+        PKG_COMMAND ${PACKAGE_PYTHON_CMDS}
+        PKG_FILES ${PACKAGE_PYTHON_FILES}
+        BRANCH ${TORCH_GCU_BRANCH}
+        VERSION ${TORCH_GCU_DAILY_TAG}
+        EXTRACT ON
+    )
+else()
+    set(torch_gcu_git_name "torch_gcu_binary")
 
+    download_tx_whl(${torch_gcu_git_name} ${torch_gcu_link})
+
+    set(torch_gcu_whl_FILE ${CMAKE_CURRENT_BINARY_DIR}/${torch_gcu_git_name}/${torch_gcu_link})
+    set(torch_gcu_whl_SOURCE_DIR ${CMAKE_CURRENT_BINARY_DIR}/${torch_gcu_git_name})
+endif()
 # ######################################################
 # ###################  XFORMERS  #########################
 # ######################################################
@@ -197,10 +292,6 @@ set(XFORMERS_DAILY_TAG 0.0.28.post3+torch.2.5.1.gcu.3.2.20250225)
 set(XFORMERS_PY_VER 310)
 set(XFORMERS_SEMI_NAME "")
 
-if (PROJECT_GIT_URL)
-    set(xformers_git_name "xformers_binary")
-    download_tx_git_project(${xformers_git_name})
-endif()
 unset(XFORMERS_LINK)
 if(PREBUILD_XFORMERS_XNAS_BASE)
     link_pattern_var("${PREBUILD_XFORMERS_XNAS_BASE}"
@@ -229,12 +320,5 @@ if (NOT PROJECT_GIT_URL)
         PKG_ONLY ON
     )
 else()
-    set(git_name "xformers_binary")
-    string(REGEX REPLACE "(.*)/(.*)" "\\2" xformers_binary_file_name "${XFORMERS_${BUILD_TORCH_VERSION}_LINK}")
-    set(fetch_file_name ${XFORMERS_COMMITID}/${xformers_binary_file_name})
-
-    download_tx_whl(${xformers_git_name} ${fetch_file_name})
-
-    set(xformers_${XFORMERS_PY_VER}_whl_${CMAKE_SYSTEM_PROCESSOR}_FILE ${CMAKE_CURRENT_BINARY_DIR}/${xformers_git_name}/${XFORMERS_COMMITID}/${xformers_binary_file_name})
-
+    message("--- don't download xformers for zx build---")
 endif()

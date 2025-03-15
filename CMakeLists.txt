@@ -3,10 +3,15 @@ cmake_minimum_required(VERSION 3.18 FATAL_ERROR)
 #download i-cmake
 include(FetchContent)
 Set(FETCHCONTENT_QUIET FALSE)
+set(icmake_REPOSITORY "git@git.enflame.cn:i")
+if(PROJECT_GIT_URL)
+    set(icmake_REPOSITORY ${PROJECT_GIT_URL})
+endif()
+set(icmake_GIT_REVISION 1.4.97)
 FetchContent_Declare(
     I_CMAKE
-    GIT_REPOSITORY "git@git.enflame.cn:i/cmake.git"
-    GIT_TAG 1.4.97
+    GIT_REPOSITORY ${icmake_REPOSITORY}/cmake.git
+    GIT_TAG ${icmake_GIT_REVISION}
 )
 FetchContent_MakeAvailable(I_CMAKE)
 set(CMAKE_MODULE_DIR "${i_cmake_SOURCE_DIR}")

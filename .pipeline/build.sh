@@ -31,6 +31,40 @@ function cape_build() {
   x86_normal_build
 }
 
+function zx_normal_build() {
+  echo "Current build job: $FUNCNAME"
+  echo `pwd`
+  PROJECT_GIT_URL="git@git.tencent.com:sy-zx/enflame_caps"
+  sudo python3.10 -m pip install torch==2.5.1
+  mkdir -p ${BUILD_ROOT_DIR}/cmake_build
+  cd ${BUILD_ROOT_DIR}/cmake_build
+  if [ -d "tops_extension_binary" ]; then
+    echo "tops_extension_binary is already exist"
+  else
+    GIT_LFS_SKIP_SMUDGE=1 git clone ${PROJECT_GIT_URL}/tops_extension_binary.git
+  fi
+  if [ -d "torch_gcu_binary" ]; then
+    echo "torch_gcu_binary is already exist"
+  else
+    GIT_LFS_SKIP_SMUDGE=1 git clone ${PROJECT_GIT_URL}/torch_gcu_binary.git
+  fi
+  if [ -d "topsaten_binary" ]; then
+    echo "topsaten_binary is already exist"
+  else
+    GIT_LFS_SKIP_SMUDGE=1 git clone ${PROJECT_GIT_URL}/topsaten_binary.git
+  fi
+  if [ -d "caps_binary" ]; then
+    echo "caps_binary is already exist"
+  else
+    GIT_LFS_SKIP_SMUDGE=1 git clone ${PROJECT_GIT_URL}/caps_binary.git
+  fi
+  cd -
+  cmake vllm --preset ci_all -B cmake_build -DPROJECT_GIT_URL=${PROJECT_GIT_URL}
+  cd ${BUILD_ROOT_DIR}/cmake_build
+  ninja install
+  ninja package_all
+}
+
 function main() {
   set -x
   $build_job_name
