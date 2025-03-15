@@ -11,7 +11,6 @@ from typing import Any, Dict, List, Optional, Set, Tuple, Type, Union
 import numpy as np
 import torch
 import torch.distributed
-import torch_gcu
 import vllm.envs as envs
 from torch import nn
 from tqdm import tqdm
@@ -24,7 +23,7 @@ from vllm.distributed.parallel_state import (
     get_tensor_model_parallel_rank,
     graph_capture,
 )
-from vllm.forward_context import set_forward_context
+from vllm.forward_context import get_forward_context, set_forward_context
 from vllm.inputs import INPUT_REGISTRY, InputRegistry
 from vllm.logger import init_logger
 from vllm.lora.layers import LoRAMapping
@@ -54,7 +53,7 @@ from vllm.worker.model_runner import (
     ModelInputForGPUWithSamplingMetadata,
     TModelInputForGPU,
 )
-from vllm.worker.model_runner_base import ModelRunnerBase
+from vllm.worker.model_runner_base import InputProcessingError, ModelRunnerBase
 
 import vllm_gcu.envs as gcu_envs
 
@@ -191,12 +190,16 @@ class GCUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
 
     def load_model(self) -> None:
         logger.info("Starting to load model %s...", self.model_config.model)
-        with DeviceMemoryProfiler() as m:
+        with DeviceMemoryProfiler(self.device) as m:
+            time_before_load = time.perf_counter()
             self.model = get_model(vllm_config=self.vllm_config)
+            time_after_load = time.perf_counter()
 
         self.model_memory_usage = m.consumed_memory
         logger.info(
-            "Loading model weights took %.4f GB", self.model_memory_usage / float(2**30)
+            "Model loading took %.4f GB and %.6f seconds",
+            self.model_memory_usage / float(2**30),
+            (time_after_load - time_before_load),
         )
 
         if self.lora_config:
@@ -315,7 +318,10 @@ class GCUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
         """
         self.builder.prepare(finished_requests_ids)
         for seq_group_metadata in seq_group_metadata_list:
-            self.builder.add_seq_group(seq_group_metadata)
+            try:
+                self.builder.add_seq_group(seq_group_metadata)
+            except Exception as e:
+                raise InputProcessingError(seq_group_metadata.request_id, str(e)) from e
 
         self.builder.reset_cached_inter_data()
 
@@ -777,6 +783,7 @@ class GCUModelRunner(GCUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
         kv_caches: List[torch.Tensor],
         intermediate_tensors: Optional[IntermediateTensors] = None,
         num_steps: int = 1,
+        **kwargs,
     ) -> Optional[Union[List[SamplerOutput], IntermediateTensors]]:
         if num_steps > 1:
             raise ValueError("num_steps > 1 is not supported in ModelRunner")
@@ -802,10 +809,25 @@ class GCUModelRunner(GCUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
         # TODO(andoorve): We can remove this once all
         # virtual engines share the same kv cache.
         virtual_engine = model_input.virtual_engine
+        previous_hidden_states = kwargs.get("previous_hidden_states")
         if prefill_meta is None and decode_meta.use_cuda_graph:
             assert model_input.input_tokens is not None
             graph_batch_size = model_input.input_tokens.shape[0]
             model_executable = self.graph_runners[virtual_engine][graph_batch_size]
+            if previous_hidden_states is not None:
+                previous_hidden_states = torch.cat(
+                    [
+                        previous_hidden_states,
+                        torch.empty(
+                            [
+                                graph_batch_size - previous_hidden_states.shape[0],
+                                *previous_hidden_states.shape[1:],
+                            ],
+                            dtype=previous_hidden_states.dtype,
+                            device=previous_hidden_states.device,
+                        ),
+                    ]
+                )
         else:
             model_executable = self.model
 
@@ -839,6 +861,9 @@ class GCUModelRunner(GCUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
             if self.has_inner_state
             else {}
         )
+        model_kwargs = {}
+        if previous_hidden_states is not None:
+            model_kwargs["previous_hidden_states"] = previous_hidden_states
         if (
             self.observability_config is not None
             and self.observability_config.collect_model_forward_time
@@ -854,13 +879,12 @@ class GCUModelRunner(GCUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
                 hidden_or_intermediate_states = model_executable(
                     input_ids=model_input.input_tokens,
                     positions=model_input.input_positions,
-                    kv_caches=kv_caches,
-                    attn_metadata=model_input.attn_metadata,
                     intermediate_tensors=intermediate_tensors,
                     **MultiModalKwargs.as_kwargs(
                         multi_modal_kwargs, device=self.device
                     ),
                     **seqlen_agnostic_kwargs,
+                    **model_kwargs,
                 )
 
         if (
@@ -1069,8 +1093,6 @@ class GCUGraphRunner(nn.Module):
             self.model(
                 input_ids=input_ids,
                 positions=positions,
-                kv_caches=kv_caches,
-                attn_metadata=attn_metadata,
                 intermediate_tensors=intermediate_inputs,
                 **kwargs,
             )
@@ -1083,8 +1105,6 @@ class GCUGraphRunner(nn.Module):
             output_hidden_or_intermediate_states = self.model(
                 input_ids=input_ids,
                 positions=positions,
-                kv_caches=kv_caches,
-                attn_metadata=attn_metadata,
                 intermediate_tensors=intermediate_inputs,
                 **kwargs,
             )
@@ -1126,18 +1146,17 @@ class GCUGraphRunner(nn.Module):
         self,
         input_ids: torch.Tensor,
         positions: torch.Tensor,
-        kv_caches: List[torch.Tensor],
-        attn_metadata: AttentionMetadata,
         intermediate_tensors: Optional[IntermediateTensors],
         **kwargs,
     ) -> torch.Tensor:
-        # KV caches are fixed tensors, so we don't need to copy them.
-        del kv_caches
+        attn_metadata: AttentionMetadata = get_forward_context().attn_metadata
 
         # Copy the input tensors to the input buffers.
         self.input_buffers["input_ids"].copy_(input_ids, non_blocking=True)
         if positions is not None:
-            self.input_buffers["positions"].copy_(positions, non_blocking=True)
+            self.input_buffers["positions"][: positions.shape[0]].copy_(
+                positions, non_blocking=True
+            )
 
         if self.backend_name != "NO_ATTENTION":
             self.input_buffers["slot_mapping"].copy_(

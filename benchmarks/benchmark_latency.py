@@ -155,9 +155,5 @@ if __name__ == "__main__":
 
     parser = EngineArgs.add_cli_args(parser)
 
-    from parser_utils import override_parser
-
-    override_parser(parser)
-
     args = parser.parse_args()
     main(args)

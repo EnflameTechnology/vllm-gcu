@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 import torch
 from vllm.model_executor.layers.linear import LinearBase, UnquantizedLinearMethod
@@ -7,7 +7,6 @@ from vllm.model_executor.layers.quantization.awq import (
     AWQLinearMethod,
     is_layer_skipped_awq,
 )
-from vllm.model_executor.layers.quantization.base_config import QuantizationConfig
 
 from vllm_gcu.kernels import _custom_ops as ops
 
@@ -50,7 +49,11 @@ class AWQGCUConfig(AWQConfig):
 
     @classmethod
     def override_quantization_method(cls, hf_quant_cfg, user_quant) -> Optional[str]:
-        if "quant_method" in hf_quant_cfg and hf_quant_cfg["quant_method"] == "awq":
+        if (
+            "quant_method" in hf_quant_cfg
+            and hf_quant_cfg["quant_method"] == "awq"
+            and user_quant == "awq"
+        ):
             return cls.get_name()
         return None
 

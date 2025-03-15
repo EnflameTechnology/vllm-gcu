@@ -1,12 +1,11 @@
 #!/usr/bin/env python
 # coding=utf-8
-from typing import Callable, Dict, List, NamedTuple, Optional, Tuple
+from typing import List, Optional
 
 import torch
-from torch import fx
 
 import torch._dynamo
-torch._dynamo.config.suppress_errors = True
+from torch import fx
 
 from torch._inductor.pattern_matcher import PatternMatcherPass
 from torch_gcu.gcu.dynamo.topsgraph.fx_passes.post_grad import inference_patterns
@@ -14,6 +13,7 @@ from vllm.compilation.fusion import (
     FP8_DTYPE,
     FusedAddRMSNormDynamicQuantPattern,
     FusedAddRMSNormStaticQuantPattern,
+    FusionPass,
     RMSNormDynamicQuantPattern,
     RMSNormStaticQuantPattern,
 )

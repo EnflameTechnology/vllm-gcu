@@ -483,10 +483,6 @@ if __name__ == "__main__":
     parser = FlexibleArgumentParser(description="Benchmark guided decoding.")
     parser = AsyncEngineArgs.add_cli_args(parser)
 
-    from parser_utils import override_parser
-
-    override_parser(parser)
-
     parser.add_argument(
         "--output-len",
         type=int,
