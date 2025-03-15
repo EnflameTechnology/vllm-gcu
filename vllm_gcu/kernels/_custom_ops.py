@@ -1,15 +1,10 @@
-from typing import Any, Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
-import tops_extension.torch
-
+import tops_extension.torch  # noqa: F401
 import torch
-import torch_gcu
+import torch_gcu  # noqa: F401
 
-from vllm.logger import init_logger
-
-import vllm_gcu._C
-
-logger = init_logger(__name__)
+import vllm_gcu._C  # noqa: F401
 
 
 # page attention ops
@@ -288,6 +283,7 @@ def scaled_fp8_quant(
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     raise NotImplementedError
 
+
 # int8
 def scaled_int8_quant(
     input: torch.Tensor,
@@ -308,8 +304,7 @@ def scaled_int8_quant(
     input_scales = torch.empty(
         (input.numel() // input.shape[-1], 1), device=input.device, dtype=torch.float32
     )
-    input_azp = None if symmetric else torch.empty_like(
-        input_scales, dtype=torch.int32)
+    input_azp = None if symmetric else torch.empty_like(input_scales, dtype=torch.int32)
     torch.ops._C.dynamic_scaled_int8_quant(output, input, input_scales)
     return output, input_scales, input_azp
 
@@ -605,17 +600,39 @@ def sgl_moe_align_block_size(
     )
 
 
-def moe_align_block_size_pad(topk_ids, topk_ids_size, num_experts,
-                             block_size, sorted_token_ids,
-                             experts_ids,
-                             num_tokens_post_pad):
-    torch.ops._C.moe_align_block_size_pad(topk_ids, topk_ids_size, num_experts,
-                                              block_size, sorted_token_ids,
-                                              experts_ids,
-                                              num_tokens_post_pad)
+def moe_align_block_size_pad(
+    topk_ids,
+    topk_ids_size,
+    num_experts,
+    block_size,
+    sorted_token_ids,
+    experts_ids,
+    num_tokens_post_pad,
+):
+    torch.ops._C.moe_align_block_size_pad(
+        topk_ids,
+        topk_ids_size,
+        num_experts,
+        block_size,
+        sorted_token_ids,
+        experts_ids,
+        num_tokens_post_pad,
+    )
 
 
-def get_ep_indices(ep_count, ep_token_indices, ep_valid_token_indices,
-                   topk_ids, expert_per_rank, ep_size):
-    torch.ops._C.get_ep_indices(ep_count, ep_token_indices, ep_valid_token_indices,
-                                topk_ids, expert_per_rank, ep_size)
+def get_ep_indices(
+    ep_count,
+    ep_token_indices,
+    ep_valid_token_indices,
+    topk_ids,
+    expert_per_rank,
+    ep_size,
+):
+    torch.ops._C.get_ep_indices(
+        ep_count,
+        ep_token_indices,
+        ep_valid_token_indices,
+        topk_ids,
+        expert_per_rank,
+        ep_size,
+    )

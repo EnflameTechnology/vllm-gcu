@@ -22,22 +22,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Inference-only DeepseekV2/DeepseekV3 model."""
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, Iterable, Optional, Set, Tuple, Union
 
 import torch
 from torch import nn
 from transformers import PretrainedConfig
-
 from vllm.attention import Attention, AttentionMetadata
 from vllm.compilation.decorators import support_torch_compile
-from vllm.config import CacheConfig, ModelConfig, VllmConfig
+from vllm.config import CacheConfig, ModelConfig, set_current_vllm_config, VllmConfig
 from vllm.distributed import (
     get_pp_group,
     get_tensor_model_parallel_world_size,
     get_tp_group,
     tensor_model_parallel_all_reduce,
 )
+
+from vllm.forward_context import get_forward_context
 from vllm.model_executor.layers.activation import SiluAndMul
+from vllm.model_executor.layers.fused_moe import FusedMoE
 from vllm.model_executor.layers.layernorm import RMSNorm
 from vllm.model_executor.layers.linear import (
     ColumnParallelLinear,
@@ -70,7 +72,6 @@ from vllm.model_executor.sampling_metadata import SamplingMetadata
 from vllm.sequence import IntermediateTensors
 
 import vllm_gcu.envs as gcu_envs
-from vllm_gcu.kernels.fused_moe import EPFusedMoE
 from vllm_gcu.kernels.linear import MergedReplicatedLinear
 
 
@@ -136,7 +137,7 @@ class DeepseekV2MLP(nn.Module):
             )
         self.act_fn = SiluAndMul()
 
-    def forward(self, x, max_model_len=None):
+    def forward(self, x):
         gate_up, _ = self.gate_up_proj(x)
         x = self.act_fn(gate_up)
         x, _ = self.down_proj(x)
@@ -150,7 +151,6 @@ class DeepseekV2MoE(nn.Module):
         config: PretrainedConfig,
         quant_config: Optional[QuantizationConfig] = None,
         prefix: str = "",
-        max_model_len=None,
     ):
         super().__init__()
         self.routed_scaling_factor = config.routed_scaling_factor
@@ -177,7 +177,7 @@ class DeepseekV2MoE(nn.Module):
         else:
             self.gate.e_score_correction_bias = None
 
-        self.experts = EPFusedMoE(
+        self.experts = FusedMoE(
             num_experts=config.n_routed_experts,
             top_k=config.num_experts_per_tok,
             hidden_size=config.hidden_size,
@@ -191,8 +191,12 @@ class DeepseekV2MoE(nn.Module):
             prefix=f"{prefix}.experts",
             scoring_func=config.scoring_func,
             e_score_correction_bias=self.gate.e_score_correction_bias,
-            max_model_len=max_model_len,
         )
+        if self.experts.dp_size > 1 and self.experts.ep_size > 1:
+            # ep impl is not for dpa
+            self.experts.use_direct_call = True
+            self.experts.dp_size = 1
+
         self.tp_size = self.experts.tp_size
 
         if config.n_shared_experts is not None:
@@ -205,18 +209,18 @@ class DeepseekV2MoE(nn.Module):
                 reduce_results=False,
             )
 
-    def forward(self, hidden_states: torch.Tensor, max_model_len=None) -> torch.Tensor:
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         num_tokens, hidden_dim = hidden_states.shape
         hidden_states = hidden_states.view(-1, hidden_dim)
-        shared_output = None
-        # router_logits: (num_tokens, n_experts)
+        if self.n_shared_experts is not None:
+            shared_output = self.shared_experts(hidden_states)
         router_logits, _ = self.gate(hidden_states)
         final_hidden_states = (
-            self.experts(hidden_states=hidden_states,
-                         router_logits=router_logits,
-                         max_model_len=max_model_len,
-                         shared_experts=self.shared_experts,
-                         routed_scaling_factor=self.routed_scaling_factor)
+            self.experts(
+                hidden_states=hidden_states,
+                router_logits=router_logits,
+            )
+            * self.routed_scaling_factor
         )
         if shared_output is not None:
             final_hidden_states = final_hidden_states + shared_output
@@ -352,7 +356,6 @@ class DeepseekV2Attention(nn.Module):
         self,
         positions: torch.Tensor,
         hidden_states: torch.Tensor,
-        kv_cache: torch.Tensor,
         attn_metadata: AttentionMetadata,
     ) -> torch.Tensor:
         if self.q_lora_rank is not None:
@@ -392,7 +395,7 @@ class DeepseekV2Attention(nn.Module):
         v = torch.nn.functional.pad(
             v, [0, self.qk_head_dim - self.v_head_dim], value=0
         ).view(-1, self.num_local_heads * self.qk_head_dim)
-        attn_output = self.attn(q, k, v, kv_cache, attn_metadata)
+        attn_output = self.attn(q, k, v, attn_metadata)
         attn_output = attn_output.view(-1, self.num_local_heads, self.qk_head_dim)[
             ..., : self.v_head_dim
         ].reshape(-1, self.num_local_heads * self.v_head_dim)
@@ -511,7 +514,7 @@ class DeepseekV2MLAAttention(nn.Module):
 
         self.mla_attn = Attention(
             num_heads=self.num_local_heads,
-            head_size=self.kv_lora_rank,
+            head_size=self.kv_lora_rank + self.qk_rope_head_dim,
             scale=self.scaling,
             num_kv_heads=1,
             cache_config=cache_config,
@@ -538,7 +541,6 @@ class DeepseekV2MLAAttention(nn.Module):
         self,
         positions: torch.Tensor,
         hidden_states: torch.Tensor,
-        kv_cache: torch.Tensor,
         attn_metadata: AttentionMetadata,
     ) -> torch.Tensor:
         if self.q_lora_rank is not None:
@@ -551,7 +553,7 @@ class DeepseekV2MLAAttention(nn.Module):
         )
         kv_c_normed = self.kv_a_layernorm(kv_c.contiguous())
         return self.mla_attn(
-            hidden_states_or_q_c, kv_c_normed, k_pe, kv_cache, attn_metadata
+            hidden_states_or_q_c, kv_c_normed, k_pe, output_shape=hidden_states.shape
         )
 
 
@@ -564,7 +566,6 @@ class DeepseekV2DecoderLayer(nn.Module):
         model_config: ModelConfig,
         cache_config: Optional[CacheConfig] = None,
         quant_config: Optional[QuantizationConfig] = None,
-        scheduler_config = None,
     ) -> None:
         super().__init__()
         self.hidden_size = config.hidden_size
@@ -617,14 +618,12 @@ class DeepseekV2DecoderLayer(nn.Module):
         self.post_attention_layernorm = RMSNorm(
             config.hidden_size, eps=config.rms_norm_eps
         )
-        self.scheduler_config=scheduler_config
         self.model_config = model_config
 
     def forward(
         self,
         positions: torch.Tensor,
         hidden_states: torch.Tensor,
-        kv_cache: torch.Tensor,
         attn_metadata: AttentionMetadata,
         residual: Optional[torch.Tensor],
     ) -> torch.Tensor:
@@ -656,7 +655,6 @@ class DeepseekV2DecoderLayer(nn.Module):
         hidden_states = self.self_attn(
             positions=positions,
             hidden_states=hidden_states,
-            kv_cache=kv_cache,
             attn_metadata=attn_metadata,
         )
 
@@ -677,12 +675,7 @@ class DeepseekV2DecoderLayer(nn.Module):
 
         # Fully Connected
         hidden_states, residual = self.post_attention_layernorm(hidden_states, residual)
-        use_max = (not gcu_envs.VLLM_GCU_DEBUG_PDONLY) or attn_metadata.num_prefills > 0
-        max_pad = self.scheduler_config.max_num_batched_tokens if use_max else self.scheduler_config.max_num_seqs
-        if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
-            sp_size = tp_group.size()
-            max_pad = (max_pad + sp_size - 1) // sp_size * sp_size
-        hidden_states = self.mlp(hidden_states, max_pad)
+        hidden_states = self.mlp(hidden_states)
 
         return hidden_states, residual
 
@@ -719,7 +712,6 @@ class DeepseekV2Model(nn.Module):
                 model_config=model_config,
                 cache_config=cache_config,
                 quant_config=quant_config,
-                scheduler_config=vllm_config.scheduler_config,
             ),
             prefix=f"{prefix}.layers",
         )
@@ -739,11 +731,11 @@ class DeepseekV2Model(nn.Module):
         self,
         input_ids: torch.Tensor,
         positions: torch.Tensor,
-        kv_caches: List[torch.Tensor],
-        attn_metadata: AttentionMetadata,
         intermediate_tensors: Optional[IntermediateTensors],
         inputs_embeds: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, IntermediateTensors]:
+        attn_metadata = get_forward_context().attn_metadata
+
         tp_group = get_tp_group().device_group
         if get_pp_group().is_first_rank:
             if inputs_embeds is not None:
@@ -762,7 +754,6 @@ class DeepseekV2Model(nn.Module):
             hidden_states, residual = layer(
                 positions,
                 hidden_states,
-                kv_caches[i - self.start_layer],
                 attn_metadata,
                 residual,
             )
@@ -801,6 +792,8 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP):
             self.model.make_empty_intermediate_tensors
         )
 
+        self.vllm_config = vllm_config
+
     def get_input_embeddings(self, input_ids: torch.Tensor) -> torch.Tensor:
         return self.model.get_input_embeddings(input_ids)
 
@@ -808,20 +801,17 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP):
         self,
         input_ids: torch.Tensor,
         positions: torch.Tensor,
-        kv_caches: List[torch.Tensor],
-        attn_metadata: AttentionMetadata,
         intermediate_tensors: Optional[IntermediateTensors] = None,
         inputs_embeds: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, IntermediateTensors]:
-        hidden_states = self.model(
-            input_ids,
-            positions,
-            kv_caches,
-            attn_metadata,
-            intermediate_tensors,
-            inputs_embeds,
-        )
-        return hidden_states
+        with set_current_vllm_config(self.vllm_config):
+            hidden_states = self.model(
+                input_ids,
+                positions,
+                intermediate_tensors,
+                inputs_embeds,
+            )
+            return hidden_states
 
     def compute_logits(
         self,
@@ -862,7 +852,7 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP):
 
         # Params for weights, fp8 weight scales, fp8 activation scales
         # (param_name, weight_name, expert_id, shard_id)
-        expert_params_mapping = EPFusedMoE.make_expert_params_mapping(
+        expert_params_mapping = FusedMoE.make_expert_params_mapping(
             ckpt_gate_proj_name="gate_proj",
             ckpt_down_proj_name="down_proj",
             ckpt_up_proj_name="up_proj",

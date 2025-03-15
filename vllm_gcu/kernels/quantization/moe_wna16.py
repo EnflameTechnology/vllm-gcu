@@ -18,7 +18,6 @@ from vllm.model_executor.layers.quantization.moe_wna16 import (
 )
 from vllm.model_executor.utils import set_weight_attrs
 
-import vllm_gcu.kernels
 from vllm_gcu.kernels.quantization.utils import register_gcu_quantization_config
 
 
@@ -90,9 +89,7 @@ class MoeWNA16GCUConfig(QuantizationConfig):
             config,
         )
 
-    def get_quant_method(
-        self, layer: torch.nn.Module, prefix: str
-    ) -> Optional["QuantizeMethodBase"]:
+    def get_quant_method(self, layer: torch.nn.Module, prefix: str):
         if is_layer_skipped_quant(prefix, self.modules_to_not_convert):
             return UnquantizedLinearMethod()
         elif isinstance(layer, LinearBase):
@@ -118,7 +115,7 @@ class MoeWNA16GCUConfig(QuantizationConfig):
     def override_quantization_method(cls, hf_quant_cfg, user_quant) -> Optional[str]:
         if (
             MoeWNA16Config.is_moe_wna16_compatible(hf_quant_cfg)
-            and user_quant == "moe_wna16"
+            and user_quant == "moe_wna16_gcu"
         ):
             return cls.get_name()
         return None
@@ -530,15 +527,14 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
         num_expert_group: Optional[int] = None,
         global_num_experts: int = -1,
         expert_map: Optional[torch.Tensor] = None,
-        max_model_len=None,
-        shared_experts=None,
-        routed_scaling_factor=None,
         custom_routing_function: Optional[Callable] = None,
         scoring_func: str = "softmax",
         e_score_correction_bias: Optional[torch.Tensor] = None,
+        activation: str = "silu",
     ) -> torch.Tensor:
-        # from vllm.model_executor.layers.fused_moe import fused_experts
-        from vllm_gcu.kernels.fused_moe import fused_experts_impl
+        from vllm.model_executor.layers.fused_moe import fused_experts
+
+        assert activation == "silu", "Only SiLU activation is supported."
 
         topk_weights, topk_ids = FusedMoE.select_experts(
             hidden_states=x,
@@ -558,7 +554,7 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
 
         assert has_zp, "Op impl has bug when sym"
 
-        fused_experts_impl(
+        fused_experts(
             x,
             layer.w13_qweight,
             layer.w2_qweight,
@@ -569,9 +565,6 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
             use_int8_w8a16=weight_bits == 8,
             global_num_experts=global_num_experts,
             expert_map=expert_map,
-            max_model_len=max_model_len,
-            shared_experts=shared_experts,
-            routed_scaling_factor=routed_scaling_factor,
             w1_scale=layer.w13_scales,
             w2_scale=layer.w2_scales,
             w1_zp=layer.w13_qzeros if has_zp else None,

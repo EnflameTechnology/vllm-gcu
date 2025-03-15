@@ -810,10 +810,6 @@ if __name__ == "__main__":
     )
     parser = AsyncEngineArgs.add_cli_args(parser)
 
-    from parser_utils import override_parser
-
-    override_parser(parser)
-
     args = parser.parse_args()
     if args.perf:
         assert (args.random_prompt and (args.dataset_for_perf is not None)) == False, \

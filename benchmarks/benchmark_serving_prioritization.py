@@ -651,7 +651,7 @@ async def benchmark(
     # send idle request to each server
     idle_request = sample_random_requests(
         prefix_len=0,
-        input_len=1,
+        input_len=0,
         output_len=1,
         num_prompts=1,
         range_ratio=1.0,
@@ -681,7 +681,12 @@ async def benchmark(
                 async with session.post(
                     url=api_url, json=idle_payload, headers=headers
                 ) as response:
-                    return api_url
+                    if response.status == 200:
+                        async for chunk_bytes in response.content:
+                            chunk_bytes = chunk_bytes.strip()
+                            if not chunk_bytes:
+                                continue
+                        return api_url
             except Exception:
                 return api_url
 

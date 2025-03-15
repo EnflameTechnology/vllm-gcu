@@ -2,14 +2,12 @@
 # coding=utf-8
 import contextlib
 import gc
-import os
 import time
 from dataclasses import dataclass, field
 from functools import wraps
 from typing import Generator
 
 import torch
-import torch_gcu
 
 
 @dataclass
@@ -94,7 +92,9 @@ def memory_profiling(
 
 
 def dump_memory_snapshot_when_exception(func):
-    n = int(os.environ.get("VLLM_DUMP_SNAPSHOT_EVERY_N_STEP", 0))
+    import vllm_gcu.envs as gcu_envs
+
+    n = gcu_envs.VLLM_DUMP_SNAPSHOT_EVERY_N_STEP
     if n <= 0:
         return func
 
