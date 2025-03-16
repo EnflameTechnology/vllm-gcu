@@ -64,8 +64,8 @@ function zx_normal_build() {
   cd -
   cmake vllm --preset ci_all -B cmake_build -DPROJECT_GIT_URL=${PROJECT_GIT_URL}
   cd ${BUILD_ROOT_DIR}/cmake_build
-  ninja -j${cpu_count} install
-  ninja -j${cpu_count} package_all
+  ninja -j4 install
+  ninja -j4 package_all
 }
 
 function main() {
