@@ -9,15 +9,17 @@ function x86_normal_build() {
   echo `pwd`
   cmake ${project_name} --preset ci_all -B cmake_build
   cd cmake_build
-  ninja -j32 install
-  ninja -j32 package_all
+  ninja -j${cpu_count} install
+  ninja -j${cpu_count} package_all
 }
 
 function x86_normal_daily_build() {
   echo "Current build job: $FUNCNAME"
   echo `pwd`
-  cd ${project_name}
-  NEED_DAILY_TEST_CASE=ON VLLM_TARGET_DEVICE=gcu USE_CI=1 $PY_EXECUTOR setup.py bdist_wheel --py-limited-api=${VLLM_ABI_FLAG} -d ../cmake_build/x86_64-linux-rel/python_packages
+  cmake ${project_name} --preset ci_all -B cmake_build
+  cd cmake_build
+  ninja -j${cpu_count} install
+  ninja -j${cpu_count} package_all
 }
 
 function tar_test_files(){
@@ -62,8 +64,8 @@ function zx_normal_build() {
   cd -
   cmake vllm --preset ci_all -B cmake_build -DPROJECT_GIT_URL=${PROJECT_GIT_URL}
   cd ${BUILD_ROOT_DIR}/cmake_build
-  ninja install
-  ninja package_all
+  ninja -j${cpu_count} install
+  ninja -j${cpu_count} package_all
 }
 
 function main() {
@@ -82,6 +84,7 @@ elif [ $# -eq 1 ]; then
 fi
 
 export project_name=${project_name:-"vllm"}
+export cpu_count=${process_num:-$(nproc)}
 export PY_PACKAGE_VERSION=${package_version:-""}
 
 main "$@"
