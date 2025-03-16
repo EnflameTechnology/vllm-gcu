@@ -47,6 +47,9 @@ class GCUPlatform(Platform):
         if selected_backend == _Backend.FLASHINFER:
             logger.info("Using FlashInfer backend.")
             raise NotImplementedError
+        elif selected_backend == _Backend.FLASH_ATTN:
+            logger.info("Using FlashAttn backend.")
+            return "vllm_gcu.attention.backends.flash_attn.FlashAttentionBackend"
         elif selected_backend == _Backend.XFORMERS:
             logger.info("Using XFormers backend.")
             return "vllm_gcu.attention.backends.xformers.GCUXFormersBackend"
