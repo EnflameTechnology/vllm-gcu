@@ -679,6 +679,9 @@ class DeepseekV2DecoderLayer(nn.Module):
         hidden_states, residual = self.post_attention_layernorm(hidden_states, residual)
         use_max = (not gcu_envs.VLLM_GCU_DEBUG_PDONLY) or attn_metadata.num_prefills > 0
         max_pad = self.scheduler_config.max_num_batched_tokens if use_max else self.scheduler_config.max_num_seqs
+        if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
+            sp_size = tp_group.size()
+            max_pad = (max_pad + sp_size - 1) // sp_size * sp_size
         hidden_states = self.mlp(hidden_states, max_pad)
 
         return hidden_states, residual
