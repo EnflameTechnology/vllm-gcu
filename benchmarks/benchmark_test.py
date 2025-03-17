@@ -39,6 +39,7 @@ TASK_MAP = {
     "ci": "code-infilling",
     "cin": "code-instruction",
     "dch": "deepseek-chat",
+    "cm": "code-merge"
 }
 
 
@@ -685,6 +686,7 @@ def main(args: argparse.Namespace):
         prompt_len + output_len for _, _, prompt_len, output_len in requests
     )
     print(
+        f"Request Latency: {elapsed_time / len(requests):.2f} s, "
         f"Throughput: {len(requests) / elapsed_time:.2f} requests/s, "
         f"{total_num_tokens / elapsed_time:.2f} tokens/s"
     )
