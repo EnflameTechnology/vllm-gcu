@@ -565,7 +565,7 @@ def fused_experts_impl(
             real_token_num=valid_in_chunk,
         )
 
-        torch.ops._C.silu_and_mul_pad(intermediate_cache2.view(M, top_k_num, N//2), intermediate_cache1, valid_in_chunk)
+        torch.ops._C.silu_and_mul_pad(intermediate_cache2.view(-1, top_k_num, N//2), intermediate_cache1, valid_in_chunk)
 
         invoke_fused_moe_kernel(
             intermediate_cache2,
