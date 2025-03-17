@@ -58,7 +58,7 @@ set(py_ver "3.10")
 set(py_ext "39")
 
 add_custom_command(
-    OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/dist/vllm_gcu-${PACKAGE_VERSION}-cp${py_ext}-abi3-linux_x86_64.whl
+    OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/dist/vllm_gcu-${PACKAGE_VERSION}-cp${py_ext}-abi3-linux_${CMAKE_SYSTEM_PROCESSOR}.whl
     COMMAND sudo python${py_ver} -m pip install "${tops_extension_whl_FILE}"
     COMMAND export PY_PACKAGE_VERSION=${PACKAGE_VERSION} && export TOPSRT_HOME=${TOPSRT_HOME} && export TOPSATEN_HOME=${TOPSATEN_HOME} && export TORCH_GCU_PATH=${torch_gcu_whl_SOURCE_DIR}/torch_gcu && python${py_ver} setup.py bdist_wheel --py-limited-api=cp${py_ext}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
@@ -67,9 +67,9 @@ add_custom_command(
 
 add_custom_target(
     package_vllm_gcu_whl
-    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/dist/vllm_gcu-${PACKAGE_VERSION}-cp${py_ext}-abi3-linux_x86_64.whl
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/dist/vllm_gcu-${PACKAGE_VERSION}-cp${py_ext}-abi3-linux_${CMAKE_SYSTEM_PROCESSOR}.whl
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    ${CMAKE_CURRENT_SOURCE_DIR}/dist/vllm_gcu-${PACKAGE_VERSION}-cp${py_ext}-abi3-linux_x86_64.whl
+    ${CMAKE_CURRENT_SOURCE_DIR}/dist/vllm_gcu-${PACKAGE_VERSION}-cp${py_ext}-abi3-linux_${CMAKE_SYSTEM_PROCESSOR}.whl
     ${CMAKE_INSTALL_PYTHON_PACKAGES}
     COMMAND rm -rf ${CMAKE_CURRENT_SOURCE_DIR}/dist ${CMAKE_CURRENT_SOURCE_DIR}/build ${CMAKE_CURRENT_SOURCE_DIR}/vllm_gcu.egg-info
 )
