@@ -4,6 +4,16 @@
 set -eu -o pipefail
 BUILD_ROOT_DIR=`pwd`
 
+function arm_normal_build() {
+  echo "Current build job: $FUNCNAME"
+  echo `pwd`
+  cmake ${project_name} --preset ci_all -B cmake_build
+  cd cmake_build
+  ninja -j${cpu_count} install
+  ninja -j${cpu_count} package_all
+  epkg get -s buildtree --check-unique --check-missing normal_arm_all_buildtree
+}
+
 function x86_normal_build() {
   echo "Current build job: $FUNCNAME"
   echo `pwd`
@@ -11,6 +21,7 @@ function x86_normal_build() {
   cd cmake_build
   ninja -j${cpu_count} install
   ninja -j${cpu_count} package_all
+  epkg get -s buildtree --check-unique --check-missing normal_all_buildtree
 }
 
 function x86_normal_daily_build() {
@@ -19,7 +30,9 @@ function x86_normal_daily_build() {
   cmake ${project_name} --preset ci_all -B cmake_build
   cd cmake_build
   ninja -j${cpu_count} install
-  ninja -j${cpu_count} package_all
+  ninja -j${cpu_count} package_al
+  epkg get -s buildtree --check-unique --check-missing normal_all_buildtree
+
 }
 
 function tar_test_files(){
@@ -71,9 +84,6 @@ function zx_normal_build() {
 function main() {
   set -x
   $build_job_name
-  cd ${BUILD_ROOT_DIR}/cmake_build/
-  epkg get -s buildtree --check-unique --check-missing normal_all_buildtree
-
 }
 
 if [ $# -eq 0 ]; then
