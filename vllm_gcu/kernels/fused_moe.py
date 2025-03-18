@@ -5,6 +5,7 @@ import sys
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import torch
+import torch_gcu
 import vllm.envs as envs
 from vllm.config import get_current_vllm_config
 
@@ -76,7 +77,8 @@ def moe_align_block_size(
             )
 
     if expert_map is not None:
-        expert_ids = expert_map[expert_ids.to(torch.int64)]
+        expert_ids = torch_gcu.gcu.efficient.gcu_index(expert_map, [expert_ids])
+        # expert_ids = expert_map[expert_ids.to(torch.int64)]
     return sorted_ids, expert_ids, num_tokens_post_pad
 
 
@@ -349,7 +351,8 @@ def fused_experts_impl(
             ),
             dim=1,
         )
-        send_packed_sorted = send_packed[ep_token_indices.to(torch.int64)]
+        send_packed_sorted = torch_gcu.gcu.efficient.gcu_index(send_packed, [ep_token_indices])
+        # send_packed_sorted = send_packed[ep_token_indices.to(torch.int64)]
         recv_packed = torch.empty(
             (
                 max_model_len * parallel_config.data_parallel_size,
