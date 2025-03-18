@@ -7,7 +7,7 @@ import torch
 import torch.distributed
 import torch_gcu  # noqa: F401
 
-from vllm.config import VllmConfig
+from vllm.config import VllmConfig, set_current_vllm_config
 from vllm.distributed import (
     ensure_kv_transfer_initialized,
     ensure_model_parallel_initialized,
@@ -96,6 +96,10 @@ class GCUWorker(Worker):
         )
         # Set random seed.
         set_random_seed(self.model_config.seed)
+
+    def load_model(self):
+        with set_current_vllm_config(self.vllm_config):
+            self.model_runner.load_model()
 
     @torch.inference_mode()
     def determine_num_available_blocks(self) -> Tuple[int, int]:

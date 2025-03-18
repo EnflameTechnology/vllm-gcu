@@ -448,6 +448,19 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
             expert_num, _, _ = layer.w13_qweight.shape
             w13 = []
             w2 = []
+
+            from vllm.config import get_current_vllm_config
+            import vllm_gcu.envs as gcu_envs
+            model_config = get_current_vllm_config().model_config
+
+            if model_config.hf_text_config.model_type in ('deepseek_v2', 'deepseek_v3', 'deepseek_mtp') \
+                and gcu_envs.VLLM_GCU_ENABLE_EXPERT_PARALLEL:
+                weight_in_KN = True
+                zeros_in_int8 = True
+            else:
+                weight_in_KN = False
+                zeros_in_int8 = False
+
             for i in range(expert_num):
                 qweight13, qzeros13 = layer.w13_qweight[i], layer.w13_qzeros[i]
                 qweight2, qzeros2 = layer.w2_qweight[i], layer.w2_qzeros[i]
@@ -458,12 +471,14 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
                     qweight=qweight13.cpu(),
                     qzeros=qzeros13.cpu(),
                     scales=scales13.cpu(),
+                    zeros_in_int8=zeros_in_int8
                 )
                 qweight2, qzeros2 = rearrange_uint4_int32_uint8_awq(
                     self,
                     qweight=qweight2.cpu(),
                     qzeros=qzeros2.cpu(),
                     scales=scales2.cpu(),
+                    zeros_in_int8=zeros_in_int8
                 )
                 w13.append([qweight13, qzeros13, scales13])
                 w2.append([qweight2, qzeros2, scales2])
@@ -472,25 +487,25 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
                 layer.w13_qweight.data = torch.empty(
                     expert_num,
                     *tmp_weight.shape,
-                    dtype=torch.uint8,
+                    dtype=tmp_weight.dtype,
                     device=layer.w13_qweight.data.device,
                 )
             else:
                 tmp_weight = w13[0][0].T
                 layer.w13_qweight.data = layer.w13_qweight.data.view(
-                    torch.uint8
+                    tmp_weight.dtype
                 ).reshape((expert_num,) + tuple(tmp_weight.shape))
             if layer.w2_qweight[0].nbytes != w2[0][0].nbytes:
                 tmp_weight = w2[0][0].T
                 layer.w2_qweight.data = torch.empty(
                     expert_num,
                     *tmp_weight.shape,
-                    dtype=torch.uint8,
+                    dtype=tmp_weight.dtype,
                     device=layer.w2_qweight.data.device,
                 )
             else:
                 tmp_weight = w2[0][0].T
-                layer.w2_qweight.data = layer.w2_qweight.data.view(torch.uint8).reshape(
+                layer.w2_qweight.data = layer.w2_qweight.data.view(tmp_weight.dtype).reshape(
                     (expert_num,) + tuple(tmp_weight.shape)
                 )
             layer.w13_qzeros.data = torch.empty(
@@ -512,6 +527,9 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
                 layer.w2_qzeros.data[i].copy_(w2[i][1])
                 layer.w13_scales.data[i].copy_(w13[i][2])
                 layer.w2_scales.data[i].copy_(w2[i][2])
+            if weight_in_KN:
+                layer.w13_qweight.data = layer.w13_qweight.data.permute(0,2,1).contiguous().permute(0,2,1)
+                layer.w2_qweight.data = layer.w2_qweight.data.permute(0,2,1).contiguous().permute(0,2,1)
 
         self.processed = True
 

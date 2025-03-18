@@ -217,7 +217,7 @@ class GPTQGCULinearMethod(GPTQLinearMethod):
             # TODO: support weight shuffle
             g_idx = layer.g_idx.reshape([-1, self.quant_config.group_size])[:, 0]
             if layer.qweight.nbytes == qweight.nbytes:
-                layer.qweight.data = layer.qweight.data.view(torch.uint8).reshape(
+                layer.qweight.data = layer.qweight.data.view(qweight.dtype).reshape(
                     qweight.shape
                 )
                 layer.qweight.data.copy_(qweight.data)

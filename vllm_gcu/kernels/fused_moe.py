@@ -408,8 +408,8 @@ def fused_experts_impl(
 
     assert topk_weights.shape == topk_ids.shape, "topk shape mismatch"
     assert hidden_states.is_contiguous(), "Hidden_states must be contiguous"
-    assert w1.is_contiguous(), "Expert weights1 must be contiguous"
-    assert w2.is_contiguous(), "Expert weights2 must be contiguous"
+    # assert w1.is_contiguous(), "Expert weights1 must be contiguous"
+    # assert w2.is_contiguous(), "Expert weights2 must be contiguous"
     assert hidden_states.dtype in [torch.float32, torch.float16, torch.bfloat16]
 
     if use_fp8_w8a8 and use_int8_w8a16:

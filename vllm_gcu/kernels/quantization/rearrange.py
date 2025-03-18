@@ -29,6 +29,7 @@ def rearrange_uint4_int32_uint8_gptq(
         zeros = torch.bitwise_and(zeros, (2**bits) - 1)
         zeros = zeros.reshape(-1, 1, zeros.shape[1] * zeros.shape[2])
 
+        #TODO: optimize: set zeros to int8
         zeros = zeros * scales
         zeros = zeros.reshape(-1, zeros.shape[2])
     else:
@@ -58,7 +59,7 @@ def rearrange_uint4_int32_uint8_gptq(
 
 
 def rearrange_uint4_int32_uint8_awq(
-    method, qweight, qzeros, scales, rearrange_group=128
+    method, qweight, qzeros, scales, rearrange_group=128, zeros_in_int8=False
 ):
     assert rearrange_group % 2 == 0, "rearrange group must be multiple of 2."
     qweight_shape = qweight.shape
@@ -94,7 +95,10 @@ def rearrange_uint4_int32_uint8_awq(
     # overflow checks
     iweights = torch.bitwise_and(iweights, (2**method.quant_config.weight_bits) - 1)
     izeros = torch.bitwise_and(izeros, (2**method.quant_config.weight_bits) - 1)
-    izeros = izeros * scales
+
+    # optimize: set zeros to int8
+    if not zeros_in_int8:
+        izeros = izeros * scales
 
     # weight rearrange
     if iweights.shape[0] % rearrange_group != 0:
@@ -115,5 +119,8 @@ def rearrange_uint4_int32_uint8_awq(
         rweight |= torch.bitwise_left_shift(iweights[shifts[1::2].reshape(-1)], 4)
     except Exception as e:
         raise RuntimeError(f"weight rearrange error: {e}")
-
-    return rweight, izeros
+    if zeros_in_int8:
+        # optimize: set zeros/weight to int8
+        return rweight.to(torch.int8), izeros
+    else:
+        return rweight, izeros
