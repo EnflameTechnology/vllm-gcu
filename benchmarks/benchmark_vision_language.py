@@ -181,7 +181,7 @@ def main(args: argparse.Namespace):
     )
 
     vlm_input_obj = get_vlm_input_obj(
-        args.model, args.model_arch_suffix, tokenizer)
+        args.model, args.model_arch_suffix, tokenizer, args.hf_overrides)
 
     input_kwargs = {}
     if vlm_input_obj.modality == 'video' :
