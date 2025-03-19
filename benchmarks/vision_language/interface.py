@@ -4,6 +4,7 @@ from vllm_utils.vision_language.models import resolve_vlm_input_cls
 from vllm_utils.vision_language.datasets import resolve_dataset_cls
 from vllm.transformers_utils.config import get_config
 from vllm.outputs import RequestOutput
+from vllm.config import HfOverrides
 
 @dataclass
 class MMRequestData:
@@ -22,15 +23,21 @@ class MMRequest:
     mm_data_list: List[MMRequestData]
 
 
-def get_model_arch(model):
+def get_model_arch(model, hf_overrides):
     hf_config = get_config(model, trust_remote_code=True)
+    if hf_overrides:
+        try:
+            hf_config.update(hf_overrides)
+        except (ValueError, SyntaxError) as e:
+            print(f"Warning: Failed to parse hf_overrides: {e}")
     model_arch = getattr(hf_config, "architectures", [""])[0]
     return model_arch
 
 def get_vlm_input_obj(model: str,
                       model_arch_suffix: str,
-                      tokenizer: Optional[str]):
-    model_arch = get_model_arch(model) + model_arch_suffix
+                      tokenizer: Optional[str],
+                      hf_overrides: Optional[HfOverrides] = None):
+    model_arch = get_model_arch(model, hf_overrides) + model_arch_suffix
     vlm_input_obj = resolve_vlm_input_cls(model_arch)(model, tokenizer)
     return vlm_input_obj
 
