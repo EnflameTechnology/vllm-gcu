@@ -219,7 +219,7 @@ class PagedAttention:
             value_cache,
             block_tables,
             # query_start_loc is (batch_size + 1,)
-            query_start_loc,
+            query_start_loc[:-1],
             seq_lens_tensor,
             context_lens,
             max_query_len,
