@@ -19,7 +19,8 @@ VLM_MODELS = {
     "Qwen2_5_VLForConditionalGenerationImage": ("qwen2_vl_input", "Qwen2VLImageInput"),
     "Qwen2_5_VLForConditionalGenerationVideo": ("qwen2_vl_input", "Qwen2VLVideoInput"),
     "MiniCPMVImage": ("minicpmv_input", "MinicpmvImageInput"),
-    "MiniCPMVVideo": ("minicpmv_input", "MinicpmvVideoInput")
+    "MiniCPMVVideo": ("minicpmv_input", "MinicpmvVideoInput"),
+    "DeepseekVLV2ForCausalLM": ("deepseek_vl2_input", "DeepSeekVL2Input"),
 }
 
 
