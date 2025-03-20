@@ -312,7 +312,8 @@ def run_vllm(
     profile=False,
 ) -> Tuple[float, Optional[float], List["RequestOutput"]]:
     from vllm import LLM, SamplingParams
-
+    # from vllm_utils.dpllm import RayLLMWrapper
+    # engine = RayLLMWrapper(engine_args)
     engine = LLMEngine.from_engine_args(engine_args)
 
     dummy_sampling_params = SamplingParams(

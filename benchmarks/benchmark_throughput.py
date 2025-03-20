@@ -172,6 +172,9 @@ def run_vllm(
     engine_args: EngineArgs,
 ) -> float:
     from vllm import LLM, SamplingParams
+    import os
+    if int(os.environ.get('VLLM_DP_SIZE', '1')) > 1:
+        from vllm_utils.dpllm import DPLLM as LLM
 
     llm = LLM(**dataclasses.asdict(engine_args))
 
