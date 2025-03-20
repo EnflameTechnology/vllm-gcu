@@ -5,7 +5,7 @@ import os
 import random
 import sys
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 
@@ -13,7 +13,7 @@ import torch
 import uvloop
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedTokenizerBase
-from vllm import RequestOutput
+from vllm import RequestOutput, PoolingRequestOutput
 from vllm.engine.arg_utils import (
     AsyncEngineArgs,
     DEVICE_OPTIONS,
@@ -24,7 +24,7 @@ from vllm.entrypoints.openai.api_server import (
     build_async_engine_client_from_engine_args,
 )
 from vllm.utils import FlexibleArgumentParser, merge_async_iterators
-
+from vllm import EngineArgs, LLMEngine
 
 ROOT_DIR = os.path.dirname(__file__)
 sys.path.append(ROOT_DIR)
@@ -311,32 +311,24 @@ def run_vllm(
 ) -> Tuple[float, Optional[float], List["RequestOutput"]]:
     from vllm import LLM, SamplingParams
 
-    llm = LLM(**dataclasses.asdict(engine_args))
+    engine = LLMEngine.from_engine_args(engine_args)
 
     dummy_sampling_params = SamplingParams(
         n=n, temperature=temperature, top_p=1.0, ignore_eos=ignore_eos, max_tokens=1
     )
-    llm.generate(
-        prompts=requests[0][0], sampling_params=dummy_sampling_params, use_tqdm=False
-    )
 
-    def clear(metrics):
-        for metric in vars(metrics):
-            prometheus = getattr(metrics, metric)
-            if hasattr(prometheus, "clear"):
-                prometheus.clear()
-
-    if not engine_args.disable_log_stats:
-        clear(llm.llm_engine.stat_loggers["prometheus"].metrics)
+    engine.add_request('0', prompt=requests[0][0], params=dummy_sampling_params)
+    _: list[RequestOutput] = engine.step()
 
     if profile:
-        llm.start_profile()
+        engine.start_profile()
+
+    avg_decode_latency = 0
+
     start = time.perf_counter()
     for i in range(num_iters):
         # Add the requests to the engine.
-        prompts = []
-        sampling_params_list = []
-        for prompt, _, _, output_len in requests:
+        for req_index,(prompt, _, _, output_len) in enumerate(requests):
             sampling_params = SamplingParams(
                 n=n,
                 temperature=temperature,
@@ -344,26 +336,74 @@ def run_vllm(
                 ignore_eos=ignore_eos,
                 max_tokens=output_len,
             )
-            sampling_params_list.append(sampling_params)
-            prompts.append(prompt)
-        outputs = llm.generate(prompts, sampling_params_list, use_tqdm=True)
+            engine.add_request(str(req_index), prompt=prompt, params=sampling_params)
+
+        use_tqdm = True
+
+        if use_tqdm:
+            num_requests = engine.get_num_unfinished_requests()
+            pbar = tqdm(
+                total=num_requests,
+                desc="Processed prompts",
+                dynamic_ncols=True,
+                postfix=(f"est. speed input: {0:.2f} toks/s, "
+                         f"output: {0:.2f} toks/s"),
+            )
+
+        outputs: List[Union[RequestOutput, PoolingRequestOutput]] = []
+        prefill_latency = [0] * len(requests)
+        sum_decode_latency = [0] * len(requests)
+        last_token_times = [0] * len(requests)
+        total_in_toks = 0
+        total_out_toks = 0
+        while engine.has_unfinished_requests():
+            step_outputs = engine.step()
+            for output in step_outputs:
+                req_id = int(output.request_id)
+                if len(output.outputs[0].token_ids) == 1:
+                    prefill_latency[req_id] = output.metrics.first_token_time - output.metrics.first_scheduled_time
+                else:
+                    sum_decode_latency[req_id] += (output.metrics.last_token_time - last_token_times[req_id])
+                last_token_times[req_id] = output.metrics.last_token_time
+                if output.finished:
+                    outputs.append(output)
+                    if use_tqdm:
+                        if isinstance(output, RequestOutput):
+                            # Calculate tokens only for RequestOutput
+                            assert output.prompt_token_ids is not None
+                            total_in_toks += len(output.prompt_token_ids)
+                            in_spd = total_in_toks / pbar.format_dict["elapsed"]
+                            total_out_toks += sum(
+                                len(stp.token_ids) for stp in output.outputs)
+                            out_spd = (total_out_toks /
+                                       pbar.format_dict["elapsed"])
+                            pbar.postfix = (
+                                f"est. speed input: {in_spd:.2f} toks/s, "
+                                f"output: {out_spd:.2f} toks/s")
+                        pbar.update(1)
+
+        if use_tqdm:
+            pbar.close()
+
+        outputs = LLMEngine.validate_outputs(outputs, RequestOutput)
+
+        if not engine_args.disable_log_stats:
+            min_sum_decode_latency = min(sum_decode_latency)
+            min_req_index = sum_decode_latency.index(min_sum_decode_latency)
+
+            real_decode_num = len(outputs[min_req_index].outputs[0].token_ids) - 1
+            if real_decode_num > 0:
+                mean_decode_latency = min_sum_decode_latency/real_decode_num
+                avg_decode_latency += mean_decode_latency
+        else:
+            # disable_log_stats
+            mean_decode_latency = None
 
     end = time.perf_counter()
     if profile:
-        llm.stop_profile()
+        engine.stop_profile()
 
-    if not engine_args.disable_log_stats:
-        time_per_output_token = llm.llm_engine.stat_loggers[
-            "prometheus"
-        ].metrics.histogram_time_per_output_token
-        samples = time_per_output_token.collect()[0].samples
-        decode_elapsed_time = (
-            samples[-1].value / num_iters if len(samples) > 0 else None
-        )
-    else:
-        # disable_log_stats
-        decode_elapsed_time = None
-    return (end - start) / num_iters, decode_elapsed_time, outputs
+    return (end - start) / num_iters, avg_decode_latency/num_iters, outputs
 
 
 def run_hf(
@@ -449,7 +489,8 @@ def vllm_perf(
     requests: List[Tuple[str, str, int, int]],
     outputs: List["RequestOutput"],
     elapsed_time: float,
-    decode_elapsed_time: Optional[float],
+    # decode_elapsed_time: Optional[float],
+    mean_avg_decode_latency: Optional[float],
 ) -> Dict[str, str]:
     # perf info
     prefill_times = []
@@ -462,21 +503,22 @@ def vllm_perf(
             )
     prefill_latency_per_token = np.mean(prefill_times)
 
+    input_len = [_input_len for _, _, _input_len, _ in requests]
     output_len = [_output_len for _, _, _, _output_len in requests]
     max_output_len = max(output_len)
     total_num_tokens = sum(output_len)
     total_decode_tokens = total_num_tokens - len(requests)
-    if decode_elapsed_time is None:
+    if mean_avg_decode_latency == 0:
         print("decode elapsed time is not recorded as set `--disable_log_stats`")
         decode_latency_per_token = None
         decode_throughput = None
     else:
-        decode_latency_per_token = (
-            f"{decode_elapsed_time / total_decode_tokens * 1000:.2f} ms"
-        )
-        decode_throughput = f"{total_decode_tokens / decode_elapsed_time:.2f} tokens/s"
+        decode_throughput = f"{1 / mean_avg_decode_latency :.2f} tokens/s"
+        decode_latency_per_token=f"{mean_avg_decode_latency * 1000 :.2f} ms"
 
     perf_info = dict(
+        total_input_tokens = sum(input_len),
+        total_output_tokens = total_num_tokens,
         latency_num_prompts=f"{elapsed_time * 1000:.2f} ms",
         latency_per_token=f"{elapsed_time * 1000 / max_output_len:.2f} ms",
         request_per_second=f"{len(requests) / elapsed_time:.2f} requests/s",
@@ -559,14 +601,6 @@ def save_results(outputs, outfile, template_original_prompts):
         curr_conversion["conversations"] = content
         inference_results.append(curr_conversion)
 
-    # inference_results = [
-    #     dict(
-    #         conversions=[
-    #             dict(value=output.prompt),
-    #             dict(value=output.outputs[0].text)
-    #         ]
-    #     ) for output in outputs]
-
     with open(outfile, "w", encoding="utf-8") as f:
         f.write(json.dumps(inference_results, indent=4, ensure_ascii=False))
 
@@ -624,7 +658,7 @@ def main(args: argparse.Namespace):
 
         if args.async_engine:
             args.disable_log_requests = True
-            elapsed_time, decode_elapsed_time, outputs = uvloop.run(
+            elapsed_time, mean_avg_decode_latency, outputs = uvloop.run(
                 run_vllm_async(
                     requests,
                     args.n,
@@ -634,12 +668,12 @@ def main(args: argparse.Namespace):
                 )
             )
         else:
-            elapsed_time, decode_elapsed_time, outputs = run_vllm(
+            elapsed_time, mean_avg_decode_latency, outputs = run_vllm(
                 requests, args.n, EngineArgs.from_cli_args(args), **run_kwargs
             )
 
         if args.perf:
-            perf_info = vllm_perf(requests, outputs, elapsed_time, decode_elapsed_time)
+            perf_info = vllm_perf(requests, outputs, elapsed_time, mean_avg_decode_latency)
             msgs.update(perf_info)
 
             print("\n***Perf Info***")
