@@ -115,7 +115,6 @@ class AWQGCULinearMethod(AWQLinearMethod):
         scales = layer.scales
         qzeros = layer.qzeros
         pack_factor = self.quant_config.pack_factor
-        out_shape = x.shape[:-1] + (qweight.shape[-1] * pack_factor,)
 
         out_shape = x.shape[:-1] + (qweight.shape[-1],)
         out = ops.awq_gemm_gcu(

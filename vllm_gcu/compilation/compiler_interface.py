@@ -16,6 +16,7 @@ from vllm.compilation.compiler_interface import (
     EagerAdaptor,
     InductorAdaptor,
 )
+import vllm.envs as envs
 
 from vllm_gcu.compilation.fx_fusion import get_passes
 
@@ -54,12 +55,18 @@ class CustomInductorAdaptor(InductorAdaptor):
         #     graph = _pass(graph)
 
         # disable remote cache
-        # current_config["force_disable_caches"] = True
+        current_config["force_disable_caches"] = True
         current_config["fx_graph_cache"] = True
         current_config["fx_graph_remote_cache"] = False
 
         if compiler_config is not None:
             current_config.update(compiler_config)
+
+        from vllm_gcu.compilation.fusion import GCUFusionPass
+        PASS_KEY = "post_grad_custom_post_pass"
+        assert PASS_KEY in current_config
+        post_grad_pass_manager = current_config[PASS_KEY]
+        post_grad_pass_manager.add(GCUFusionPass.instance(post_grad_pass_manager.pass_config))
 
         if isinstance(runtime_shape, int):
             # for a specific batchsize, tuning triton kernel parameters
@@ -180,10 +187,11 @@ class CustomInductorAdaptor(InductorAdaptor):
                 config_patches=current_config,
             )
 
-        assert hash_str is not None, "failed to get the hash of the compiled graph"
-        assert (
-            file_path is not None
-        ), "failed to get the file path of the compiled graph"
+        if not envs.VLLM_DISABLE_COMPILE_CACHE:
+            assert hash_str is not None, "failed to get the hash of the compiled graph"
+            assert (
+                file_path is not None
+            ), "failed to get the file path of the compiled graph"
         return compiled_graph, (hash_str, file_path)
 
 
