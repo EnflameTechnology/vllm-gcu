@@ -260,7 +260,9 @@ def _awq_gemm_gcu_fake(
     group_size=128,
 ) -> torch.Tensor:
     out_shape = input.shape[:-1] + (qweight.shape[-1],)
-    return torch.empty(out_shape, dtype=input.dtype, device=input.device)
+    return torch.empty(
+        out_shape, dtype=input.dtype, device=input.device
+    )
 
 
 # gptq

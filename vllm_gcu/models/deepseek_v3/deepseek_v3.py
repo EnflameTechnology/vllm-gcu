@@ -31,7 +31,7 @@ import numpy as np
 import torch
 from torch import nn
 from transformers import PretrainedConfig
-from vllm.attention import Attention, AttentionMetadata
+from vllm.attention import Attention
 from vllm.compilation.decorators import support_torch_compile
 from vllm.config import CacheConfig, ModelConfig, set_current_vllm_config, VllmConfig
 from vllm.distributed import (
@@ -41,7 +41,6 @@ from vllm.distributed import (
     tensor_model_parallel_all_reduce,
 )
 
-from vllm.forward_context import get_forward_context
 from vllm.inputs import DummyData, INPUT_REGISTRY, InputContext
 from vllm.model_executor.layers.activation import SiluAndMul
 from vllm.model_executor.layers.fused_moe import FusedMoE
@@ -666,8 +665,8 @@ class DeepseekV2DecoderLayer(nn.Module):
         residual: Optional[torch.Tensor],
         actual_seqlen: Optional[int],
     ) -> torch.Tensor:
-        # Self Attention
 
+        # Self Attention
         if residual is None:
             residual = hidden_states
             hidden_states = self.input_layernorm(hidden_states)
@@ -776,7 +775,6 @@ class DeepseekV2Model(nn.Module):
         inputs_embeds: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, IntermediateTensors]:
 
-        tp_group = get_tp_group().device_group
         if get_pp_group().is_first_rank:
             if inputs_embeds is not None:
                 hidden_states = inputs_embeds
