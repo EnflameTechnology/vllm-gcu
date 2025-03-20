@@ -3,13 +3,13 @@
 import hashlib
 import os
 import random
+import types
 from functools import lru_cache
 from typing import List, Optional, Tuple, Union
 
 import numpy as np
 import torch
 from vllm.config import SupportsHash
-
 from vllm.platforms.interface import (
     _Backend,
     CpuArchEnum,
@@ -17,6 +17,7 @@ from vllm.platforms.interface import (
     Platform,
     PlatformEnum,
 )
+
 
 class AdditionalConfig(dict, SupportsHash):
     def compute_hash(self) -> str:
@@ -57,12 +58,11 @@ class GCUPlatform(Platform):
     ) -> str:
         if use_mla:
             if use_v1:
-                raise NotImplementedError
-                # return "vllm_gcu.v1.attention.backends.mla.GCUMLABackend"
+                return "vllm_gcu.v1.attention.mla.GCUMLABackend"
             else:
                 return "vllm_gcu.attention.backends.mla.GCUMLABackend"
         if use_v1:
-            raise NotImplementedError
+            return "vllm_gcu.v1.attention.flash_attn.GCUFlashAttentionBackend"
         if selected_backend == _Backend.FLASHINFER:
             raise NotImplementedError
         elif selected_backend == _Backend.XFORMERS:
@@ -166,12 +166,31 @@ class GCUPlatform(Platform):
                 parallel_config.sd_worker_cls = "vllm_gcu.worker.worker.GCUWorker"
             else:
                 if envs.VLLM_USE_V1:
-                    raise NotImplementedError
-                    # parallel_config.worker_cls = (
-                    #     "vllm_gcu.v1.worker.gcu_worker.GCUWorker"
-                    # )
+                    parallel_config.worker_cls = "vllm_gcu.v1.worker.gcu_worker.Worker"
                 else:
                     parallel_config.worker_cls = "vllm_gcu.worker.worker.GCUWorker"
+
+        if envs.VLLM_USE_V1 and torch.__version__.startswith("2.5.1"):
+
+            def stateless_init_dp_group(self):
+                from vllm_gcu.distributed.utils import (
+                    stateless_init_torch_distributed_process_group,
+                )
+
+                # use gloo since the engine process might not have cuda device
+                dp_group = stateless_init_torch_distributed_process_group(
+                    self.data_parallel_master_ip,
+                    self.get_next_dp_init_port(),
+                    self.data_parallel_rank,
+                    self.data_parallel_size,
+                    backend="gloo",
+                )
+
+                return dp_group
+
+            parallel_config.stateless_init_dp_group = types.MethodType(
+                stateless_init_dp_group, parallel_config
+            )
 
         # Force disable custom all reduce
         parallel_config.disable_custom_all_reduce = True
@@ -242,21 +261,17 @@ class GCUPlatform(Platform):
                 compilation_config.pass_config.dump_graph_stages.extend(
                     ["before_fusion", "after_pattern_match", "after_fusion"]
                 )
-
-                from vllm_gcu.compilation.fusion import GCUFusionPass
-
-                compilation_config.inductor_compile_config[
-                    "post_grad_custom_post_pass"
-                ] = GCUFusionPass.instance(compilation_config.pass_config)
-
                 compilation_config.custom_ops = ["all"]
 
         if model_config:
             model_config.enable_sleep_mode = False
+            if envs.VLLM_USE_V1:
+                model_config.use_async_output_proc = True
 
-        if vllm_config.additional_config is None:
+        additional_config = vllm_config.additional_config
+        if additional_config is None:
+            # make sure additional_config is not None
             vllm_config.additional_config = AdditionalConfig({})
-
         vllm_config.additional_config.update({"all_dp_in_decode": False})
 
         # Disable usage status for security
