@@ -13,7 +13,9 @@ from vllm.model_executor.layers.quantization.gptq import (
 )
 from vllm.model_executor.layers.vocab_parallel_embedding import ParallelLMHead
 from vllm.model_executor.parameter import (
+    ChannelQuantScaleParameter,
     GroupQuantScaleParameter,
+    PackedColumnParameter,
     PackedvLLMParameter,
     RowvLLMParameter,
 )
@@ -52,6 +54,10 @@ class GPTQGCUConfig(GPTQConfig):
         return "gptq_gcu"
 
     @classmethod
+    def get_supported_act_dtypes(cls) -> List[torch.dtype]:
+        return [torch.half, torch.bfloat16]
+
+    @classmethod
     def get_min_capability(cls) -> int:
         return 30
 
@@ -65,7 +71,7 @@ class GPTQGCUConfig(GPTQConfig):
         dynamic = cls.get_from_keys_or(config, ["dynamic"], default={})
 
         return cls(
-            weight_bits, group_size, desc_act, lm_head_quantized, static_groups, dynamic
+            weight_bits, group_size, desc_act, lm_head_quantized, dynamic, static_groups
         )
 
     def get_quant_method(
@@ -98,7 +104,6 @@ class GPTQGCULinearMethod(GPTQLinearMethod):
 
     def __init__(self, quant_config: GPTQGCUConfig):
         super().__init__(quant_config)
-        self.processed = False
 
     def create_weights(
         self,
@@ -110,61 +115,89 @@ class GPTQGCULinearMethod(GPTQLinearMethod):
         params_dtype: torch.dtype,
         **extra_weight_attrs,
     ):
+        del output_size  # Unused.
+        weight_loader = extra_weight_attrs.get("weight_loader")
+        if input_size_per_partition % self.quant_config.group_size != 0:
+            raise ValueError(
+                "The input size is not aligned with the quantized "
+                "weight shape. This can be caused by too large "
+                "tensor parallel size."
+            )
+        output_size_per_partition = sum(output_partition_sizes)
+        if output_size_per_partition % self.quant_config.pack_factor.numerator != 0:
+            raise ValueError(
+                "The output size is not aligned with the quantized "
+                "weight shape. This can be caused by too large "
+                "tensor parallel size."
+            )
+
+        if self.quant_config.group_size != -1:
+            group_size = self.quant_config.group_size
+        else:
+            group_size = input_size
+        exllama_state = ExllamaState.UNINITIALIZED
+        scale_and_zero_size = input_size // group_size
+        scale_and_zero_input_dim = None
         if (
             input_size != input_size_per_partition
             and self.quant_config.group_size != -1
-            and self.quant_config.weight_bits == 8
         ):
+            # For act-order models, we cannot use Exllama for row parallel layer
             assert self.quant_config.desc_act or self.quant_config.static_groups
+            if self.quant_config.weight_bits == 8:
+                scale_and_zero_size = input_size_per_partition // group_size
+                scale_and_zero_input_dim = 0
 
-            scale_and_zero_size = (
-                input_size_per_partition // self.quant_config.group_size
-            )
-            output_size_per_partition = sum(output_partition_sizes)
-            weight_loader = extra_weight_attrs.get("weight_loader")
+        qweight = PackedvLLMParameter(
+            data=torch.empty(
+                input_size_per_partition // self.quant_config.pack_factor,
+                output_size_per_partition,
+                dtype=torch.int32,
+            ),
+            input_dim=0,
+            output_dim=1,
+            packed_dim=0,
+            packed_factor=self.quant_config.pack_factor,
+            weight_loader=weight_loader,
+        )
 
-            qweight = PackedvLLMParameter(
-                data=torch.empty(
-                    input_size_per_partition // self.quant_config.pack_factor,
-                    output_size_per_partition,
-                    dtype=torch.int32,
-                ),
-                input_dim=0,
+        g_idx = RowvLLMParameter(
+            data=torch.tensor(
+                [
+                    i // self.quant_config.group_size
+                    for i in range(input_size_per_partition)
+                ],
+                dtype=torch.int32,
+            ),
+            input_dim=0,
+            weight_loader=weight_loader,
+        )
+        qzeros_args = {
+            "data": torch.empty(
+                scale_and_zero_size,
+                output_size_per_partition // self.quant_config.pack_factor,
+                dtype=torch.int32,
+            ),
+            "weight_loader": weight_loader,
+        }
+        weight_scale_args = {
+            "data": torch.empty(
+                scale_and_zero_size,
+                output_size_per_partition,
+                dtype=params_dtype,
+            ),
+            "weight_loader": weight_loader,
+        }
+        if scale_and_zero_input_dim is None:
+            scales = ChannelQuantScaleParameter(output_dim=1, **weight_scale_args)
+            qzeros = PackedColumnParameter(
                 output_dim=1,
-                packed_dim=0,
+                packed_dim=1,
                 packed_factor=self.quant_config.pack_factor,
-                weight_loader=weight_loader,
+                **qzeros_args,
             )
 
-            g_idx = RowvLLMParameter(
-                data=torch.tensor(
-                    [
-                        i // self.quant_config.group_size
-                        for i in range(input_size_per_partition)
-                    ],
-                    dtype=torch.int32,
-                ),
-                input_dim=0,
-                weight_loader=weight_loader,
-            )
-            qzeros_args = {
-                "data": torch.empty(
-                    scale_and_zero_size,
-                    output_size_per_partition // self.quant_config.pack_factor,
-                    dtype=torch.int32,
-                ),
-                "weight_loader": weight_loader,
-            }
-
-            weight_scale_args = {
-                "data": torch.empty(
-                    scale_and_zero_size,
-                    output_size_per_partition,
-                    dtype=params_dtype,
-                ),
-                "weight_loader": weight_loader,
-            }
-
+        else:
             scales = GroupQuantScaleParameter(
                 output_dim=1, input_dim=0, **weight_scale_args
             )
@@ -176,26 +209,14 @@ class GPTQGCULinearMethod(GPTQLinearMethod):
                 **qzeros_args,
             )
 
-            layer.register_parameter("qweight", qweight)
-            layer.register_parameter("g_idx", g_idx)
-            layer.register_parameter("qzeros", qzeros)
-            layer.register_parameter("scales", scales)
+        layer.register_parameter("qweight", qweight)
+        layer.register_parameter("g_idx", g_idx)
+        layer.register_parameter("qzeros", qzeros)
+        layer.register_parameter("scales", scales)
 
-            layer.exllama_state = ExllamaState.UNINITIALIZED
-        else:
-            super().create_weights(
-                layer,
-                input_size_per_partition,
-                output_partition_sizes,
-                input_size,
-                output_size,
-                params_dtype,
-                **extra_weight_attrs,
-            )
+        layer.exllama_state = exllama_state
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
-        if self.processed:
-            return
 
         # for torch.compile
         layer.qweight = Parameter(layer.qweight.data, requires_grad=False)
@@ -241,8 +262,6 @@ class GPTQGCULinearMethod(GPTQLinearMethod):
                 "Currently, only 4/8-bit weight quantization is "
                 f"supported for GPTQ on GCU, but got {self.weight_bits} bits."
             )
-
-        self.processed = True
 
     def apply(
         self,
