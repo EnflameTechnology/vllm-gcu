@@ -125,7 +125,6 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
 
     def __init__(self, quant_config: MoeWNA16GCUConfig):
         self.quant_config = quant_config
-        self.processed = False
 
     def create_weights(
         self,
@@ -322,9 +321,6 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
         layer.group_size = self.quant_config.group_size
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
-        if self.processed:
-            return
-
         if self.quant_config.linear_quant_method == "gptq":
             if self.quant_config.weight_bits == 8:
                 assert torch.all(
@@ -450,11 +446,15 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
             w2 = []
 
             from vllm.config import get_current_vllm_config
+
             model_config = get_current_vllm_config().model_config
             parallel_config = get_current_vllm_config().parallel_config
 
-            if model_config.hf_text_config.model_type in ('deepseek_v2', 'deepseek_v3', 'deepseek_mtp') \
-                and parallel_config.enable_expert_parallel:
+            if (
+                model_config.hf_text_config.model_type
+                in ("deepseek_v2", "deepseek_v3", "deepseek_mtp")
+                and parallel_config.enable_expert_parallel
+            ):
                 weight_in_KN = True
                 zeros_in_int8 = True
             else:
@@ -471,14 +471,14 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
                     qweight=qweight13.cpu(),
                     qzeros=qzeros13.cpu(),
                     scales=scales13.cpu(),
-                    zeros_in_int8=zeros_in_int8
+                    zeros_in_int8=zeros_in_int8,
                 )
                 qweight2, qzeros2 = rearrange_uint4_int32_uint8_awq(
                     self,
                     qweight=qweight2.cpu(),
                     qzeros=qzeros2.cpu(),
                     scales=scales2.cpu(),
-                    zeros_in_int8=zeros_in_int8
+                    zeros_in_int8=zeros_in_int8,
                 )
                 w13.append([qweight13, qzeros13, scales13])
                 w2.append([qweight2, qzeros2, scales2])
@@ -505,9 +505,9 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
                 )
             else:
                 tmp_weight = w2[0][0].T
-                layer.w2_qweight.data = layer.w2_qweight.data.view(tmp_weight.dtype).reshape(
-                    (expert_num,) + tuple(tmp_weight.shape)
-                )
+                layer.w2_qweight.data = layer.w2_qweight.data.view(
+                    tmp_weight.dtype
+                ).reshape((expert_num,) + tuple(tmp_weight.shape))
             layer.w13_qzeros.data = torch.empty(
                 expert_num,
                 *w13[0][1].shape,
@@ -528,10 +528,14 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
                 layer.w13_scales.data[i].copy_(w13[i][2])
                 layer.w2_scales.data[i].copy_(w2[i][2])
             if weight_in_KN:
-                layer.w13_qweight.data = layer.w13_qweight.data.permute(0,2,1).contiguous().permute(0,2,1)
-                layer.w2_qweight.data = layer.w2_qweight.data.permute(0,2,1).contiguous().permute(0,2,1)
-
-        self.processed = True
+                layer.w13_qweight.data = (
+                    layer.w13_qweight.data.permute(0, 2, 1)
+                    .contiguous()
+                    .permute(0, 2, 1)
+                )
+                layer.w2_qweight.data = (
+                    layer.w2_qweight.data.permute(0, 2, 1).contiguous().permute(0, 2, 1)
+                )
 
     def apply(
         self,

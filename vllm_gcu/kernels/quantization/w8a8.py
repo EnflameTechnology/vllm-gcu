@@ -91,7 +91,6 @@ class W8A8LinearMethod(LinearMethodBase):
 
     def __init__(self, quant_config: W8A8Config):
         self.quant_config = quant_config
-        self.processed = False
 
     def create_weights(
         self,
@@ -137,15 +136,10 @@ class W8A8LinearMethod(LinearMethodBase):
         set_weight_attrs(in_scales, extra_weight_attrs)
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
-        if self.processed:
-            return
-
         w = layer.weight.T.contiguous()
         layer.weight.resize_(w.shape)
         layer.weight.data.copy_(w.data)
         layer.in_scales.data.reciprocal_()
-
-        self.processed = True
 
     def apply(
         self,
