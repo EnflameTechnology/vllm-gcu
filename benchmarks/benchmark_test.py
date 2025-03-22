@@ -235,13 +235,15 @@ def fake_requests(
                         ])
                     else:
                         candidate_ids = candidate_ids[:diff]
-                filtered_dataset.append((prompt, None, prompt_len, output_len))
+                filtered_dataset.append((prompt, None, input_len, output_len))
 
-            # if len(fake_requests) == num_prompts:
-            #     break
+        if len(filtered_dataset) < num_prompts:
+            raise ValueError("the dataset does not contain enough \
+                             prompts that exceed the specified length.")
+
         fake_requests = random.sample(filtered_dataset, num_prompts)
-        for fake_prompt,_,_,_ in fake_requests:
-            print(f"fake_prompt:{fake_prompt}")
+        # for fake_prompt,_,_,_ in fake_requests:
+        #     print(f"fake_prompt:{fake_prompt}")
     else:
         prompt = "hi" * input_len
         special_tokens_len = len(tokenizer(prompt).input_ids) - input_len
