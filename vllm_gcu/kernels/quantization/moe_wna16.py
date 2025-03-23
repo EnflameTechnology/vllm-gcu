@@ -450,11 +450,11 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
             w2 = []
 
             from vllm.config import get_current_vllm_config
-            import vllm_gcu.envs as gcu_envs
             model_config = get_current_vllm_config().model_config
+            parallel_config = get_current_vllm_config().parallel_config
 
             if model_config.hf_text_config.model_type in ('deepseek_v2', 'deepseek_v3', 'deepseek_mtp') \
-                and gcu_envs.VLLM_GCU_ENABLE_EXPERT_PARALLEL:
+                and parallel_config.enable_expert_parallel:
                 weight_in_KN = True
                 zeros_in_int8 = True
             else:
