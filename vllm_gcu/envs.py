@@ -9,7 +9,6 @@ environment_variables: Dict[str, Callable[[], Any]] = {
     "VLLM_DUMP_SNAPSHOT_EVERY_N_STEP": lambda: int(
         os.getenv("VLLM_DUMP_SNAPSHOT_EVERY_N_STEP", 0)
     ),
-    "VLLM_GCU_DEBUG_PDONLY": lambda: bool(int(os.getenv("VLLM_GCU_DEBUG_PDONLY", "0"))),
 }
 
 

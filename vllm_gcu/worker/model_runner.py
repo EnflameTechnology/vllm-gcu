@@ -3,8 +3,9 @@ import gc
 import inspect
 
 import time
-
 import weakref
+
+from array import array
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Set, Tuple, Type, Union
 
@@ -39,8 +40,16 @@ from vllm.multimodal import MULTIMODAL_REGISTRY, MultiModalKwargs, MultiModalReg
 from vllm.prompt_adapter.layers import PromptAdapterMapping
 from vllm.prompt_adapter.request import PromptAdapterRequest
 from vllm.prompt_adapter.worker_manager import LRUCacheWorkerPromptAdapterManager
-from vllm.sampling_params import SamplingParams
-from vllm.sequence import IntermediateTensors, SequenceGroupMetadata
+from vllm.sampling_params import SamplingParams, SamplingType
+from vllm.sequence import (
+    CompletionSequenceGroupOutput,
+    IntermediateTensors,
+    Logprob,
+    SequenceData,
+    SequenceGroupMetadata,
+    SequenceOutput,
+    VLLM_TOKEN_ID_ARRAY_TYPE,
+)
 from vllm.utils import (
     DeviceMemoryProfiler,
     GiB_bytes,
@@ -68,7 +77,14 @@ _NUM_WARMUP_ITERS = 2
 
 
 class ModelInputForGCUBuilder(ModelInputForGPUBuilder):
-    pass
+    def _compute_multi_modal_input(
+        self, inter_data, seq_group_metadata: SequenceGroupMetadata
+    ):
+        positions = inter_data.input_positions[0]
+        if len(positions) == 0:
+            return
+
+        super()._compute_multi_modal_input(inter_data, seq_group_metadata)
 
 
 class GCUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
@@ -316,7 +332,17 @@ class GCUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
         If gcu graph is required, this API automatically pads inputs.
         """
         self.builder.prepare(finished_requests_ids)
+
+        idle_seq_data = SequenceData(array(VLLM_TOKEN_ID_ARRAY_TYPE, []))
         for seq_group_metadata in seq_group_metadata_list:
+            # handle idle seq
+            if (
+                seq_group_metadata.sampling_params.extra_args
+                and seq_group_metadata.sampling_params.extra_args.get("is_idle", None)
+            ):
+                for k, _ in seq_group_metadata.seq_data.items():
+                    seq_group_metadata.seq_data[k] = idle_seq_data
+
             try:
                 self.builder.add_seq_group(seq_group_metadata)
             except Exception as e:
@@ -719,12 +745,16 @@ class GCUModelRunner(GCUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
     _model_input_cls: Type[ModelInputForGPUWithSamplingMetadata] = (
         ModelInputForGPUWithSamplingMetadata
     )
-    _builder_cls: Type[ModelInputForGPUBuilder] = ModelInputForGPUBuilder
+    _builder_cls: Type[ModelInputForGPUBuilder] = ModelInputForGCUBuilder
 
     def make_model_input_from_broadcasted_tensor_dict(
         self,
         tensor_dict: Dict[str, Any],
     ) -> ModelInputForGPUWithSamplingMetadata:
+        # keep in line with driver
+        if tensor_dict.get("input_tokens", None) is None:
+            return ModelInputForGPUWithSamplingMetadata()
+
         model_input = ModelInputForGPUWithSamplingMetadata.from_broadcasted_tensor_dict(
             tensor_dict,
             attn_backend=self.attn_backend,
@@ -755,16 +785,27 @@ class GCUModelRunner(GCUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
         )
         if get_pp_group().is_last_rank:
             # Sampling metadata is only required for the final pp group
-            generators = self.get_generators(finished_requests_ids)
-            sampling_metadata = SamplingMetadata.prepare(
-                seq_group_metadata_list,
-                model_input.seq_lens,
-                model_input.query_lens,
-                self.device,
-                self.pin_memory,
-                generators,
-                self.sampling_metadata_cache,
-            )
+            if model_input.seq_lens is None:
+                sampling_metadata = SamplingMetadata(
+                    seq_groups=[],
+                    selected_token_indices=torch.tensor([], device="gcu"),
+                    categorized_sample_indices={
+                        t: torch.tensor([]) for t in SamplingType
+                    },
+                    num_prompts=len(seq_group_metadata_list),
+                )
+                self._seq_group_metadata_list = seq_group_metadata_list
+            else:
+                generators = self.get_generators(finished_requests_ids)
+                sampling_metadata = SamplingMetadata.prepare(
+                    seq_group_metadata_list,
+                    model_input.seq_lens,
+                    model_input.query_lens,
+                    self.device,
+                    self.pin_memory,
+                    generators,
+                    self.sampling_metadata_cache,
+                )
         else:
             sampling_metadata = None
         is_prompt = (
@@ -805,10 +846,13 @@ class GCUModelRunner(GCUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
         self.attn_state.begin_forward(model_input)
 
         # Currently gcu graph is only supported by the decode phase.
-        assert model_input.attn_metadata is not None
+        if model_input.attn_metadata is not None:
+            prefill_meta = model_input.attn_metadata.prefill_metadata
+            decode_meta = model_input.attn_metadata.decode_metadata
 
-        prefill_meta = model_input.attn_metadata.prefill_metadata
-        decode_meta = model_input.attn_metadata.decode_metadata
+        else:
+            prefill_meta = 1  # bypass graph
+            decode_meta = None
 
         parallel_config = self.vllm_config.parallel_config
         additional_config = self.vllm_config.additional_config
@@ -816,7 +860,10 @@ class GCUModelRunner(GCUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
             parallel_config.enable_expert_parallel
             and parallel_config.data_parallel_size > 1
         ):
-            has_prefill = torch.tensor(1 if prefill_meta else 0, dtype=torch.int32)
+            has_prefill = torch.tensor(
+                1 if model_input.attn_metadata and prefill_meta else 0,
+                dtype=torch.int32,
+            )
             torch.distributed.all_reduce(
                 has_prefill,
                 group=get_dp_group().cpu_group,
@@ -828,6 +875,10 @@ class GCUModelRunner(GCUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
                     prefill_meta = 1  # disable graph
             else:
                 additional_config.update({"all_dp_in_decode": True})
+
+        # assert model_input.attn_metadata is not None
+        # prefill_meta = model_input.attn_metadata.prefill_metadata
+        # decode_meta = model_input.attn_metadata.decode_metadata
 
         # TODO(andoorve): We can remove this once all
         # virtual engines share the same kv cache.
@@ -900,8 +951,16 @@ class GCUModelRunner(GCUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
                 model_input.attn_metadata, self.vllm_config, virtual_engine
             ):
                 hidden_or_intermediate_states = model_executable(
-                    input_ids=model_input.input_tokens,
-                    positions=model_input.input_positions,
+                    input_ids=(
+                        model_input.input_tokens
+                        if model_input.input_tokens is not None
+                        else torch.tensor([], device="gcu")
+                    ),
+                    positions=(
+                        model_input.input_positions
+                        if model_input.input_positions is not None
+                        else torch.tensor([], device="gcu")
+                    ),
                     intermediate_tensors=intermediate_tensors,
                     **MultiModalKwargs.as_kwargs(
                         multi_modal_kwargs, device=self.device
@@ -1011,6 +1070,24 @@ class GCUModelRunner(GCUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
                 hidden_states = hidden_or_intermediate_states
 
             output.hidden_states = hidden_states
+
+        if (
+            model_input.input_positions is None
+            and not model_input.sampling_metadata.skip_sampler_cpu_output
+        ):
+            output.outputs = [
+                CompletionSequenceGroupOutput(
+                    samples=[
+                        SequenceOutput(
+                            parent_seq_id=list(seq_group_metadata.seq_data.keys())[0],
+                            output_token=0,
+                            logprobs={0: Logprob(0.0)},
+                        )
+                    ],
+                    prompt_logprobs=None,
+                )
+                for seq_group_metadata in self._seq_group_metadata_list
+            ]
 
         return [output]
 

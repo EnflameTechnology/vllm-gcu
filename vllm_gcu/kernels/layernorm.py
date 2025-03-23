@@ -12,6 +12,11 @@ def forward_oot(
     x: torch.Tensor,
     residual: Optional[torch.Tensor] = None,
 ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+    if x.numel() == 0:
+        if residual is not None:
+            return x, x
+        return x
+
     if self.variance_size_override is not None:
         return self.forward_native(x, residual)
 

@@ -639,7 +639,10 @@ class DeepseekV2DecoderLayer(nn.Module):
             hidden_states, residual = self.input_layernorm(hidden_states, residual)
 
         tp_group = get_tp_group().device_group
-        seqlen, padded_seqlen = _get_seq_lens(tp_group, attn_metadata)
+        if attn_metadata is None:
+            seqlen = padded_seqlen = hidden_states.shape[0]
+        else:
+            seqlen, padded_seqlen = _get_seq_lens(tp_group, attn_metadata)
 
         if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
             if self.layer_idx == 0:
@@ -770,8 +773,9 @@ class DeepseekV2Model(nn.Module):
 
         if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
             hidden_states = get_tp_group().all_gather(hidden_states, dim=0)
-            seqlen, _ = _get_seq_lens(tp_group, attn_metadata)
-            hidden_states = hidden_states[:seqlen]
+            if attn_metadata is not None:
+                seqlen, _ = _get_seq_lens(tp_group, attn_metadata)
+                hidden_states = hidden_states[:seqlen]
         return hidden_states
 
 def dummy_data_for_deepseek(ctx: InputContext, seq_len: int,

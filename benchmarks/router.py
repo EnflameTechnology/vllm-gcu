@@ -26,6 +26,7 @@ async def send_idle_request(url, model):
             "stream_options": {"include_usage": True},
             "priority": 100,
             "ignore_eos": True,
+            "extra_args": {"is_idle": True},
         }
         entrypoints = "/v1/completions"
 
