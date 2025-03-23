@@ -21,6 +21,7 @@ from tops_extension import TopsBuildExtension
 from tops_extension.torch import TopsTorchExtension
 from tops_extension.torch.codegen_utils import gen_custom_ops
 from wheel.bdist_wheel import bdist_wheel
+from build_utils import get_tag, get_tops_version
 
 ROOT_DIR = os.path.dirname(__file__)
 
@@ -34,48 +35,17 @@ try:
 except ImportError:
     _TOPSRT_HOME = os.getenv("TOPSRT_HOME", None)
 
-
-def get_version():
-    py_package_version = os.getenv("PY_PACKAGE_VERSION", None)
-    if py_package_version is not None:
-        return py_package_version
-
+if os.getenv("PY_PACKAGE_VERSION"):
+    VERSION = os.getenv("PY_PACKAGE_VERSION")
+else:
     try:
         import vllm
 
-        py_package_version = vllm.__version__
+        VLLM_VERSION = vllm.__version__
     except ImportError:
-        py_package_version = "0.8.0"
-
-    def get_tag() -> str:
-        package_version = os.getenv("PACKAGE_VERSION", default="")
-        if package_version == "" or package_version == "123.456":
-            tops_version = "unknown"
-
-            version_file = f"{ROOT_DIR}/.version"
-            if os.path.exists(version_file):
-                with open(version_file, "r") as file:
-                    tops_version = file.read().strip()
-
-            commit = (
-                subprocess.check_output(
-                    ["git", "show", "-s", "--date=format:'%Y%m%d'", "--format=%cd"],
-                    cwd=ROOT_DIR,
-                )
-                .decode("ascii")
-                .strip()
-                .replace("'", "")
-            )
-            package_version = f"{tops_version}.{commit}"
-
-        return package_version
-
-    try:
-        version = f"{py_package_version}+{get_tag()}"
-        Version(version)
-        return version
-    except Exception:
-        return py_package_version
+        VLLM_VERSION = "0.8.0"
+    tops_version = get_tops_version(f"{ROOT_DIR}/.version")
+    VERSION = f"{VLLM_VERSION}+{get_tag(ROOT_DIR, tops_version)}"
 
 
 try:
@@ -314,7 +284,7 @@ ext_modules.append(
 
 setup(
     name="vllm_gcu",
-    version=get_version(),
+    version=VERSION,
     author="Enflame",
     license="Apache 2.0",
     description=("GCU plugin backend for vLLM"),
@@ -341,7 +311,7 @@ setup(
         ]
     },
     python_requires=">=3.8",
-    install_requires=read_requirements(),
+    install_requires=["python-multipart==0.0.20"],
     ext_modules=ext_modules,
     cmdclass={
         "build_ext": VllmBuildExtension,
