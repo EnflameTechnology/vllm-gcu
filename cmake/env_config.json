@@ -18,24 +18,40 @@
     }
   },
   "all_default" :
-  {
+  {"pre_special_cmd" : [
+      {
+          "name" : "vllm",
+          "install" : "sudo python -m pip install vllm==0.8.0",
+          "uninstall" : "sudo python -m pip uninstall vllm -y || true"
+      }
+    ],
     "deb" : ["topsaten", "eccl","topsfactor", "tops-sdk"],
     "dependences" : [ "runtime"],
     "whl" :
     {
-      "3.10" : ["vllm-gcu==0.7.2","xformers","tops-extension"],
-      "3.9" : ["vllm-gcu==0.7.2","xformers","tops-extension"]
+      "3.10" : ["vllm-gcu==0.8.0","xformers","tops-extension"],
+      "3.9" : ["vllm-gcu==0.8.0","xformers","tops-extension"]
     },
     "special_cmd" : [
-      {
-          "name" : "vllm",
-          "install" : "sudo python -m pip install vllm==0.7.2",
-          "uninstall" : "sudo python -m pip uninstall vllm -y || true"
-      },
       {
           "name" : "numpy",
           "install" : "sudo python -m pip install numpy==1.22.4",
           "uninstall" : "sudo python -m pip uninstall numpy -y || true"
+      },
+      {
+          "name" : "torch 2.5.1",
+          "install" : "sudo python -m pip install torch==2.5.1",
+          "uninstall" : "sudo python -m pip uninstall torch -y || true"
+      },
+      {
+          "name" : "torchaudio",
+          "install" : "sudo python -m pip install torchaudio==2.5.1",
+          "uninstall" : "sudo python -m pip uninstall torchaudio -y || true"
+      },
+      {
+          "name" : "torchvision",
+          "install" : "sudo python -m pip install torchvision==0.20.1",
+          "uninstall" : "sudo python -m pip uninstall torchvision -y || true"
       },
       {
           "name" : "opencv-python",
