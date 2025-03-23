@@ -269,6 +269,10 @@ class GPTQGCULinearMethod(GPTQLinearMethod):
         x: torch.Tensor,
         bias: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        if x.numel() == 0:
+            return torch.empty([0, layer.qweight.shape[-1]],
+                                dtype=x.dtype, device=x.device)
+
         return ops.gptq_gemm_gcu(
             x,
             layer.qweight,

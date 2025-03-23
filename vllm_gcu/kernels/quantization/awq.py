@@ -106,6 +106,10 @@ class AWQGCULinearMethod(AWQLinearMethod):
         x: torch.Tensor,
         bias: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        if x.numel() == 0:
+            return torch.empty([0, layer.qweight.shape[-1]],
+                                dtype=x.dtype, device=x.device)
+
         qweight = layer.qweight
         scales = layer.scales
         qzeros = layer.qzeros

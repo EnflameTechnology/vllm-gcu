@@ -24,6 +24,10 @@ def silu_and_mul_forward_oot(self, x: torch.Tensor) -> torch.Tensor:
     d = x.shape[-1] // 2
     output_shape = x.shape[:-1] + (d,)
     out = torch.empty(output_shape, dtype=x.dtype, device=x.device)
+
+    if x.numel() == 0:
+        return out
+
     torch.ops._C.silu_and_mul(out, x)
     return out
 

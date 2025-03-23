@@ -307,6 +307,9 @@ class GCUXFormersImpl(XFormersImpl):
         attn_metadata: "GCUXFormersMetadata",
         output: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        if query.numel() == 0:
+            return query.view(-1, self.num_heads * self.head_size)
+
         attn_type = self.attn_type
         if attn_type == AttentionType.ENCODER and (
             not attn_metadata.is_all_encoder_attn_metadata_set

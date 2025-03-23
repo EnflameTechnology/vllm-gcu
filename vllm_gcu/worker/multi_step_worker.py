@@ -3,14 +3,23 @@
 import dataclasses
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
+from unittest.mock import patch
 
 import torch
 
 from vllm.distributed import broadcast_tensor_dict, get_pp_group
 from vllm.model_executor.layers.sampler import SamplerOutput
-from vllm.sequence import ExecuteModelRequest
+from vllm.sequence import (
+    CompletionSequenceGroupOutput,
+    ExecuteModelRequest,
+    Logprob,
+    SequenceGroupMetadata,
+    SequenceOutput,
+)
+from vllm.worker.model_runner import ModelInputForGPUWithSamplingMetadata
 from vllm.worker.model_runner_base import BroadcastableModelInput
 from vllm.worker.multi_step_model_runner import (
+    ModelOutput,
     MULTI_STEP_ATTENTION_BACKENDS,
     MultiStepModelRunner,
     PythonizationCache,
@@ -22,6 +31,20 @@ from vllm_gcu.worker.model_runner import GCUModelRunnerBase
 from vllm_gcu.worker.worker import GCUWorker
 
 MULTI_STEP_ATTENTION_BACKENDS += ["xformers"]
+
+
+class PatchedModelOutput(ModelOutput):
+    def maybe_pythonize(self, input_metadata, copy_stream, pinned_sampled_token_buffer):
+        if input_metadata.num_queries == 0:
+            return
+        else:
+            return super().maybe_pythonize(
+                input_metadata, copy_stream, pinned_sampled_token_buffer
+            )
+
+
+patcher = patch("vllm.worker.multi_step_model_runner.ModelOutput", PatchedModelOutput)
+patcher.start()
 
 
 @dataclass
@@ -43,6 +66,90 @@ class GCUMultiStepModelRunner(MultiStepModelRunner):
             if self.parallel_config.pipeline_parallel_size == 1
             else None
         )
+
+    def prepare_model_input(
+        self,
+        seq_group_metadata_list: List[SequenceGroupMetadata],
+        virtual_engine: int = 0,
+        finished_requests_ids: Optional[List[str]] = None,
+    ) -> StatefulModelInput:
+        frozen_model_input: ModelInputForGPUWithSamplingMetadata = (
+            self._base_model_runner.prepare_model_input(
+                seq_group_metadata_list, virtual_engine, finished_requests_ids
+            )
+        )
+
+        if (
+            frozen_model_input.query_lens is None
+            and frozen_model_input.seq_lens is None
+            and frozen_model_input.attn_metadata is None
+        ):
+            self._seq_group_metadata_list = seq_group_metadata_list
+            return StatefulModelInput(
+                frozen_model_input=frozen_model_input,
+                num_seqs=0,
+                num_queries=0,
+                num_single_step_prefills=0,
+            )
+
+        assert frozen_model_input.query_lens is not None
+        assert frozen_model_input.seq_lens is not None
+        assert frozen_model_input.attn_metadata is not None
+        num_queries = len(frozen_model_input.query_lens)
+        num_seqs = len(frozen_model_input.seq_lens)
+        num_single_step_prefills = frozen_model_input.attn_metadata.num_prefills
+
+        model_input = StatefulModelInput(
+            frozen_model_input=frozen_model_input,
+            num_seqs=num_seqs,
+            num_queries=num_queries,
+            num_single_step_prefills=num_single_step_prefills,
+        )
+
+        return model_input
+
+    def make_model_input_from_broadcasted_tensor_dict(self, tensor_dict):
+        if tensor_dict.get("input_positions", None) is None:
+            return StatefulModelInput(
+                frozen_model_input=ModelInputForGPUWithSamplingMetadata(),
+                num_seqs=0,
+                num_queries=0,
+                num_single_step_prefills=0,
+            )
+
+        return super().make_model_input_from_broadcasted_tensor_dict(tensor_dict)
+
+    def _advance_step(self, model_input, out):
+        frozen_model_input = model_input.frozen_model_input
+        if frozen_model_input.input_positions is None:
+            return model_input
+
+        return super()._advance_step(model_input, out)
+
+    def _final_process_outputs(self, model_input, output_proc_callback):
+        frozen_model_input = model_input.frozen_model_input
+        if frozen_model_input.input_positions is None:
+            outputs = []
+            for output in model_input.cached_outputs:
+                output.sampler_output.outputs = [
+                    CompletionSequenceGroupOutput(
+                        samples=[
+                            SequenceOutput(
+                                parent_seq_id=list(seq_group_metadata.seq_data.keys())[
+                                    0
+                                ],
+                                output_token=0,
+                                logprobs={0: Logprob(0.0)},
+                            )
+                        ],
+                        prompt_logprobs=None,
+                    )
+                    for seq_group_metadata in self._seq_group_metadata_list
+                ]
+                outputs.append(output.sampler_output)
+            return outputs
+
+        return super()._final_process_outputs(model_input, output_proc_callback)
 
 
 class GCUMultiStepWorker(GCUWorker):
@@ -96,11 +203,11 @@ class GCUMultiStepWorker(GCUWorker):
             model_input = multi_step_state.model_input
             frozen_model_input = model_input.frozen_model_input
             assert frozen_model_input is not None
-            assert frozen_model_input.attn_metadata is not None
-            # clear the cached metadata so that it can be recomputed on
-            # the workers.
-            frozen_model_input.attn_metadata._cached_prefill_metadata = None
-            frozen_model_input.attn_metadata._cached_decode_metadata = None
+            if frozen_model_input.attn_metadata is not None:
+                # clear the cached metadata so that it can be recomputed on
+                # the workers.
+                frozen_model_input.attn_metadata._cached_prefill_metadata = None
+                frozen_model_input.attn_metadata._cached_decode_metadata = None
 
         model_input.is_first_multi_step = is_first_multi_step
         model_input.is_last_step = execute_model_req.is_last_step
@@ -136,7 +243,6 @@ class GCUMultiStepWorker(GCUWorker):
             assert (
                 model_input.cached_outputs[-1].sampler_output.sampled_token_ids is None
             )
-            assert model_input.cached_outputs[-1].sampled_token_ids is not None
             model_input.last_sampled_token_ids = model_input.cached_outputs[
                 -1
             ].sampled_token_ids
