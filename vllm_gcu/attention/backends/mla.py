@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 # coding=utf-8
+import itertools
 from typing import Any, Dict, List, Optional, Type
 
 import torch
-import itertools
 
 from vllm.attention.backends.abstract import AttentionType
 from vllm.attention.backends.mla.common import (
@@ -45,9 +45,15 @@ class GCUMLABackend(MLACommonBackend):
         # ops.copy_blocks_mla(kv_caches, src_to_dists)
         raise NotImplementedError
 
+
 class GCUMLACommonMetadataBuilder(MLACommonMetadataBuilder):
-    def build(self, seq_lens: List[int], query_lens: List[int],
-              cuda_graph_pad_size: int, batch_size: int):
+    def build(
+        self,
+        seq_lens: List[int],
+        query_lens: List[int],
+        cuda_graph_pad_size: int,
+        batch_size: int,
+    ):
         use_captured_graph = cuda_graph_pad_size != -1
         if use_captured_graph:
             self.input_positions.extend(itertools.repeat(0, cuda_graph_pad_size))
@@ -100,6 +106,33 @@ class GCUMLAImpl(MLACommonImpl[MLACommonMetadata]):
             raise NotImplementedError(
                 "Encoder self-attention and encoder/decoder cross-attention are not implemented for GCUMLAImpl"
             )
+
+    def forward(
+        self,
+        layer,
+        hidden_states_or_q_c,
+        k_c_normed,
+        k_pe,
+        kv_cache,
+        attn_metadata,
+        output=None,
+    ):
+        if attn_metadata is None:
+            return torch.empty(
+                [0, self.o_proj.output_size],
+                dtype=hidden_states_or_q_c.dtype,
+                device=hidden_states_or_q_c.device,
+            )
+
+        return super().forward(
+            layer,
+            hidden_states_or_q_c,
+            k_c_normed,
+            k_pe,
+            kv_cache,
+            attn_metadata,
+            output,
+        )
 
     def _forward_prefill(
         self,
