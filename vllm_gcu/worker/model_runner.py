@@ -18,7 +18,7 @@ from vllm.attention import AttentionMetadata, get_attn_backend
 from vllm.attention.backends.abstract import AttentionState
 from vllm.attention.backends.utils import CommonAttentionState
 from vllm.config import CompilationLevel, VllmConfig
-from vllm.distributed import get_kv_transfer_group, get_pp_group
+from vllm.distributed import get_dp_group, get_kv_transfer_group, get_pp_group
 from vllm.distributed.parallel_state import (
     get_tensor_model_parallel_rank,
     graph_capture,
@@ -558,6 +558,9 @@ class GCUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
             "switching to eager mode. You can also reduce the "
             "`max_num_seqs` as needed to decrease memory usage."
         )
+        additional_config = self.vllm_config.additional_config
+        additional_config.update({"all_dp_in_decode": True})
+
         start_time = time.perf_counter()
         start_free_gpu_memory = torch.gcu.mem_get_info()[0]
 
@@ -804,8 +807,29 @@ class GCUModelRunner(GCUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
 
         # Currently gcu graph is only supported by the decode phase.
         assert model_input.attn_metadata is not None
+
         prefill_meta = model_input.attn_metadata.prefill_metadata
         decode_meta = model_input.attn_metadata.decode_metadata
+
+        parallel_config = self.vllm_config.parallel_config
+        additional_config = self.vllm_config.additional_config
+        if (
+            parallel_config.enable_expert_parallel
+            and parallel_config.data_parallel_size > 1
+        ):
+            has_prefill = torch.tensor(1 if prefill_meta else 0, dtype=torch.int32)
+            torch.distributed.all_reduce(
+                has_prefill,
+                group=get_dp_group().cpu_group,
+            )
+            if has_prefill.item() > 0:
+                # some dp rank is in prefill stage
+                additional_config.update({"all_dp_in_decode": False})
+                if prefill_meta is None:
+                    prefill_meta = 1  # disable graph
+            else:
+                additional_config.update({"all_dp_in_decode": True})
+
         # TODO(andoorve): We can remove this once all
         # virtual engines share the same kv cache.
         virtual_engine = model_input.virtual_engine
