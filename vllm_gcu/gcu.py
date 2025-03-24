@@ -48,7 +48,7 @@ class GCUPlatform(Platform):
         if use_mla:
             if use_v1:
                 raise NotImplementedError
-                return "vllm_gcu.v1.attention.backends.mla.GCUMLABackend"
+                # return "vllm_gcu.v1.attention.backends.mla.GCUMLABackend"
             else:
                 return "vllm_gcu.attention.backends.mla.GCUMLABackend"
         if use_v1:
@@ -162,9 +162,9 @@ class GCUPlatform(Platform):
             else:
                 if envs.VLLM_USE_V1:
                     raise NotImplementedError
-                    parallel_config.worker_cls = (
-                        "vllm_gcu.v1.worker.gcu_worker.GCUWorker"
-                    )
+                    # parallel_config.worker_cls = (
+                    #     "vllm_gcu.v1.worker.gcu_worker.GCUWorker"
+                    # )
                 else:
                     parallel_config.worker_cls = "vllm_gcu.worker.worker.GCUWorker"
 
@@ -193,6 +193,12 @@ class GCUPlatform(Platform):
 
         if model_config:
             model_config.enable_sleep_mode = False
+
+        additional_config = vllm_config.additional_config
+        if additional_config is None:
+            # make sure additional_config is not None
+            vllm_config.additional_config = {}
+        vllm_config.additional_config.update({"all_dp_in_decode": False})
 
         # Disable usage status for security
         envs.VLLM_NO_USAGE_STATS = "1"
