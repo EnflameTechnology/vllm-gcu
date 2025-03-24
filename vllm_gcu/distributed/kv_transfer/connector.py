@@ -103,9 +103,9 @@ class Connector(SimpleConnector):
                 kv_cache = kv_caches[layer_id - start_layer]
 
                 if isinstance(model_input.attn_metadata, GCUXFormersMetadata):
-
-                    key_cache = kv_cache[0].reshape(-1, num_heads, head_size)
-                    value_cache = kv_cache[1].reshape(-1, num_heads, head_size)
+                    num_blocks = kv_cache.shape[1]
+                    key_cache = kv_cache[0].reshape(num_blocks, num_heads, -1, head_size).permute(0,2,1,3).reshape(-1, num_heads, head_size)
+                    value_cache = kv_cache[1].reshape(num_blocks, num_heads, -1, head_size).permute(0,2,1,3).reshape(-1, num_heads, head_size)
                 elif isinstance(model_input.attn_metadata, GCUMLAMetadata):
                     kv_cache = kv_cache.reshape(-1, num_heads, head_size)
                     key_cache = kv_cache[:, :, :512]
