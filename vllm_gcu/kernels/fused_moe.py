@@ -20,7 +20,7 @@ from vllm.model_executor.layers.fused_moe.layer import (
 )
 from vllm.utils import vllm_lib
 
-from vllm_gcu.distributed.parallel_state import all_to_all_v2
+from vllm_gcu.distributed.parallel_state import all_to_all_v2, all_to_all_v2_ref
 from vllm_gcu.kernels import _custom_ops as ops
 
 
@@ -304,19 +304,7 @@ def fused_experts_impl(
     scheduler_config = get_current_vllm_config().scheduler_config
     recv_token_total = None
     if parallel_config.enable_expert_parallel:
-
-        use_max = (
-            not gcu_envs.VLLM_GCU_DEBUG_PDONLY
-        ) or get_forward_context().attn_metadata.num_prefills > 0
-
-        max_model_len = (
-            scheduler_config.max_num_batched_tokens
-            if use_max
-            else scheduler_config.max_num_seqs
-        )
-        if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
-            sp_size = get_tp_group().world_size
-            max_model_len = (max_model_len + sp_size - 1) // sp_size * sp_size
+        all_dp_in_decode = get_current_vllm_config().additional_config['all_dp_in_decode']
 
         group = get_world_group().device_group
         ep_size = get_world_group().world_size
@@ -360,26 +348,56 @@ def fused_experts_impl(
             send_packed, [ep_token_indices]
         )
         # send_packed_sorted = send_packed[ep_token_indices.to(torch.int64)]
-        recv_packed = torch.empty(
-            (
-                max_model_len * parallel_config.data_parallel_size,
-                hidden_states.shape[1] + topk_ids_width + topk_weights_width,
-            ),
-            dtype=hidden_states.dtype,
-            device=hidden_states.device,
-        )
+        if all_dp_in_decode:
+            padded_recv_len = scheduler_config.max_num_seqs
+            if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
+                sp_size = get_tp_group().world_size
+                padded_recv_len = (padded_recv_len + sp_size -1) // sp_size * sp_size
+            recv_packed = torch.empty(
+                (
+                    padded_recv_len * parallel_config.data_parallel_size,
+                    hidden_states.shape[1] + topk_ids_width + topk_weights_width,
+                ),
+                dtype=hidden_states.dtype,
+                device=hidden_states.device,
+            )
 
-        sp_split_size = torch.empty_like(ep_split_size)
+            sp_split_size = torch.empty_like(ep_split_size)
 
-        all_to_all_v2(
-            recv_packed,
-            send_packed_sorted,
-            sp_split_size,
-            ep_split_size,
-            group=group,
-            flag=1,
-        )
-        recv_token_total = torch.sum(sp_split_size, 0, True, dtype=torch.int32)
+            all_to_all_v2(
+                recv_packed,
+                send_packed_sorted,
+                sp_split_size,
+                ep_split_size,
+                group=group,
+                flag=1,
+            )
+            recv_token_total = torch.sum(sp_split_size, 0, True, dtype=torch.int32)
+        else:
+            sp_split_size = torch.empty_like(ep_split_size)
+            torch.distributed.all_to_all_single(sp_split_size, ep_split_size, group=group)
+            recv_token_total = torch.sum(sp_split_size, 0, True, dtype=torch.int32)
+            cpu_sp_split_size = sp_split_size.cpu().tolist()
+            cpu_ep_split_size = ep_split_size.cpu().tolist()
+            cpu_recv_token_total = recv_token_total[0].item()
+            cpu_send_token_total = send_token_total[0].item()
+
+            recv_packed = torch.empty(
+                (
+                    max(cpu_recv_token_total, 1),
+                    hidden_states.shape[1] + topk_ids_width + topk_weights_width,
+                ),
+                dtype=hidden_states.dtype,
+                device=hidden_states.device,
+            )
+
+            torch.distributed.all_to_all_single(
+                recv_packed[:cpu_recv_token_total],
+                send_packed_sorted[:cpu_send_token_total],
+                cpu_sp_split_size,
+                cpu_ep_split_size,
+                group=group,
+            )
 
         # EP
         hidden_states = torch.empty(
@@ -585,14 +603,24 @@ def fused_experts_impl(
             dtype=hidden_states_ori.dtype,
             device=hidden_states_ori.device,
         )
-        all_to_all_v2(
-            sp_hidden_states,
-            out_hidden_states,
-            ep_split_size,
-            sp_split_size,
-            group=group,
-            flag=0,
-        )
+        if all_dp_in_decode:
+            all_to_all_v2(
+                sp_hidden_states,
+                out_hidden_states,
+                ep_split_size,
+                sp_split_size,
+                group=group,
+                flag=0,
+            )
+        else:
+            torch.distributed.all_to_all_single(
+                sp_hidden_states[:cpu_send_token_total],
+                out_hidden_states[:cpu_recv_token_total],
+                cpu_ep_split_size,
+                cpu_sp_split_size,
+                group=group,
+            )
+
         if inplace:
             output = hidden_states_ori
             output.fill_(0)

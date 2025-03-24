@@ -88,14 +88,14 @@ def all_to_all_v2_ref(
     group=None,
     flag=None,
 ) -> None:
-    assert output.is_contiguous()
-    assert input.is_contiguous()
+    assert output.is_contiguous(), 'output is not contiguous'
+    assert input.is_contiguous(), 'input is not contiguous'
     if flag == 1:
         torch.distributed.all_to_all_single(
             output_split_sizes, input_split_sizes, group=group
         )
-    assert output.shape[0] >= output_split_sizes.sum().item()
-    assert input.shape[0] >= input_split_sizes.sum().item()
+    assert output.shape[0] >= output_split_sizes.sum().item(), 'output shape error'
+    assert input.shape[0] >= input_split_sizes.sum().item(), 'output shape error'
     torch.distributed.all_to_all_single(
         output[: output_split_sizes.sum().item()],
         input[: input_split_sizes.sum().item()],
