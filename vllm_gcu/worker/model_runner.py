@@ -824,7 +824,7 @@ class GCUModelRunner(GCUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
         )
 
     @torch.inference_mode()
-    @dump_memory_snapshot_when_exception
+    @dump_memory_snapshot_when_exception('step')
     def execute_model(
         self,
         model_input: ModelInputForGPUWithSamplingMetadata,
@@ -1188,6 +1188,7 @@ class GCUGraphRunner(nn.Module):
         assert self._graph is not None
         return self._graph
 
+    @dump_memory_snapshot_when_exception('capture')
     def capture(
         self,
         input_ids: torch.Tensor,

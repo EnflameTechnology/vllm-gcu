@@ -27,32 +27,34 @@ except Exception:
             return Version(importlib.metadata.version('torch')) >= Version(target)
 
 
-def dump_memory_snapshot_when_exception(func):
-    import vllm_gcu.envs as gcu_envs
+def dump_memory_snapshot_when_exception(name):
+    def inner(func):
+        import vllm_gcu.envs as gcu_envs
 
-    n = gcu_envs.VLLM_DUMP_SNAPSHOT_EVERY_N_STEP
-    if n <= 0:
-        return func
+        n = gcu_envs.VLLM_DUMP_SNAPSHOT_EVERY_N_STEP
+        if n <= 0:
+            return func
 
-    torch.gcu.memory._record_memory_history()
-    step = 0
+        torch.gcu.memory._record_memory_history()
+        step = 0
 
-    @wraps(func)
-    def _wrapper(*args, **kwargs):
-        nonlocal step
-        rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
-        if step % n == 0:
-            filename = f"/tmp/vllm_snapshot_rank{rank}_step{step}.pkl"
-            torch.gcu.memory._dump_snapshot(filename)
-        step += 1
-        try:
-            return func(*args, **kwargs)
-        except Exception as err:
-            filename = f"/tmp/vllm_snapshot_rank{rank}_exception.pkl"
-            torch.gcu.memory._dump_snapshot(filename)
-            raise err
+        @wraps(func)
+        def _wrapper(*args, **kwargs):
+            nonlocal step
+            rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
+            if step % n == 0:
+                filename = f"/tmp/vllm_snapshot_rank{rank}_{name}{step}.pkl"
+                torch.gcu.memory._dump_snapshot(filename)
+            step += 1
+            try:
+                return func(*args, **kwargs)
+            except Exception as err:
+                filename = f"/tmp/vllm_snapshot_rank{rank}_exception.pkl"
+                torch.gcu.memory._dump_snapshot(filename)
+                raise err
 
-    return _wrapper
+        return _wrapper
+    return inner
 
 
 def is_vllm_equal(target: str) -> bool:
