@@ -203,7 +203,7 @@ class PagedAttention:
             # query_start_loc is (batch_size + 1,)
             query_start_loc[:-1],
             seq_lens_tensor,
-            query_start_loc.diff(),
+            seq_lens_tensor - query_start_loc.diff(),
             max_query_len,
             alibi_slopes,
             sliding_window,
