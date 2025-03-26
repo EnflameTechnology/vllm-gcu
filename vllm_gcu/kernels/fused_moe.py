@@ -3,6 +3,7 @@
 import functools
 import sys
 from typing import Any, Callable, Dict, List, Optional, Tuple
+import math
 
 import torch
 import torch_gcu
@@ -489,7 +490,7 @@ def fused_experts_impl(
     else:
         out_hidden_states = torch.empty_like(hidden_states)
 
-    chunk_num = (num_tokens // CHUNK_SIZE) + 1
+    chunk_num = math.ceil(num_tokens / CHUNK_SIZE)
     for chunk in range(chunk_num):
         begin_chunk_idx, end_chunk_idx = (
             chunk * CHUNK_SIZE,
