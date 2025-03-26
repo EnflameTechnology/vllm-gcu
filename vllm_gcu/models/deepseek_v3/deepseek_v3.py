@@ -22,8 +22,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Inference-only DeepseekV2/DeepseekV3 model."""
-from typing import Any, Dict, Iterable, Optional, Set, Tuple, Union
+from typing import Any, Dict, Iterable, Optional, Set, Tuple, Union, Mapping
 
+import numpy as np
 import torch
 from torch import nn
 from transformers import PretrainedConfig
@@ -69,7 +70,9 @@ from vllm.model_executor.models.utils import (
     PPMissingLayer,
 )
 from vllm.model_executor.sampling_metadata import SamplingMetadata
-from vllm.sequence import IntermediateTensors
+from vllm.sequence import IntermediateTensors, SequenceData
+from vllm.inputs import (INPUT_REGISTRY, DecoderOnlyInputs, DummyData,
+                         InputContext)
 
 import vllm_gcu.envs as gcu_envs
 from vllm_gcu.kernels.linear import MergedReplicatedLinear
@@ -771,7 +774,14 @@ class DeepseekV2Model(nn.Module):
             hidden_states = hidden_states[:seqlen]
         return hidden_states
 
+def dummy_data_for_deepseek(ctx: InputContext, seq_len: int,
+                            mm_counts: Mapping[str, int]) -> DummyData:
+    config = ctx.get_hf_config()
+    seq = np.random.randint(0, config.vocab_size, size=seq_len).tolist()
+    seq_data = SequenceData.from_seqs(seq)
+    return DummyData(seq_data)
 
+@INPUT_REGISTRY.register_dummy_data(dummy_data_for_deepseek)
 class DeepseekV2ForCausalLM(nn.Module, SupportsPP):
 
     def __init__(self, *, vllm_config: VllmConfig, prefix: str = ""):
