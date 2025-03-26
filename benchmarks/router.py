@@ -7,15 +7,15 @@ from argparse import Namespace
 from typing import List
 
 import aiohttp
-from aiohttp import web
+from aiohttp import web, ClientTimeout
 from vllm.logger import init_logger
-
 
 logger = init_logger("vllm_gcu.router")
 
 
 async def send_idle_request(url, model):
-    async with aiohttp.ClientSession() as session:
+    async with aiohttp.ClientSession(trust_env=True,
+                                     timeout=ClientTimeout(total=None)) as session:
         headers = {"Authorization": f"Bearer {os.environ.get('OPENAI_API_KEY')}"}
         payload = {
             "model": model,
@@ -27,10 +27,11 @@ async def send_idle_request(url, model):
             "priority": 100,
             "ignore_eos": True,
         }
+        entrypoints = "/v1/completions"
 
         try:
             async with session.post(
-                url=url, json=payload, headers=headers
+                url=f"{url}{entrypoints}", json=payload, headers=headers
             ) as response:
                 if response.status == 200:
                     async for chunk_bytes in response.content:
@@ -45,14 +46,14 @@ async def send_idle_request(url, model):
 
 class RoundRobinProxy:
     def __init__(
-        self, server_urls: List[str], model: str, entrypoint: str = "/v1/completions"
+        self, server_urls: List[str], model: str
     ):
         self.server_cycle = itertools.cycle(server_urls)
         self.active_idle_loop = asyncio.Event()
         self.requests = 0
         self.lock = asyncio.Lock()
 
-        asyncio.create_task(self.idle_loop(server_urls, model, entrypoint))
+        asyncio.create_task(self.idle_loop(server_urls, model))
 
     async def increment(self):
         async with self.lock:
@@ -69,13 +70,14 @@ class RoundRobinProxy:
                 self.active_idle_loop.clear()
 
     async def idle_loop(
-        self, server_urls: List[str], model: str, entrypoint: str = "/v1/completions"
+        self, server_urls: List[str], model: str
     ):
         while True:
             await self.active_idle_loop.wait()
+            logger.debug("Send idle request.")
 
             idle_tasks = [
-                asyncio.create_task(send_idle_request(f"{url}{entrypoint}", model))
+                asyncio.create_task(send_idle_request(url, model))
                 for url in server_urls
             ]
 
@@ -94,19 +96,23 @@ class RoundRobinProxy:
             for t in idle_tasks:
                 t.cancel()
 
+            logger.debug("Kill idle request.")
+
     async def handle_request(self, request):
         target_url = f"{next(self.server_cycle)}{request.path_qs}"
 
-        async with aiohttp.ClientSession() as session:
+        await self.increment()
+
+        async with aiohttp.ClientSession(trust_env=True,
+                                         timeout=ClientTimeout(total=6*60*60)) as session:
             try:
+                logger.info(f"Send request to {target_url}")
                 async with session.request(
                     method=request.method,
                     url=target_url,
                     headers=request.headers,
                     data=request.content,
                 ) as response:
-
-                    await self.increment()
 
                     resp = web.StreamResponse(
                         status=response.status, headers=response.headers
@@ -119,11 +125,12 @@ class RoundRobinProxy:
 
                     await resp.write_eof()
 
-                    await self.decrement()
                     return resp
 
             except Exception as e:
                 return web.Response(text=f"Error: {str(e)}", status=500)
+            finally:
+                await self.decrement()
 
 
 async def router(args: Namespace):
@@ -148,9 +155,7 @@ if __name__ == "__main__":
     parser.add_argument("--host", type=str, default="localhost")
     parser.add_argument("--port", type=int, default=8002)
     parser.add_argument("--server-urls", type=str, default=None, nargs="+")
-    parser.add_argument("--entrypoints", type=str, default="/v1/completions")
     parser.add_argument("--model", type=str, required=True)
     args = parser.parse_args()
 
     asyncio.run(router(args))
-
