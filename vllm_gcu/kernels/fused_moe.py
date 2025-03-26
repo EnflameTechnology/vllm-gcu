@@ -8,6 +8,7 @@ import torch
 import torch_gcu
 import vllm.envs as envs
 from vllm.config import get_current_vllm_config
+from vllm.distributed.parallel_state import get_tp_group
 
 from vllm.model_executor.layers.fused_moe.fused_moe import (
     fused_experts,
@@ -18,7 +19,6 @@ from vllm.model_executor.layers.fused_moe.layer import (
     UnquantizedFusedMoEMethod,
 )
 from vllm.utils import vllm_lib
-from vllm.distributed.parallel_state import get_tp_group
 
 from vllm_gcu.distributed.parallel_state import all_to_all_v2
 from vllm_gcu.kernels import _custom_ops as ops
@@ -135,6 +135,11 @@ def invoke_fused_moe_kernel(
         elif use_int4_w4a16:
             A_scale = None
             group_size = block_shape[1]
+        elif use_int8_w8a16:
+            A_scale = None
+            group_size = -1
+        else:
+            raise NotImplementedError("use_fp8_w8a8 is not supported.")
 
         torch.ops._C.fused_moe_quant_kernel(
             C,
@@ -311,7 +316,7 @@ def fused_experts_impl(
         )
         if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
             sp_size = get_tp_group().world_size
-            max_model_len = (max_model_len + sp_size -1) // sp_size * sp_size
+            max_model_len = (max_model_len + sp_size - 1) // sp_size * sp_size
 
         group = get_world_group().device_group
         ep_size = get_world_group().world_size
@@ -351,7 +356,9 @@ def fused_experts_impl(
             ),
             dim=1,
         )
-        send_packed_sorted = torch_gcu.gcu.efficient.gcu_index(send_packed, [ep_token_indices])
+        send_packed_sorted = torch_gcu.gcu.efficient.gcu_index(
+            send_packed, [ep_token_indices]
+        )
         # send_packed_sorted = send_packed[ep_token_indices.to(torch.int64)]
         recv_packed = torch.empty(
             (
