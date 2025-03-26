@@ -105,6 +105,10 @@ class GCUWorker(Worker):
     def determine_num_available_blocks(self) -> Tuple[int, int]:
         torch.gcu.empty_cache()
         torch.gcu.reset_peak_memory_stats()
+        if self.cache_config.num_gpu_blocks_override:
+            cache_block_size = self.get_cache_block_size_bytes()
+            num_cpu_blocks = int(self.cache_config.swap_space_bytes // cache_block_size)
+            return self.cache_config.num_gpu_blocks_override, num_cpu_blocks
 
         free_memory_pre_profile, total_gpu_memory = torch.gcu.mem_get_info()
 
@@ -155,6 +159,18 @@ class GCUWorker(Worker):
         logger.info(msg)
         # Final cleanup
         gc.collect()
+        if (
+            self.parallel_config.enable_expert_parallel
+            and self.parallel_config.data_parallel_size > 1
+        ):
+            blocks_tensor = torch.tensor([num_gpu_blocks, num_cpu_blocks], dtype=torch.int32)
+            torch.distributed.all_reduce(
+                blocks_tensor,
+                op=torch.distributed.ReduceOp.MIN,
+                group=get_dp_group().cpu_group,
+            )
+            num_gpu_blocks = blocks_tensor[0].item()
+            num_cpu_blocks = blocks_tensor[1].item()
 
         return num_gpu_blocks, num_cpu_blocks
 
