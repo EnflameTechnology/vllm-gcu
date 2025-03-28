@@ -149,11 +149,18 @@ class DeepseekV2MoE(nn.Module):
         config: PretrainedConfig,
         quant_config: Optional[QuantizationConfig] = None,
         prefix: str = "",
+        layer_prior_expert_map: Optional[torch.Tensor] = None,
+        layer_log2phy = None,
     ):
         super().__init__()
         self.routed_scaling_factor = config.routed_scaling_factor
         self.n_shared_experts = config.n_shared_experts
         self.routed_scaling_factor = config.routed_scaling_factor
+
+        if layer_log2phy is not None:
+            self.layer_log2phy = layer_log2phy.to(torch.gcu.current_device())
+        else:
+            self.layer_log2phy = layer_log2phy
 
         if config.hidden_act != "silu":
             raise ValueError(
@@ -189,6 +196,7 @@ class DeepseekV2MoE(nn.Module):
             prefix=f"{prefix}.experts",
             scoring_func=config.scoring_func,
             e_score_correction_bias=self.gate.e_score_correction_bias,
+            layer_prior_expert_map=layer_prior_expert_map,
         )
 
         self.tp_size = self.experts.tp_size
@@ -213,15 +221,19 @@ class DeepseekV2MoE(nn.Module):
                         fused_experts_impl,
                         shared_experts=self.shared_experts,
                         routed_scaling_factor=self.routed_scaling_factor,
+                        log2phy=self.layer_log2phy
                     ),
+
                 )
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         num_tokens, hidden_dim = hidden_states.shape
         hidden_states = hidden_states.view(-1, hidden_dim)
         shared_output = None
+
         if self.n_shared_experts is not None and self.do_shared_and_scale:
             shared_output = self.shared_experts(hidden_states)
+
         router_logits, _ = self.gate(hidden_states)
         with self.context:
             final_hidden_states = self.experts(
@@ -586,6 +598,8 @@ class DeepseekV2DecoderLayer(nn.Module):
         model_config: ModelConfig,
         cache_config: Optional[CacheConfig] = None,
         quant_config: Optional[QuantizationConfig] = None,
+        prior_expert_map: Optional[Dict[int, torch.Tensor]] = None,
+        log2phy=None,
     ) -> None:
         super().__init__()
         self.hidden_size = config.hidden_size
@@ -621,10 +635,15 @@ class DeepseekV2DecoderLayer(nn.Module):
             and self.layer_idx >= config.first_k_dense_replace
             and self.layer_idx % config.moe_layer_freq == 0
         ):
+            layer_expert_map = None if prior_expert_map is None else prior_expert_map[self.layer_idx]
+            layer_log2phy = log2phy[self.layer_idx - config.first_k_dense_replace] if log2phy is not None else None
+
             self.mlp = DeepseekV2MoE(
                 config=config,
                 quant_config=quant_config,
                 prefix=f"{prefix}.mlp",
+                layer_prior_expert_map=layer_expert_map,
+                layer_log2phy=layer_log2phy,
             )
         else:
             self.mlp = DeepseekV2MLP(
@@ -704,7 +723,9 @@ class DeepseekV2Model(nn.Module):
 
     fall_back_to_pt_during_load = False
 
-    def __init__(self, *, vllm_config: VllmConfig, prefix: str = ""):
+    def __init__(self, *, vllm_config: VllmConfig, prefix: str = "",
+                 prior_expert_map: Optional[Dict[int, torch.Tensor]] = None,
+                 log2phy=None):
         super().__init__()
 
         config = vllm_config.model_config.hf_config
@@ -730,6 +751,8 @@ class DeepseekV2Model(nn.Module):
                 model_config=model_config,
                 cache_config=cache_config,
                 quant_config=quant_config,
+                prior_expert_map=prior_expert_map,
+                log2phy=log2phy
             ),
             prefix=f"{prefix}.layers",
         )
@@ -809,8 +832,39 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP):
         quant_config = vllm_config.quant_config
         self.config = config
         self.quant_config = quant_config
+
+        parallel_config = vllm_config.parallel_config
+
+        additional_config = vllm_config.additional_config
+
+        if parallel_config.enable_expert_parallel and additional_config and \
+           "expert_map_path" in additional_config:
+            expert_map_path = additional_config["expert_map_path"]
+            phy2log, log2phy = torch.load(
+                expert_map_path,
+                map_location=torch.device('cpu'))
+
+            phy2log = phy2log.to(torch.int32)
+            log2phy = log2phy.to(torch.int32)
+
+            num_moe_layers, num_devices, experts_per_device = phy2log.shape
+            num_global_experts = num_devices * experts_per_device
+            num_dense_layers = vllm_config.model_config.hf_config.first_k_dense_replace
+            num_total_layers = num_dense_layers + num_moe_layers
+
+            prior_expert_map = torch.full((num_total_layers, num_devices, num_global_experts), -1, dtype=torch.int32)
+            for layer_idx in range(num_dense_layers, num_total_layers):
+                for device_idx in range(num_devices):
+                    expert_ids_cur_device = phy2log[layer_idx - num_dense_layers, device_idx]
+                    prior_expert_map[layer_idx, device_idx, expert_ids_cur_device] = torch.arange(experts_per_device, dtype=torch.int32)
+        else:
+            prior_expert_map = None
+            log2phy = None
+
         self.model = DeepseekV2Model(
-            vllm_config=vllm_config, prefix=maybe_prefix(prefix, "model")
+            vllm_config=vllm_config, prefix=maybe_prefix(prefix, "model"),
+            prior_expert_map=prior_expert_map,
+            log2phy=log2phy
         )
         self.lm_head = ParallelLMHead(
             config.vocab_size, config.hidden_size, quant_config=quant_config

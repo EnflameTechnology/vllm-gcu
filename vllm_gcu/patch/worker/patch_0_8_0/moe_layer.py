@@ -15,6 +15,30 @@ from vllm.model_executor.layers.fused_moe.layer import (FusedMoE,
                                                         determine_expert_map)
 from unittest.mock import patch
 
+def get_expert_map(
+    ep_size: int, ep_rank: int, global_num_experts: int,
+    layer_prior_expert_map: Optional[torch.Tensor]
+) -> Tuple[int, Optional[torch.Tensor]]:
+    """Get the expert map for the current rank.
+    Args:
+        ep_rank: The rank of the current process.
+        layer_prior_expert_map: The expert map from the prior knowledge.
+    Returns:
+        A tuple containing the local number of experts and the expert map.
+    """
+    if layer_prior_expert_map is not None:
+        # If a prior expert map is provided, use it.
+        ranks, expert_nums = layer_prior_expert_map.shape
+        assert ep_size == ranks, "The expert ranks doesn't match ep_size."
+        assert global_num_experts == expert_nums, \
+            "The expert nums doesn't match global experts."
+
+        expert_map = layer_prior_expert_map[ep_rank].to(torch.gcu.current_device())
+        local_num_experts = torch.sum(torch.ne(expert_map, -1)).item()
+        return (local_num_experts, expert_map)
+    else:
+        return determine_expert_map(ep_size, ep_rank, global_num_experts)
+
 
 class PatchedFusedMoE(FusedMoE):
     """FusedMoE layer for MoE models.
@@ -58,6 +82,7 @@ class PatchedFusedMoE(FusedMoE):
         scoring_func: str = "softmax",
         e_score_correction_bias: Optional[torch.Tensor] = None,
         activation: str = "silu",
+        layer_prior_expert_map=None
     ):
         torch.nn.Module.__init__(self)
 
@@ -99,10 +124,12 @@ class PatchedFusedMoE(FusedMoE):
             self.ep_size = self.tp_size * self.dp_size
             self.tp_size = 1
 
-            self.local_num_experts, self.expert_map = determine_expert_map(
-                ep_size=self.ep_size,
-                ep_rank=self.ep_rank,
-                global_num_experts=self.global_num_experts)
+            self.local_num_experts, self.expert_map = get_expert_map(
+                                                        self.ep_size,
+                                                        self.ep_rank,
+                                                        self.global_num_experts,
+                                                        layer_prior_expert_map
+                                                      )
         else:
             # Adjust TP size for DP attention
             self.tp_rank = tp_rank + self.tp_size * self.dp_rank
