@@ -210,7 +210,7 @@ latex_elements = {
 %\usepackage{color}
 \definecolor{watermarkcolor}{RGB}{192,192,192}
 \usepackage[
-    contents = Enflame-Tech\ Confidential,
+    contents = Enflame-Tech.\ All\ rights\ reserved.,
     color = watermarkcolor,
     scale = 6,
     opacity = 0.3,
