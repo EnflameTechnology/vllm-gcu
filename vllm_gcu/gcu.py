@@ -18,7 +18,6 @@ from vllm.platforms.interface import (
     PlatformEnum,
 )
 
-
 class AdditionalConfig(dict, SupportsHash):
     def compute_hash(self) -> str:
         return str(hash(frozenset(self.items())))
@@ -256,7 +255,6 @@ class GCUPlatform(Platform):
             model_config.enable_sleep_mode = False
 
         if vllm_config.additional_config is None:
-
             vllm_config.additional_config = AdditionalConfig({})
 
         vllm_config.additional_config.update({"all_dp_in_decode": False})

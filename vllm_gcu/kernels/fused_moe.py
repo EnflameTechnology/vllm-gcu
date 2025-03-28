@@ -302,6 +302,7 @@ def fused_experts_impl(
     block_shape: Optional[List[int]] = None,
     shared_experts=None,
     routed_scaling_factor=None,
+    log2phy=None
 ):
     from vllm.distributed import get_world_group
 
@@ -345,11 +346,17 @@ def fused_experts_impl(
             send_token_total = torch.empty(
                 [1], dtype=torch.int32, device=topk_ids.device
             )
+
+            if log2phy is not None:
+                mapped_topk_ids = log2phy[topk_ids]
+            else:
+                mapped_topk_ids = topk_ids
+
             ops.get_ep_indices(
                 ep_split_size,
                 ep_token_indices,
                 send_token_total,
-                topk_ids,
+                mapped_topk_ids,
                 expert_per_rank,
                 ep_size,
             )
@@ -369,6 +376,7 @@ def fused_experts_impl(
             ),
             dim=1,
         )
+
         if hidden_states.numel() == 0:
             send_packed_sorted = torch.empty(
                 [1, send_packed.shape[-1]],
@@ -382,6 +390,7 @@ def fused_experts_impl(
             # send_packed_sorted = send_packed[ep_token_indices.to(torch.int64)]
         if shared_experts is not None:
             shared_output = shared_experts(hidden_states_ori)
+
         if all_dp_in_decode:
             padded_recv_len = scheduler_config.max_num_seqs
             if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
@@ -451,6 +460,7 @@ def fused_experts_impl(
             dtype=hidden_states.dtype,
             device=hidden_states.device,
         )
+
         torch.ops._C.dynamic_split(
             [hidden_states, topk_ids_, topk_weights_],
             recv_packed,
