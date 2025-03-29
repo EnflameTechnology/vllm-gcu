@@ -293,6 +293,8 @@ def fused_experts_impl(
     a1_scale: Optional[torch.Tensor] = None,
     a2_scale: Optional[torch.Tensor] = None,
     block_shape: Optional[List[int]] = None,
+    shared_experts = None,
+    routed_scaling_factor = None,
 ):
     from vllm.distributed import get_world_group
 
@@ -302,7 +304,11 @@ def fused_experts_impl(
 
     parallel_config = get_current_vllm_config().parallel_config
     scheduler_config = get_current_vllm_config().scheduler_config
+    if shared_experts is not None:
+        assert parallel_config.enable_expert_parallel
+        assert routed_scaling_factor is not None
     recv_token_total = None
+    shared_output = None
     if parallel_config.enable_expert_parallel:
         all_dp_in_decode = get_current_vllm_config().additional_config[
             "all_dp_in_decode"
@@ -367,6 +373,8 @@ def fused_experts_impl(
                 send_packed, [ep_token_indices]
             )
             # send_packed_sorted = send_packed[ep_token_indices.to(torch.int64)]
+        if shared_experts is not None:
+            shared_output = shared_experts(hidden_states_ori)
         if all_dp_in_decode:
             padded_recv_len = scheduler_config.max_num_seqs
             if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
@@ -642,17 +650,25 @@ def fused_experts_impl(
                 group=group,
             )
 
-        if inplace:
-            output = hidden_states_ori
-            output.fill_(0)
+        if shared_output is not None:
+            if inplace:
+                output = hidden_states_ori
+                output.copy_(shared_output)
+            else:
+                output = shared_output
         else:
-            output = torch.zeros_like(hidden_states_ori)
-
+            routed_scaling_factor = 1.0
+            if inplace:
+                output = hidden_states_ori
+                output.fill_(0)
+            else:
+                output = torch.zeros_like(hidden_states_ori)
         if hidden_states_ori.numel() != 0:
             output.index_add_(
                 0,
                 ep_token_indices,
                 sp_hidden_states,
+                alpha=routed_scaling_factor,
             )
         return output
     else:
