@@ -1531,3 +1531,64 @@ python3 -m vllm_utils.benchmark_serving \
 *  本模型支持的`max-model-len`为32768；
 *  `input-len`、`output-len`和`num-prompts`可按需调整；
 *  配置 `output-len`为1时,输出内容中的`latency`即为time_to_first_token_latency;
+
+### Qwen2.5-Coder-32B-Instruct
+#### 模型下载
+*  url: [Qwen2.5-Coder-32B-Instruct](https://www.modelscope.cn/models/Qwen/Qwen2.5-Coder-32B-Instruct/files)
+
+*  branch: `master`
+
+*  commit id: `19b16075`
+
+将上述url设定的路径下的内容全部下载到`Qwen2.5-Coder-32B-Instruct`文件夹中。
+
+#### 批量离线推理
+```shell
+ python3.10 -m vllm_utils.benchmark_test \
+ --perf \
+ --model=[path of Qwen2.5-coder-32b-instruct] \
+ --tensor-parallel-size 8 \
+ --max-model-len=32768 \
+ --input-len=1024 \
+ --output-len=1024 \
+ --dtype=bfloat16 \
+ --device gcu \
+ --num-prompts 1 \
+ --block-size=64 \
+ --gpu-memory-utilization 0.9 \
+ --trust-remote-code
+```
+
+#### serving模式
+
+```shell
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+# 启动服务端
+python3 -m vllm.entrypoints.openai.api_server \
+ --model [path of Qwen2.5-coder-32b-instruct] \
+ --tensor-parallel-size 1 \
+ --max-seq-len-to-capture=32768 \
+ --max-model-len 32768 \
+ --disable-log-requests \
+ --block-size=64 \
+ --dtype=bfloat16 \
+ --device gcu
+
+
+# 启动客户端
+python3 -m vllm_utils.benchmark_serving \
+ --backend vllm \
+ --dataset-name random \
+ --model [path of Qwen2.5-coder-32b-instruct] \
+ --num-prompts 1 \
+ --random-input-len 1024 \
+ --random-output-len 1024 \
+ --trust-remote-code \
+ --ignore_eos \
+ --strict-in-out-len \
+ --keep-special-tokens
+```
+注：
+*  本模型支持的`max-model-len`为32768；
+*  `input-len`、`output-len`和`num-prompts`可按需调整；
+*  配置 `output-len`为1时,输出内容中的`latency`即为time_to_first_token_latency;
