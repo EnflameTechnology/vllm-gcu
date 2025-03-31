@@ -48,6 +48,7 @@ pdf_filename = 'vLLM-gcu用户使用手册.tex'  # 填写导出的pdf的tex文�
 
 extensions = ['myst_parser']
 source_suffix = ['.rst', '.md']
+smartquotes = False
 # extensions = [
 #  'sphinx.ext.autodoc',
 #  'sphinx_markdown_tables',
