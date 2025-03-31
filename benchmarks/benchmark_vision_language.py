@@ -145,10 +145,12 @@ def vllm_perf(
     if decode_elapsed_time is None:
         print("decode elapsed time is not recorded as set `--disable_log_stats`")
         decode_latency_per_token = None
+        decode_throughput = None
     else:
         decode_latency_per_token = (
             f"{decode_elapsed_time / total_decode_tokens * 1000:.2f} ms"
         )
+        decode_throughput = f"{total_decode_tokens / decode_elapsed_time :.2f} tokens/s"
 
     perf_info = dict(
         total_output_tokens=total_output_tokens,
@@ -158,6 +160,7 @@ def vllm_perf(
         token_per_second=f"{total_output_tokens / elapsed_time:.2f} tokens/s",
         prefill_latency_per_token=f"{prefill_latency_per_token * 1000:.2f} ms",
         decode_latency_per_token=decode_latency_per_token,
+        decode_throughput=decode_throughput,
     )
 
     return perf_info
