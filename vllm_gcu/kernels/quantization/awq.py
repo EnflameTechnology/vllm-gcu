@@ -81,25 +81,13 @@ class AWQGCULinearMethod(AWQLinearMethod):
         layer.qzeros = torch.nn.Parameter(layer.qzeros.data, requires_grad=False)
         layer.scales = torch.nn.Parameter(layer.scales.data, requires_grad=False)
 
-        # from vllm.config import get_current_vllm_config
-        # import vllm_gcu.envs as gcu_envs
-        # model_config = get_current_vllm_config().model_config
-        # parallel_config = get_current_vllm_config().parallel_config
-
-        # if model_config.hf_text_config.model_type in ('deepseek_v2', 'deepseek_v3', 'deepseek_mtp') \
-        #         and parallel_config.enable_expert_parallel:
-        #     zeros_in_int8 = True
-        # else:
-        #     zeros_in_int8 = False
-        zeros_in_int8 = False
-
         qweight, qzeros = rearrange_uint4_int32_uint8_awq(
             self,
             qweight=layer.qweight.cpu(),
             qzeros=layer.qzeros.cpu(),
             scales=layer.scales.cpu(),
             rearrange_group=128,
-            zeros_in_int8=zeros_in_int8,
+            zeros_in_int8=True,
         )
         if layer.qweight.nbytes == qweight.nbytes:
             layer.qweight.data = layer.qweight.data.view(qweight.dtype).reshape(
