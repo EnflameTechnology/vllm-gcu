@@ -3,12 +3,14 @@
 from typing import Any, Dict, List, Optional, Type
 
 import torch
+import itertools
 
 from vllm.attention.backends.abstract import AttentionType
 from vllm.attention.backends.mla.common import (
     MLACommonBackend,
     MLACommonImpl,
     MLACommonMetadata,
+    MLACommonMetadataBuilder,
 )
 
 import vllm_gcu.kernels._custom_ops as ops
@@ -22,6 +24,10 @@ class GCUMLABackend(MLACommonBackend):
     @staticmethod
     def get_impl_cls() -> Type["GCUMLAImpl"]:
         return GCUMLAImpl
+
+    @staticmethod
+    def get_builder_cls() -> Type["MLACommonMetadataBuilder"]:
+        return GCUMLACommonMetadataBuilder
 
     @staticmethod
     def swap_blocks(
@@ -38,6 +44,14 @@ class GCUMLABackend(MLACommonBackend):
     ) -> None:
         # ops.copy_blocks_mla(kv_caches, src_to_dists)
         raise NotImplementedError
+
+class GCUMLACommonMetadataBuilder(MLACommonMetadataBuilder):
+    def build(self, seq_lens: List[int], query_lens: List[int],
+              cuda_graph_pad_size: int, batch_size: int):
+        use_captured_graph = cuda_graph_pad_size != -1
+        if use_captured_graph:
+            self.input_positions.extend(itertools.repeat(0, cuda_graph_pad_size))
+        return super().build(seq_lens, query_lens, cuda_graph_pad_size, batch_size)
 
 
 class GCUMLAImpl(MLACommonImpl[MLACommonMetadata]):
