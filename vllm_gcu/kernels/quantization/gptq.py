@@ -88,7 +88,6 @@ class GPTQGCUConfig(GPTQConfig):
         if (
             "quant_method" in hf_quant_cfg
             and hf_quant_cfg["quant_method"] == "gptq"
-            and user_quant == "gptq"
         ):
             return cls.get_name()
         return None

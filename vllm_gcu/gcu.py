@@ -175,6 +175,8 @@ class GCUPlatform(Platform):
             and parallel_config.world_size > 1
         ):
             # force spawn multiprocessing method as others not support
+            import os
+            os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
             envs.VLLM_WORKER_MULTIPROC_METHOD = "spawn"
 
         if cache_config and cache_config.block_size is None:
