@@ -15,3 +15,7 @@ modules:
       - .*
     exclude:
       - *default_exclude
+      - docs_gcu/.*
+  - name: "doc_build"
+    match:
+      - docs_gcu/.*
