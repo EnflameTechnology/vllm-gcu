@@ -1566,7 +1566,7 @@ export VLLM_WORKER_MULTIPROC_METHOD=spawn
 # 启动服务端
 python3 -m vllm.entrypoints.openai.api_server \
  --model [path of Qwen2.5-coder-32b-instruct] \
- --tensor-parallel-size 1 \
+ --tensor-parallel-size 8 \
  --max-seq-len-to-capture=32768 \
  --max-model-len 32768 \
  --disable-log-requests \
