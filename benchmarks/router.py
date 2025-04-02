@@ -38,35 +38,37 @@ async def send_idle_request(url, model):
                         chunk_bytes = chunk_bytes.strip()
                         if not chunk_bytes:
                             continue
-
-                    return url
         except Exception:
-            return url
+            pass
+        return url
 
 
 class RoundRobinProxy:
     def __init__(
         self, server_urls: List[str], model: str
     ):
-        self.server_cycle = itertools.cycle(server_urls)
+        self.server_urls = server_urls
         self.active_idle_loop = asyncio.Event()
-        self.requests = 0
+        self.active_counts = [0] * len(server_urls)
         self.lock = asyncio.Lock()
 
         asyncio.create_task(self.idle_loop(server_urls, model))
 
     async def increment(self):
         async with self.lock:
-            self.requests += 1
-            if self.requests == 1:
+            min_active = min(self.active_counts)
+            server_id = self.active_counts.index(min_active)
+            self.active_counts[server_id] += 1
+            if sum(self.active_counts) == 1:
                 self.active_idle_loop.set()
+            return server_id
 
-    async def decrement(self):
+    async def decrement(self, server_id):
         async with self.lock:
-            if self.requests > 0:
-                self.requests -= 1
+            if self.active_counts[server_id] > 0:
+                self.active_counts[server_id] -= 1
 
-            if self.requests == 0:
+            if sum(self.active_counts) == 0:
                 self.active_idle_loop.clear()
 
     async def idle_loop(
@@ -81,7 +83,7 @@ class RoundRobinProxy:
                 for url in server_urls
             ]
 
-            while self.requests > 0:
+            while sum(self.active_counts) > 0:
                 done, _ = await asyncio.wait(
                     idle_tasks, return_when=asyncio.FIRST_COMPLETED
                 )
@@ -99,9 +101,8 @@ class RoundRobinProxy:
             logger.debug("Kill idle request.")
 
     async def handle_request(self, request):
-        target_url = f"{next(self.server_cycle)}{request.path_qs}"
-
-        await self.increment()
+        server_id = await self.increment()
+        target_url = f"{self.server_urls[server_id]}{request.path_qs}"
 
         async with aiohttp.ClientSession(trust_env=True,
                                          timeout=ClientTimeout(total=6*60*60)) as session:
@@ -130,7 +131,7 @@ class RoundRobinProxy:
             except Exception as e:
                 return web.Response(text=f"Error: {str(e)}", status=500)
             finally:
-                await self.decrement()
+                await self.decrement(server_id)
 
 
 async def router(args: Namespace):
