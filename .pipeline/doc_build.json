@@ -1,0 +1,26 @@
+{
+    "units": [
+        {
+            "name": "pdf",
+            "source": "docs_gcu",
+            "command": "make host-html && make latexpdf -C content",
+            "publish": [
+                {
+                    "from": "docs_gcu/content/build/latex/*.pdf",
+                    "to": "pdf/"
+                }
+            ]
+        },
+        {
+            "name": "html",
+            "source": "docs_gcu/content/source",
+            "command": "sphinx-build ./ _build",
+            "publish": [
+                {
+                    "from": "docs_gcu/content/source/_build",
+                    "to": "html/"
+                }
+            ]
+        }
+    ]
+}
