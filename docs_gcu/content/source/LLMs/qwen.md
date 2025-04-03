@@ -1545,11 +1545,10 @@ python3 -m vllm_utils.benchmark_serving \
 #### 批量离线推理
 ```shell
  python3.10 -m vllm_utils.benchmark_test \
- --perf \
  --model=[path of Qwen2.5-coder-32b-instruct] \
+ --demo=te \
  --tensor-parallel-size 8 \
  --max-model-len=32768 \
- --input-len=1024 \
  --output-len=1024 \
  --dtype=bfloat16 \
  --device gcu \
@@ -1559,34 +1558,22 @@ python3 -m vllm_utils.benchmark_serving \
  --trust-remote-code
 ```
 
-#### serving模式
-
+#### 性能测试
 ```shell
-export VLLM_WORKER_MULTIPROC_METHOD=spawn
-# 启动服务端
-python3 -m vllm.entrypoints.openai.api_server \
- --model [path of Qwen2.5-coder-32b-instruct] \
+ python3.10 -m vllm_utils.benchmark_test \
+ --perf \
+ --model=[path of Qwen2.5-coder-32b-instruct] \
  --tensor-parallel-size 8 \
- --max-seq-len-to-capture=32768 \
- --max-model-len 32768 \
- --disable-log-requests \
- --block-size=64 \
+ --max-model-len=32768 \
+ --input-len=9216 \
+ --output-len=9216 \
  --dtype=bfloat16 \
- --device gcu
-
-
-# 启动客户端
-python3 -m vllm_utils.benchmark_serving \
- --backend vllm \
- --dataset-name random \
- --model [path of Qwen2.5-coder-32b-instruct] \
+ --device gcu \
  --num-prompts 1 \
- --random-input-len 1024 \
- --random-output-len 1024 \
- --trust-remote-code \
- --ignore_eos \
- --strict-in-out-len \
- --keep-special-tokens
+ --block-size=64 \
+ --gpu-memory-utilization 0.9 \
+ --trust-remote-code
+
 ```
 注：
 *  本模型支持的`max-model-len`为32768；
