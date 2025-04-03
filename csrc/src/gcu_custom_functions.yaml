@@ -67,34 +67,34 @@
 - func: fused_add_rms_norm_quant(Tensor(a!) output, Tensor input, Tensor residual, Tensor weight, float epsilon, Tensor scaling) -> ()
   variants: function
 
-- func: gelu_tanh_quant(Tensor(a!) out, Tensor in, Tensor scale) -> ()
+- func: gelu_tanh_quant(Tensor(a!) out, Tensor input, Tensor scale) -> ()
   variants: function
 
-- func: gelu_quant(Tensor(a!) out, Tensor in, Tensor scale) -> ()
+- func: gelu_quant(Tensor(a!) out, Tensor input, Tensor scale) -> ()
   variants: function
 
-- func: gelu_new_quant(Tensor(a!) out, Tensor in, Tensor scale) -> ()
+- func: gelu_new_quant(Tensor(a!) out, Tensor input, Tensor scale) -> ()
   variants: function
 
-- func: silu_quant(Tensor(a!) out, Tensor in, Tensor scale) -> ()
+- func: silu_quant(Tensor(a!) out, Tensor input, Tensor scale) -> ()
   variants: function
 
-- func: gelu_fast_quant(Tensor(a!) out, Tensor in, Tensor scale) -> ()
+- func: gelu_fast_quant(Tensor(a!) out, Tensor input, Tensor scale) -> ()
   variants: function
 
-- func: gelu_tanh_asym_quant(Tensor(a!) out, Tensor in, Tensor scale, Tensor qzero) -> ()
+- func: gelu_tanh_asym_quant(Tensor(a!) out, Tensor input, Tensor scale, Tensor qzero) -> ()
   variants: function
 
-- func: gelu_asym_quant(Tensor(a!) out, Tensor in, Tensor scale, Tensor qzero) -> ()
+- func: gelu_asym_quant(Tensor(a!) out, Tensor input, Tensor scale, Tensor qzero) -> ()
   variants: function
 
-- func: gelu_new_asym_quant(Tensor(a!) out, Tensor in, Tensor scale, Tensor qzero) -> ()
+- func: gelu_new_asym_quant(Tensor(a!) out, Tensor input, Tensor scale, Tensor qzero) -> ()
   variants: function
 
-- func: silu_asym_quant(Tensor(a!) out, Tensor in, Tensor scale, Tensor qzero) -> ()
+- func: silu_asym_quant(Tensor(a!) out, Tensor input, Tensor scale, Tensor qzero) -> ()
   variants: function
 
-- func: gelu_fast_asym_quant(Tensor(a!) out, Tensor in, Tensor scale, Tensor qzero) -> ()
+- func: gelu_fast_asym_quant(Tensor(a!) out, Tensor input, Tensor scale, Tensor qzero) -> ()
   variants: function
 
 - func: static_scaled_int8_quant(Tensor(a!) output, Tensor input, Tensor scales, Tensor? azp) -> ()
@@ -109,13 +109,13 @@
 - func: static_scaled_int8_asym_dequant(Tensor(a!) output, Tensor input, Tensor scales, Tensor qzeros) -> ()
   variants: function
 
-- func: silu_mul_quant(Tensor(a!) out, Tensor in, Tensor scaling) -> ()
+- func: silu_mul_quant(Tensor(a!) out, Tensor input, Tensor scaling) -> ()
   variants: function
 
-- func: gelu_mul_quant(Tensor(a!) out, Tensor in, Tensor scaling) -> ()
+- func: gelu_mul_quant(Tensor(a!) out, Tensor input, Tensor scaling) -> ()
   variants: function
 
-- func: gelu_tanh_mul_quant(Tensor(a!) out, Tensor in, Tensor scaling) -> ()
+- func: gelu_tanh_mul_quant(Tensor(a!) out, Tensor input, Tensor scaling) -> ()
   variants: function
 
 - func: layer_norm_quant(Tensor(a!) output, Tensor input, Tensor scaling, int[] normalized_shape, Tensor? weight, Tensor? bias, float epsilon) -> ()
