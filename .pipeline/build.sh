@@ -7,6 +7,7 @@ BUILD_ROOT_DIR=`pwd`
 function arm_normal_build() {
   echo "Current build job: $FUNCNAME"
   echo `pwd`
+  sudo python3.12 -m pip install torch==2.5.1
   cmake ${project_name} --preset ci_all -B cmake_build
   cd cmake_build
   ninja -j${cpu_count} install
@@ -16,9 +17,10 @@ function arm_normal_build() {
 
 function x86_normal_build() {
   
-  sudo python3.10 -m pip install --index-url http://artifact.enflame.cn/artifactory/api/pypi/pypi-remote/simple --trusted-host artifact.enflame.cn torch==2.5.1 patch pyyaml packaging numpy==1.22.4
+  sudo python3.12 -m pip install --index-url http://artifact.enflame.cn/artifactory/api/pypi/pypi-remote/simple --trusted-host artifact.enflame.cn patch pyyaml packaging
   echo "Current build job: $FUNCNAME"
   echo `pwd`
+  sudo python3.12 -m pip install torch==2.6.0+cpu --index-url http://data-oceanus.enflame.cn/artifactory/api/pypi/pypi_virtual/simple --trusted-host data-oceanus.enflame.cn
   cmake ${project_name} --preset ci_all -B cmake_build
   cd cmake_build
   ninja -j${cpu_count} install
