@@ -9,13 +9,13 @@
 #include "torch_gcu.h"
 
 namespace vllm_gcu::llm_ops {
-void gelu_asym_quant(at::Tensor& out, const at::Tensor& in,
+void gelu_asym_quant(at::Tensor& out, const at::Tensor& input,
                      const at::Tensor& scale, const at::Tensor& qzero) {
   const torch_gcu::OptionalGCUGuard device_guard(device_of(out));
   const topsStream_t stream = torch_gcu::getCurrentGCUStream();
 
   ATEN_ATENOP_CHECK(ATEN_ATENOP_CALL(topsvllm::topsvllmGeluAsymQuant)(
-      out, in, scale, qzero, stream));
+      out, input, scale, qzero, stream));
 }
 
 }  // namespace vllm_gcu::llm_ops
