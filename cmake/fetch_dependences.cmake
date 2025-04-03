@@ -143,20 +143,11 @@ include(caps_binary)
 set(TOPSRT_HOME "${runtime_install_usr_dir_for_run}")
 message(STATUS "TOPSRT_HOME : ${TOPSRT_HOME}")
 
-set(BUILD_TORCH_VERSION "2.5.1")
-# ######################################################
-# ###################  TOPS_EXTENSION  #########################
-# ######################################################
-
-set(TOPS_EXTENSION_PATH ${MODULE_PACKAGE_PATH}/tops_extension)
-set(TOPS_EXTENSION_COMMITID 9c681c6)
-set(TOPS_EXTENSION_BRANCH master)
-set(TOPS_EXTENSION_DAILY_TAG 3.2.20250506)
-set(TOPS_EXTENSION_PY_VER 310)
-set(TOPS_EXTENSION_SEMI_NAME "")
-
-unset(TOPS_EXTENSION_LINK)
-set(tops_extension_link "${TOPS_EXTENSION_COMMITID}/tops_extension${TOPS_EXTENSION_SEMI_NAME}-${TOPS_EXTENSION_DAILY_TAG}+torch.${BUILD_TORCH_VERSION}-cp${TOPS_EXTENSION_PY_VER}-cp${TOPS_EXTENSION_PY_VER}-linux_${CMAKE_SYSTEM_PROCESSOR}.whl")
+if( ${CMAKE_SYSTEM_PROCESSOR} STREQUAL "x86_64")
+    set(BUILD_TORCH_VERSION "2.6.0")
+else()
+    set(BUILD_TORCH_VERSION "2.5.1")
+endif()
 
 set(CMAKE_FPKG_PYTHON_PACKAGES python_packages)
 set(CMAKE_FPKG_LIBDIR lib)
@@ -168,25 +159,40 @@ set(PACKAGE_PYTHON_CMDS "mkdir -p ${CMAKE_FPKG_PYTHON_PACKAGES}; mv /FILE/ -t ${
 set(PACKAGE_PYTHON_FILES "${CMAKE_FPKG_PYTHON_PACKAGES}//FILE/")
 set(PACKAGE_LIB_CMDS "mkdir -p ${CMAKE_FPKG_LIBDIR}; mv /FILE/ -t ${CMAKE_FPKG_LIBDIR}")
 set(PACKAGE_LIB_FILES "${CMAKE_FPKG_LIBDIR}//FILE/")
+# ######################################################
+# ###################  TOPS_EXTENSION  #################
+# ######################################################
+set(TOPS_EXTENSION_PATH ${MODULE_PACKAGE_PATH}/tops_extension)
+set(TOPS_EXTENSION_COMMITID 886d6d6)
+set(TOPS_EXTENSION_BRANCH master)
+set(TOPS_EXTENSION_DAILY_TAG 3.2.20250507)
+set(TOPS_EXTENSION_PY_VERS 310 312)
+set(TOPS_EXTENSION_SEMI_NAME "")
+foreach(TOPS_EXTENSION_PY_VER IN LISTS TOPS_EXTENSION_PY_VERS)
+    unset(TOPS_EXTENSION_${TOPS_EXTENSION_PY_VER}_LINK)
+    set(tops_extension_${TOPS_EXTENSION_PY_VER}_link "${TOPS_EXTENSION_COMMITID}/tops_extension${TOPS_EXTENSION_SEMI_NAME}-${TOPS_EXTENSION_DAILY_TAG}+torch.${BUILD_TORCH_VERSION}-cp${TOPS_EXTENSION_PY_VER}-cp${TOPS_EXTENSION_PY_VER}-linux_${CMAKE_SYSTEM_PROCESSOR}.whl")
 
-if(NOT PROJECT_GIT_URL)
-    fetchFromArtifactory(tops_extension_whl
-        FILE ${TOPS_EXTENSION_PATH}/${tops_extension_link}
-        PKG_COMMNAD ${PACKAGE_PYTHON_CMDS}
-        PKG_FILES ${PACKAGE_PYTHON_FILES}
-        BRANCH ${TOPS_EXTENSION_BRANCH}
-        VERSION ${TOPS_EXTENSION_TORCH_DAILY_TAG}
-    )
-else()
-    set(tops_extension_git_name "tops_extension_binary")
-    download_tx_whl(${tops_extension_git_name} ${tops_extension_link})
-    set(tops_extension_whl_FILE ${CMAKE_CURRENT_BINARY_DIR}/${tops_extension_git_name}/${tops_extension_link})
-    if (tops_extension_whl_FILE MATCHES "_cape")
-        string(REGEX REPLACE "_cape" "" tops_extension_whl_FILE "${tops_extension_whl_FILE}")
+    if(NOT PROJECT_GIT_URL)
+        fetchFromArtifactory(tops_extension_${TOPS_EXTENSION_PY_VER}_whl
+            FILE ${TOPS_EXTENSION_PATH}/${tops_extension_${TOPS_EXTENSION_PY_VER}_link}
+            PKG_COMMNAD ${PACKAGE_PYTHON_CMDS}
+            PKG_FILES ${PACKAGE_PYTHON_FILES}
+            BRANCH ${TOPS_EXTENSION_BRANCH}
+            VERSION ${TOPS_EXTENSION_TORCH_DAILY_TAG}
+        )
+    else()
+        set(tops_extension_git_name "tops_extension_binary")
+        download_tx_whl(${tops_extension_git_name} ${tops_extension_312_link})
+        set(tops_extension_312_whl_FILE ${CMAKE_CURRENT_BINARY_DIR}/${tops_extension_git_name}/${tops_extension_312_link})
+        if (tops_extension_312_whl_FILE MATCHES "_cape")
+            string(REGEX REPLACE "_cape" "" tops_extension_312_whl_FILE "${tops_extension_312_whl_FILE}")
+        endif()
+        set(tops_extension_312_whl_SOURCE_DIR ${CMAKE_CURRENT_BINARY_DIR}/${tops_extension_git_name})
     endif()
-    set(tops_extension_whl_SOURCE_DIR ${CMAKE_CURRENT_BINARY_DIR}/${tops_extension_git_name})
-endif()
-
+endforeach()
+# ######################################################
+# ###################  TOPSATEN  #######################
+# ######################################################
 set(TOPSOP_PATH module_package/topsop)
 set(TOPSOP_DOWN_MODE FILE)
 set(TOPSOP_SEMI_NAME "")
@@ -240,85 +246,95 @@ endif()
 ####################################################
 
 set(TORCH_GCU_PATH ${MODULE_PACKAGE_PATH}/torch_gcu)
-set(TORCH_GCU_COMMITID dc3a3ed)
+if( ${CMAKE_SYSTEM_PROCESSOR} STREQUAL "x86_64")
+    set(TORCH_GCU_COMMITID cc098a8)
+    set(TORCH_GCU_DAILY_TAG 2.6.0+3.4.0.31)
+else()
+    set(TORCH_GCU_COMMITID 0f60b92)
+    set(TORCH_GCU_DAILY_TAG 2.5.1+3.4.0.7)
+endif()
 set(TORCH_GCU_BRANCH 2.x)
-set(TORCH_GCU_DAILY_TAG 3.3.1.1)
-set(TORCH_GCU_PY_VER 310)
+set(TORCH_GCU_PY_VERS 310 312)
 
 # set(TORCH_GCU_XNAS_LINK "http://10.12.110.200:8080/release/torch-gcu-release/57/integration/efda744/")
-
-unset(TORCH_GCU_LINK)
-if(TORCH_GCU_XNAS_LINK)
-    link_pattern_var("${TORCH_GCU_XNAS_LINK}"
-        VARS
-            TORCH_GCU_LINK
-        PATTERNS
-            "torch_gcu-${BUILD_TORCH_VERSION}.*-cp${TORCH_GCU_PY_VER}-cp${TORCH_GCU_PY_VER}-linux_${CMAKE_SYSTEM_PROCESSOR}.whl"
-    )
-    message(STATUS "TORCH_GCU_LINK: ${TORCH_GCU_LINK}")
-    if(NOT TORCH_GCU_LINK)
-        message(WARNING "Can not find some links from ${TORCH_GCU_XNAS_LINK}")
+foreach(TORCH_GCU_PY_VER IN LISTS TORCH_GCU_PY_VERS)
+    unset(TORCH_GCU_${TORCH_GCU_PY_VER}_LINK)
+    if(TORCH_GCU_XNAS_LINK)
+        link_pattern_var("${TORCH_GCU_XNAS_LINK}"
+            VARS
+                TORCH_GCU_${TORCH_GCU_PY_VER}_LINK
+            PATTERNS
+                "torch_gcu-${BUILD_TORCH_VERSION}.*-cp${TORCH_GCU_PY_VER}-cp${TORCH_GCU_PY_VER}-linux_${CMAKE_SYSTEM_PROCESSOR}.whl"
+        )
+        message(STATUS "TORCH_GCU_${TORCH_GCU_PY_VER}_LINK: ${TORCH_GCU_${TORCH_GCU_PY_VER}_LINK}")
+        if(NOT TORCH_GCU_${TORCH_GCU_PY_VER}_LINK)
+            message(WARNING "Can not find some links from ${TORCH_GCU_XNAS_LINK}")
+        endif()
     endif()
-endif()
-set(torch_gcu_link "${TORCH_GCU_COMMITID}/torch_gcu-${BUILD_TORCH_VERSION}+${TORCH_GCU_DAILY_TAG}-cp${TORCH_GCU_PY_VER}-cp${TORCH_GCU_PY_VER}-linux_${CMAKE_SYSTEM_PROCESSOR}.whl")
-if(NOT TORCH_GCU_LINK)
-    set(TORCH_GCU_LINK ${TORCH_GCU_PATH}/${torch_gcu_link})
-endif()
-if(NOT PROJECT_GIT_URL)
-    fetchFromArtifactory(torch_gcu_whl
-        FILE ${TORCH_GCU_LINK}
-        PKG_COMMAND ${PACKAGE_PYTHON_CMDS}
-        PKG_FILES ${PACKAGE_PYTHON_FILES}
-        BRANCH ${TORCH_GCU_BRANCH}
-        VERSION ${TORCH_GCU_DAILY_TAG}
-        EXTRACT ON
-    )
-else()
-    set(torch_gcu_git_name "torch_gcu_binary")
+    set(torch_gcu_${TORCH_GCU_PY_VER}_link "${TORCH_GCU_COMMITID}/torch_gcu-${TORCH_GCU_DAILY_TAG}-cp${TORCH_GCU_PY_VER}-cp${TORCH_GCU_PY_VER}-linux_${CMAKE_SYSTEM_PROCESSOR}.whl")
+    if(NOT TORCH_GCU_${TORCH_GCU_PY_VER}_LINK)
+        set(TORCH_GCU_${TORCH_GCU_PY_VER}_LINK ${TORCH_GCU_PATH}/${torch_gcu_${TORCH_GCU_PY_VER}_link})
+    endif()
+    if(NOT PROJECT_GIT_URL)
+        fetchFromArtifactory(torch_gcu_${TORCH_GCU_PY_VER}_whl
+            FILE ${TORCH_GCU_${TORCH_GCU_PY_VER}_LINK}
+            PKG_COMMAND ${PACKAGE_PYTHON_CMDS}
+            PKG_FILES ${PACKAGE_PYTHON_FILES}
+            BRANCH ${TORCH_GCU_BRANCH}
+            VERSION ${TORCH_GCU_DAILY_TAG}
+            EXTRACT ON
+        )
+    else()
+        set(torch_gcu_git_name "torch_gcu_binary")
 
-    download_tx_whl(${torch_gcu_git_name} ${torch_gcu_link})
+        download_tx_whl(${torch_gcu_git_name} ${torch_gcu_312_link})
 
-    set(torch_gcu_whl_FILE ${CMAKE_CURRENT_BINARY_DIR}/${torch_gcu_git_name}/${torch_gcu_link})
-    set(torch_gcu_whl_SOURCE_DIR ${CMAKE_CURRENT_BINARY_DIR}/${torch_gcu_git_name})
-endif()
+        set(torch_gcu_312_whl_FILE ${CMAKE_CURRENT_BINARY_DIR}/${torch_gcu_git_name}/${torch_gcu_312_link})
+        set(torch_gcu_312_whl_SOURCE_DIR ${CMAKE_CURRENT_BINARY_DIR}/${torch_gcu_git_name})
+    endif()
+endforeach()
+
 # ######################################################
-# ###################  XFORMERS  #########################
+# ###################  XFORMERS  #######################
 # ######################################################
-
+set(XFORMERS_TORCH_0.0.29.post2.2.6.0_COMMITID 0736a34)
 set(XFORMERS_PATH ${MODULE_PACKAGE_PATH}/xformers)
-set(XFORMERS_COMMITID fd7919b)
-set(XFORMERS_BRANCH 0.0.28.post3)
-set(XFORMERS_DAILY_TAG 0.0.28.post3+torch.2.5.1.gcu.3.2.20250317)
-set(XFORMERS_PY_VER 310)
+set(XFORMERS_COMMITID 0736a34)
+set(XFORMERS_BRANCH 0.0.29.post2)
+set(XFORMERS_DAILY_TAG 0.0.29.post2+torch.2.6.0.gcu.3.2.20250427)
+set(XFORMERS_PY_VERS 310 312)
 set(XFORMERS_SEMI_NAME "")
+if( ${CMAKE_SYSTEM_PROCESSOR} STREQUAL "x86_64")
+  foreach(XFORMERS_PY_VER IN LISTS XFORMERS_PY_VERS)
+      unset(XFORMERS_${XFORMERS_PY_VER}_LINK)
+      if(PREBUILD_XFORMERS_XNAS_BASE)
+          link_pattern_var("${PREBUILD_XFORMERS_XNAS_BASE}"
+              VARS
+                  XFORMERS_${XFORMERS_PY_VER}_LINK
+              PATTERNS
+                  "xformers-.*-cp${XFORMERS_PY_VER}-cp${XFORMERS_PY_VER}-linux_${CMAKE_SYSTEM_PROCESSOR}.whl"
+          )
+          message(STATUS "XFORMERS_${XFORMERS_PY_VER}_LINK: ${XFORMERS_${XFORMERS_PY_VER}_LINK}, XFORMERS_TEST_LINK: ${XFORMERS_TEST_LINK}")
+          if(NOT XFORMERS_${XFORMERS_PY_VER}_LINK)
+              message(WARNING "Can not find some links from ${PREBUILD_XFORMERS_XNAS_BASE}")
+          endif()
+      endif()
+      set(xformers_${XFORMERS_PY_VER}_link "${XFORMERS_COMMITID}/xformers${XFORMERS_SEMI_NAME}-${XFORMERS_DAILY_TAG}-cp${XFORMERS_PY_VER}-cp${XFORMERS_PY_VER}-linux_${CMAKE_SYSTEM_PROCESSOR}.whl")
+      if(NOT XFORMERS_${XFORMERS_PY_VER}_LINK)
+          set(XFORMERS_${XFORMERS_PY_VER}_LINK ${XFORMERS_PATH}/${xformers_${XFORMERS_PY_VER}_link})
+      endif()
 
-unset(XFORMERS_LINK)
-if(PREBUILD_XFORMERS_XNAS_BASE)
-    link_pattern_var("${PREBUILD_XFORMERS_XNAS_BASE}"
-        VARS
-            XFORMERS_LINK
-        PATTERNS
-            "xformers-.*-cp${XFORMERS_PY_VER}-cp${XFORMERS_PY_VER}-linux_${CMAKE_SYSTEM_PROCESSOR}.whl"
-    )
-    message(STATUS "XFORMERS_LINK: ${XFORMERS_LINK}, XFORMERS_TEST_LINK: ${XFORMERS_TEST_LINK}")
-    if(NOT XFORMERS_LINK)
-        message(WARNING "Can not find some links from ${PREBUILD_XFORMERS_XNAS_BASE}")
-    endif()
-endif()
-set(xformers_link "${XFORMERS_COMMITID}/xformers${XFORMERS_SEMI_NAME}-${XFORMERS_DAILY_TAG}-cp${XFORMERS_PY_VER}-cp${XFORMERS_PY_VER}-linux_${CMAKE_SYSTEM_PROCESSOR}.whl")
-if(NOT XFORMERS_LINK)
-    set(XFORMERS_LINK ${XFORMERS_PATH}/${xformers_link})
-endif()
-
-if (NOT PROJECT_GIT_URL)
-    fetchFromArtifactory(xformers_whl
-        FILE ${XFORMERS_LINK}
-        PKG_COMMNAD ${PACKAGE_PYTHON_CMDS}
-        PKG_FILES ${PACKAGE_PYTHON_FILES}
-        BRANCH ${XFORMERS_BRANCH}
-        VERSION ${XFORMERS_DAILY_TAG}
-        PKG_ONLY ON
-    )
-else()
-    message("--- don't download xformers for zx build---")
+      if (NOT PROJECT_GIT_URL)
+          fetchFromArtifactory(xformers_${XFORMERS_PY_VER}_whl
+              FILE ${XFORMERS_${XFORMERS_PY_VER}_LINK}
+              PKG_COMMNAD ${PACKAGE_PYTHON_CMDS}
+              PKG_FILES ${PACKAGE_PYTHON_FILES}
+              BRANCH ${XFORMERS_BRANCH}
+              VERSION ${XFORMERS_DAILY_TAG}
+              PKG_ONLY ON
+          )
+      else()
+          message("--- don't download xformers for zx build---")
+      endif()
+  endforeach()
 endif()
