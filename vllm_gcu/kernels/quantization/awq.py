@@ -52,6 +52,7 @@ class AWQGCUConfig(AWQConfig):
         if (
             "quant_method" in hf_quant_cfg
             and hf_quant_cfg["quant_method"] == "awq"
+            and user_quant in ["awq", "awq_gcu"]
         ):
             return cls.get_name()
         return None
