@@ -22,7 +22,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Inference-only DeepseekV2/DeepseekV3 model."""
-from typing import Any, Dict, Iterable, Optional, Set, Tuple, Union, Mapping
+from typing import Any, Dict, Iterable, Mapping, Optional, Set, Tuple, Union
 
 import numpy as np
 import torch
@@ -39,6 +39,7 @@ from vllm.distributed import (
 )
 
 from vllm.forward_context import get_forward_context
+from vllm.inputs import DummyData, INPUT_REGISTRY, InputContext
 from vllm.model_executor.layers.activation import SiluAndMul
 from vllm.model_executor.layers.fused_moe import FusedMoE
 from vllm.model_executor.layers.layernorm import RMSNorm
@@ -71,8 +72,6 @@ from vllm.model_executor.models.utils import (
 )
 from vllm.model_executor.sampling_metadata import SamplingMetadata
 from vllm.sequence import IntermediateTensors, SequenceData
-from vllm.inputs import (INPUT_REGISTRY, DecoderOnlyInputs, DummyData,
-                         InputContext)
 
 import vllm_gcu.envs as gcu_envs
 from vllm_gcu.kernels.linear import MergedReplicatedLinear
@@ -210,6 +209,7 @@ class DeepseekV2MoE(nn.Module):
                 hidden_act=config.hidden_act,
                 quant_config=quant_config,
                 reduce_results=False,
+                prefix=f"{prefix}.shared_experts",
             )
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
@@ -359,7 +359,6 @@ class DeepseekV2Attention(nn.Module):
         self,
         positions: torch.Tensor,
         hidden_states: torch.Tensor,
-        attn_metadata: AttentionMetadata,
     ) -> torch.Tensor:
         if self.q_lora_rank is not None:
             q = self.q_a_proj(hidden_states)[0]
@@ -398,7 +397,7 @@ class DeepseekV2Attention(nn.Module):
         v = torch.nn.functional.pad(
             v, [0, self.qk_head_dim - self.v_head_dim], value=0
         ).view(-1, self.num_local_heads * self.qk_head_dim)
-        attn_output = self.attn(q, k, v, attn_metadata)
+        attn_output = self.attn(q, k, v)
         attn_output = attn_output.view(-1, self.num_local_heads, self.qk_head_dim)[
             ..., : self.v_head_dim
         ].reshape(-1, self.num_local_heads * self.v_head_dim)
@@ -544,7 +543,6 @@ class DeepseekV2MLAAttention(nn.Module):
         self,
         positions: torch.Tensor,
         hidden_states: torch.Tensor,
-        attn_metadata: AttentionMetadata,
     ) -> torch.Tensor:
         if self.q_lora_rank is not None:
             ckq = self.q_a_proj(hidden_states)[0]
@@ -627,8 +625,8 @@ class DeepseekV2DecoderLayer(nn.Module):
         self,
         positions: torch.Tensor,
         hidden_states: torch.Tensor,
-        attn_metadata: AttentionMetadata,
         residual: Optional[torch.Tensor],
+        attn_metadata: Optional[AttentionMetadata],
     ) -> torch.Tensor:
         # Self Attention
 
@@ -661,7 +659,6 @@ class DeepseekV2DecoderLayer(nn.Module):
         hidden_states = self.self_attn(
             positions=positions,
             hidden_states=hidden_states,
-            attn_metadata=attn_metadata,
         )
 
         if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
@@ -699,7 +696,6 @@ class DeepseekV2Model(nn.Module):
         cache_config = vllm_config.cache_config
         quant_config = vllm_config.quant_config
 
-        self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
 
         if get_pp_group().is_first_rank:
@@ -760,8 +756,8 @@ class DeepseekV2Model(nn.Module):
             hidden_states, residual = layer(
                 positions,
                 hidden_states,
-                attn_metadata,
                 residual,
+                attn_metadata,
             )
 
         if not get_pp_group().is_last_rank:
@@ -778,12 +774,15 @@ class DeepseekV2Model(nn.Module):
                 hidden_states = hidden_states[:seqlen]
         return hidden_states
 
-def dummy_data_for_deepseek(ctx: InputContext, seq_len: int,
-                            mm_counts: Mapping[str, int]) -> DummyData:
+
+def dummy_data_for_deepseek(
+    ctx: InputContext, seq_len: int, mm_counts: Mapping[str, int]
+) -> DummyData:
     config = ctx.get_hf_config()
     seq = np.random.randint(0, config.vocab_size, size=seq_len).tolist()
     seq_data = SequenceData.from_seqs(seq)
     return DummyData(seq_data)
+
 
 @INPUT_REGISTRY.register_dummy_data(dummy_data_for_deepseek)
 class DeepseekV2ForCausalLM(nn.Module, SupportsPP):
