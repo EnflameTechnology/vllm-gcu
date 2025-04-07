@@ -68,6 +68,9 @@ class GPTQGCUConfig(GPTQConfig):
         desc_act = cls.get_from_keys(config, ["desc_act"])
         lm_head_quantized = cls.get_from_keys_or(config, ["lm_head"], default=False)
         static_groups = cls.get_from_keys_or(config, ["static_groups"], default=True)
+        meta = cls.get_from_keys_or(config, ["meta"], default=None)
+        if isinstance(meta, dict) and 'static_groups' in meta:
+            static_groups = meta['static_groups']
         dynamic = cls.get_from_keys_or(config, ["dynamic"], default={})
 
         return cls(
@@ -130,6 +133,9 @@ class GPTQGCULinearMethod(GPTQLinearMethod):
                 "weight shape. This can be caused by too large "
                 "tensor parallel size."
             )
+        if self.quant_config.group_size != -1 and self.quant_config.desc_act \
+                and (not self.quant_config.static_groups):
+            raise ValueError("GCU only supports g_idx is contiguous")
 
         if self.quant_config.group_size != -1:
             group_size = self.quant_config.group_size
@@ -143,7 +149,6 @@ class GPTQGCULinearMethod(GPTQLinearMethod):
             and self.quant_config.group_size != -1
         ):
             # For act-order models, we cannot use Exllama for row parallel layer
-            assert self.quant_config.desc_act or self.quant_config.static_groups
             if self.quant_config.weight_bits == 8:
                 scale_and_zero_size = input_size_per_partition // group_size
                 scale_and_zero_input_dim = 0
