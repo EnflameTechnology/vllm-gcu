@@ -30,7 +30,7 @@ function x86_normal_daily_build() {
   cmake ${project_name} --preset ci_all -B cmake_build
   cd cmake_build
   ninja -j${cpu_count} install
-  ninja -j${cpu_count} package_al
+  ninja -j${cpu_count} package_all
   epkg get -s buildtree --check-unique --check-missing normal_all_buildtree
 
 }
