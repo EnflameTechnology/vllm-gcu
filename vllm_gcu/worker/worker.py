@@ -94,6 +94,11 @@ class GCUWorker(Worker):
             self.distributed_init_method,
             self.local_rank,
         )
+        from datetime import timedelta
+        dp_group = get_dp_group()
+        # timedelta.max overflow chrono::milliseconds
+        dp_group.cpu_group = torch.distributed.new_group(dp_group.ranks, backend="gloo",
+                                                         timeout=timedelta(days=100*365))
         # Set random seed.
         set_random_seed(self.model_config.seed)
 
