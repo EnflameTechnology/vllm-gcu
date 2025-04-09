@@ -2,6 +2,7 @@
 
 import gc
 from typing import Optional, Tuple, Type
+from datetime import timedelta
 
 import torch
 import torch.distributed
@@ -214,6 +215,16 @@ def init_worker_distributed_environment(
 
     group = get_dp_group()
     group.device = torch.device(f"gcu:{group.local_rank}")
+
+    all_ranks = torch.arange(parallel_config.world_size_across_dp).reshape(parallel_config.data_parallel_size, -1)
+    group_ranks = all_ranks.transpose(0, 1).unbind(0)
+    rank_cpu_group = None
+    for ranks in group_ranks:
+        # timedelta.max overflow chrono::milliseconds
+        cpu_group = torch.distributed.new_group(ranks, backend="gloo", timeout=timedelta(days=100*365))
+        if group.rank in ranks:
+            rank_cpu_group = cpu_group
+    group.cpu_group = rank_cpu_group
 
     group = get_world_group()
     group.device = torch.device(f"gcu:{group.local_rank}")
