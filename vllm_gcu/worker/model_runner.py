@@ -333,13 +333,18 @@ class GCUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
         """
         self.builder.prepare(finished_requests_ids)
 
-        idle_seq_data = SequenceData(array(VLLM_TOKEN_ID_ARRAY_TYPE, []))
-        for seq_group_metadata in seq_group_metadata_list:
-            # handle idle seq
+        all_idle = [False] * len(seq_group_metadata_list)
+        for seq_id, seq_group_metadata in enumerate(seq_group_metadata_list):
             if (
                 seq_group_metadata.sampling_params.extra_args
                 and seq_group_metadata.sampling_params.extra_args.get("is_idle", None)
             ):
+                all_idle[seq_id] = True
+
+        idle_seq_data = SequenceData(array(VLLM_TOKEN_ID_ARRAY_TYPE, []))
+        for seq_group_metadata in seq_group_metadata_list:
+            if all(all_idle):
+                # handle all idle seqs
                 for k, _ in seq_group_metadata.seq_data.items():
                     seq_group_metadata.seq_data[k] = idle_seq_data
 
