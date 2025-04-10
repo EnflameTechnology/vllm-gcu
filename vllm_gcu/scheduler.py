@@ -11,6 +11,8 @@ from vllm.sequence import SequenceStatus
 
 
 class PriorityScheduler(Scheduler):
+    """priority scheduler for V0"""
+
     def _schedule_default(self) -> SchedulerOutputs:
         budget = SchedulingBudget(
             token_budget=self.scheduler_config.max_num_batched_tokens,
@@ -39,9 +41,6 @@ class PriorityScheduler(Scheduler):
                 budget, curr_loras, enable_chunking=False
             )
 
-        # if len(prefills.seq_groups
-        #        ) == 0 and self.scheduler_config.policy == "priority":
-        #     self._schedule_priority_preemption(budget)
         if self.scheduler_config.policy == "priority":
             self._schedule_priority_preemption(budget)
 
@@ -55,6 +54,18 @@ class PriorityScheduler(Scheduler):
                 < self._get_priority(seq_group.seq_group)[0]
             ):
                 # all decode reqs are prior to new prefill, add prefill to waiting
+                num_running_tokens_uncached, _ = (
+                    self._get_num_new_uncached_and_cached_tokens(
+                        seq_group.seq_group, SequenceStatus.RUNNING, False, budget
+                    )
+                )
+                budget.subtract_num_batched_tokens(
+                    seq_group.seq_group.request_id, num_running_tokens_uncached
+                )
+                num_running_seqs = seq_group.seq_group.get_max_num_running_seqs()
+                budget.subtract_num_seqs(
+                    seq_group.seq_group.request_id, num_running_seqs
+                )
                 seqs = seq_group.seq_group.get_seqs(status=SequenceStatus.RUNNING)
                 for seq in seqs:
                     seq.status = SequenceStatus.WAITING
