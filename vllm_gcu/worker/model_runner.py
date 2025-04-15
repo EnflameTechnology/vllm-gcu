@@ -263,20 +263,19 @@ class GCUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
             self.vllm_config.compilation_config.level == CompilationLevel.DYNAMO_AS_IS
             and supports_dynamo()
         ):
-            from vllm.compilation.backends import VllmBackend
-
-            from vllm_gcu.compilation.pass_manager import GCUPostGradPassManager
 
             backend = self.vllm_config.compilation_config.init_backend(self.vllm_config)
-            if isinstance(backend, VllmBackend):
-                backend.post_grad_pass_manager = (
-                    GCUPostGradPassManager()
-                )  # replace with gcu pass
+
+            if backend == "topsgraph":
+                options = {"full_graph_fallback_eager": False}
+            else:
+                options = {}
 
             self.model = torch.compile(
                 self.model,
                 fullgraph=envs.VLLM_TEST_DYNAMO_FULLGRAPH_CAPTURE,
                 backend=backend,
+                options=options,
             )
 
     def get_model(self) -> nn.Module:
