@@ -148,6 +148,7 @@ class GCUPlatform(Platform):
         scheduler_config = vllm_config.scheduler_config
         cache_config = vllm_config.cache_config
         model_config = vllm_config.model_config
+        compilation_config = vllm_config.compilation_config
 
         if parallel_config.worker_cls == "auto":
             if scheduler_config.is_multi_step:
@@ -192,6 +193,9 @@ class GCUPlatform(Platform):
             scheduler_config.scheduler_cls = (
                 "vllm_gcu.scheduler.PriorityScheduler"  # priority to preempt
             )
+
+        if compilation_config and compilation_config.level > 0:
+            compilation_config.backend = "topsgraph"
 
         if model_config:
             model_config.enable_sleep_mode = False
