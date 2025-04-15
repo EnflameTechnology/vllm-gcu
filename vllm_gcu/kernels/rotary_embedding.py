@@ -37,6 +37,9 @@ def forward_oot(
         # TODO(tianyu): remove hard code after op impl
         q_shape = None
         if query.ndim == 3:
+            query = query.clone()
+            key = key.clone()
+
             q_shape = query.shape
             k_shape = key.shape
             query = query.reshape(query.shape[0], -1)
