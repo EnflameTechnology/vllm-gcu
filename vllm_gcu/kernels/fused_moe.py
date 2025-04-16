@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # coding=utf-8
+from contextlib import nullcontext
 import functools
 import math
 import sys
@@ -19,6 +20,7 @@ from vllm.model_executor.layers.fused_moe.layer import (
     FusedMoE,
     UnquantizedFusedMoEMethod,
 )
+from vllm.platforms import current_platform
 from vllm.utils import vllm_lib
 
 from vllm_gcu.distributed.parallel_state import all_to_all_v2
@@ -388,9 +390,10 @@ def fused_experts_impl(
                 send_packed, [ep_token_indices]
             )
             # send_packed_sorted = send_packed[ep_token_indices.to(torch.int64)]
-        if shared_experts is not None:
-            shared_output = shared_experts(hidden_states_ori)
-
+        enable_parallel_compute = current_platform.get_device_capability().to_int() == 130
+        parallel_compute_context = torch.gcu.ParallelCompute(2, 10) \
+            if current_platform.get_device_capability().to_int() == 130 \
+            else nullcontext()
         if all_dp_in_decode:
             padded_recv_len = scheduler_config.max_num_seqs
             if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
@@ -406,15 +409,21 @@ def fused_experts_impl(
             )
 
             sp_split_size = torch.empty_like(ep_split_size)
+            with parallel_compute_context:
+                work = all_to_all_v2(
+                    recv_packed,
+                    send_packed_sorted,
+                    sp_split_size,
+                    ep_split_size,
+                    group=group,
+                    flag=1,
+                    async_op=enable_parallel_compute,
+                )
+                if shared_experts is not None:
+                    shared_output = shared_experts(hidden_states_ori)
+                if enable_parallel_compute:
+                    work.wait()
 
-            all_to_all_v2(
-                recv_packed,
-                send_packed_sorted,
-                sp_split_size,
-                ep_split_size,
-                group=group,
-                flag=1,
-            )
             recv_token_total = torch.sum(sp_split_size, 0, True, dtype=torch.int32)
         else:
             sp_split_size = torch.empty_like(ep_split_size)
@@ -435,14 +444,19 @@ def fused_experts_impl(
                 dtype=hidden_states.dtype,
                 device=hidden_states.device,
             )
-
-            torch.distributed.all_to_all_single(
-                recv_packed[:cpu_recv_token_total],
-                send_packed_sorted[:cpu_send_token_total],
-                cpu_sp_split_size,
-                cpu_ep_split_size,
-                group=group,
-            )
+            with parallel_compute_context:
+                work = torch.distributed.all_to_all_single(
+                    recv_packed[:cpu_recv_token_total],
+                    send_packed_sorted[:cpu_send_token_total],
+                    cpu_sp_split_size,
+                    cpu_ep_split_size,
+                    group=group,
+                    async_op=enable_parallel_compute,
+                )
+                if shared_experts is not None:
+                    shared_output = shared_experts(hidden_states_ori)
+                if enable_parallel_compute:
+                    work.wait()
 
         # EP
         hidden_states = torch.empty(
