@@ -107,6 +107,11 @@ class GCUMLAImpl(MLACommonImpl[MLACommonMetadata]):
                 "Encoder self-attention and encoder/decoder cross-attention are not implemented for GCUMLAImpl"
             )
 
+    def process_weights_after_loading(self, act_dtype: torch.dtype):
+        super().process_weights_after_loading(act_dtype)
+        self.W_UV = self.W_UV.contiguous()
+        self.W_UK_T = self.W_UK_T.contiguous()
+
     def forward(
         self,
         layer,
