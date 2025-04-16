@@ -15,26 +15,11 @@ def all_to_all_v2(
     input_split_sizes: Optional[torch.Tensor] = None,
     group: Optional["ProcessGroup"] = None,
     flag: Optional[int] = None,
+    async_op = False,
 ) -> None:
-    torch_gcu.distributed.all_to_all_vd(
-        output, input, output_split_sizes, input_split_sizes, group=group, flag=flag
+    return torch_gcu.distributed.all_to_all_vd(
+        output, input, output_split_sizes, input_split_sizes, group=group, flag=flag, async_op=async_op
     )
-
-
-def all_to_all_v2_bypass(
-    output: torch.Tensor,
-    input: torch.Tensor,
-    output_split_sizes: Optional[torch.Tensor] = None,
-    input_split_sizes: Optional[torch.Tensor] = None,
-    group: Optional[ProcessGroup] = None,
-    flag: Optional[int] = None,
-) -> None:
-    if flag == 1:
-        output_split_sizes.copy_(input_split_sizes)
-    if output.numel() > input.numel():
-        output.view(-1)[: input.numel()].copy_(input.view(-1))
-    else:
-        output.view(-1).copy_(input.view(-1)[: output.numel()])
 
 
 def all_to_all_cpu(
@@ -87,6 +72,7 @@ def all_to_all_v2_ref(
     input_split_sizes=None,
     group=None,
     flag=None,
+    async_op = False,
 ) -> None:
     assert output.is_contiguous(), 'output is not contiguous'
     assert input.is_contiguous(), 'input is not contiguous'
@@ -96,12 +82,13 @@ def all_to_all_v2_ref(
         )
     assert output.shape[0] >= output_split_sizes.sum().item(), 'output shape error'
     assert input.shape[0] >= input_split_sizes.sum().item(), 'output shape error'
-    torch.distributed.all_to_all_single(
+    return torch.distributed.all_to_all_single(
         output[: output_split_sizes.sum().item()],
         input[: input_split_sizes.sum().item()],
         output_split_sizes.cpu().tolist(),
         input_split_sizes.cpu().tolist(),
         group=group,
+        async_op=async_op,
     )
 
 
