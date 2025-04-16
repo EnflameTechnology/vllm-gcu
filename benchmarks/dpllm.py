@@ -28,7 +28,9 @@ logger = init_logger(__name__)
 
 _R = TypeVar("_R", default=Any)
 
-class A:pass
+
+class A:
+    pass
 
 
 class EngineWrapper:
@@ -56,23 +58,24 @@ class RayLLMWrapper:
     def __init__(self, engine_args) -> None:
         ray.init(address=None, ignore_reinit_error=True)
         num_gpus = engine_args.tensor_parallel_size * engine_args.pipeline_parallel_size
+        allowed_envs = ['ECCL_ALLTOALLV_MAXSIZE', 'TORCH_ECCL_AVOID_RECORD_STREAMS', 'ECCL_SHM_DISABLE']
         self.workers = []
         self.dp_size = int(os.environ['VLLM_DP_SIZE'])
-        white_list = {}
+        env_vars = {}
         for i in os.environ:
-            if i.startswith('VLLM') or i in ['ECCL_ALLTOALLV_MAXSIZE', 'TORCH_ECCL_AVOID_RECORD_STREAMS']:
-                white_list[i] = os.environ[i]
+            if i.startswith('VLLM') or i in allowed_envs:
+                env_vars[i] = os.environ[i]
 
         for rank in range(self.dp_size):
-            white_list['VLLM_DP_RANK'] = str(rank)
+            env_vars['VLLM_DP_RANK'] = str(rank)
             gpu_ids = list(range(rank*num_gpus, (rank+1)*num_gpus))
-            gpu_ids = map(lambda x: str(x%torch.gcu.device_count()), gpu_ids)
-            white_list['TOPS_VISIBLE_DEVICES'] = ','.join(gpu_ids)
+            gpu_ids = map(lambda x: str(x % torch.gcu.device_count()), gpu_ids)
+            env_vars['TOPS_VISIBLE_DEVICES'] = ','.join(gpu_ids)
             worker = ray.remote(
                 num_cpus=0,
                 num_gpus=num_gpus,
                 # scheduling_strategy=scheduling_strategy,
-                runtime_env={'env_vars': white_list},
+                runtime_env={'env_vars': env_vars},
             )(EngineWrapper).remote(engine_args)
             self.workers.append(worker)
 
@@ -84,7 +87,6 @@ class RayLLMWrapper:
         self.model_config.runner_type = "generate"
         self.model_config.supported_runner_types = ["generate"]
         self.has_unfinished = None
-
 
     def add_request(self, *args, **kwargs):
         ray.get(self.workers[self.dp_idx].add_request.remote(*args, **kwargs))
@@ -99,7 +101,8 @@ class RayLLMWrapper:
             ])
         for i in range(self.dp_size):
             if not self.has_unfinished[i]:
-                self.workers[i].add_request.remote(request_id='fake'+str(next(self.request_counter)), **self.fake_request)
+                self.workers[i].add_request.remote(
+                    request_id='fake'+str(next(self.request_counter)), **self.fake_request)
 
         ray_worker_outputs = ray.get([
             worker.step.remote(*args, **kwargs)
@@ -108,7 +111,7 @@ class RayLLMWrapper:
         results = []
         for i in range(self.dp_size):
             if self.has_unfinished[i]:
-                results+=ray_worker_outputs[i]
+                results += ray_worker_outputs[i]
         self.has_unfinished = None
 
         return results
@@ -126,6 +129,14 @@ class RayLLMWrapper:
             for worker in self.workers
         ])
         return sum(ray_worker_outputs)
+
+    def shutdown(self):
+        import ray
+        for worker in self.workers:
+            ray.kill(worker)
+
+    def __del__(self):
+        self.shutdown()
 
 
 class DPLLM(LLM):
@@ -212,6 +223,7 @@ class DPLLM(LLM):
             compilation_config=compilation_config_instance,
             **kwargs,
         )
+        assert engine_args.disable_async_output_proc, "DPLLM only supports disable_async_output_proc=True"
 
         # Create the Engine (autoselects V0 vs V1)
         self.llm_engine = RayLLMWrapper(engine_args)
@@ -219,3 +231,7 @@ class DPLLM(LLM):
 
         self.request_counter = Counter()
         self.default_sampling_params: Union[dict[str, Any], None] = None
+
+    def __del__(self):
+        if llm_engine := getattr(self, "llm_engine", None):
+            llm_engine.shutdown()
