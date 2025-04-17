@@ -563,6 +563,27 @@ def calculate_metrics(
     return metrics, actual_output_lens
 
 
+def set_default_params(extra_body):
+    default_params = {
+        "repetition_penalty": 1.0,
+        "presence_penalty": 0.0,
+        "frequency_penalty": 0.0,
+        "top_p": 1.0,
+        "top_k": -1,
+        "min_p": 0.0,
+        "seed": 0,
+        "temperature": 0.0
+    }
+
+    if extra_body is None:
+        extra_body = {}
+    for k, v in default_params.items():
+        if k not in extra_body:
+            extra_body[k] = v
+
+    return extra_body
+
+
 async def benchmark(
     backend: str,
     api_url: str,
@@ -589,6 +610,8 @@ async def benchmark(
         request_func = ASYNC_REQUEST_FUNCS[backend]
     else:
         raise ValueError(f"Unknown backend: {backend}")
+
+    extra_body = set_default_params(extra_body)
 
     if extra_body:
         extra_body.update({"skip_special_tokens": skip_special_tokens})
