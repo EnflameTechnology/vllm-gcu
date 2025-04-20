@@ -8,6 +8,7 @@ from functools import wraps
 from typing import Generator
 
 import torch
+from packaging.version import Version
 
 
 @dataclass
@@ -117,3 +118,9 @@ def dump_memory_snapshot_when_exception(func):
             raise err
 
     return _wrapper
+
+
+def vllm_version_equal(version: str):
+    import vllm
+
+    return Version(vllm.__version__) == Version(version)
