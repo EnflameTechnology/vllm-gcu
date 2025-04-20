@@ -44,6 +44,14 @@ patcher1.start()
 patcher2.start()
 
 
+def tops_device_count():
+    return torch_gcu._C._gcu_getDeviceCount()
+
+
+patcher3 = patch("vllm.utils.cuda_device_count_stateless", tops_device_count)
+patcher3.start()
+
+
 def register_platform_plugins() -> Optional[str]:
     return "vllm_gcu.gcu.GCUPlatform"
 

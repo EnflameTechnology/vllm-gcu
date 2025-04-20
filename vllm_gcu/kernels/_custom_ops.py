@@ -116,6 +116,47 @@ def paged_attention_v2(
     )
 
 
+def reshape_and_cache(
+    key: torch.Tensor,
+    value: torch.Tensor,
+    key_cache: torch.Tensor,
+    value_cache: torch.Tensor,
+    slot_mapping: torch.Tensor,
+    kv_cache_dtype: str,
+    k_scale_float: float,
+    v_scale_float: float,
+    k_zero_float: float = 0.0,
+    v_zero_float: float = 0.0,
+) -> None:
+    # TODO change hard code
+    torch.ops._C_cache_ops.reshape_and_cache(
+        key,
+        value,
+        key_cache,
+        value_cache,
+        slot_mapping,
+        kv_cache_dtype,
+        k_scale_float,
+        v_scale_float,
+        k_zero_float,
+        v_zero_float,
+    )
+
+
+def copy_blocks(
+    key_caches: List[torch.Tensor],
+    value_caches: List[torch.Tensor],
+    block_mapping: torch.Tensor,
+) -> None:
+    torch.ops._C_cache_ops.copy_blocks(key_caches, value_caches, block_mapping)
+
+
+def swap_blocks(
+    src: torch.Tensor, dst: torch.Tensor, block_mapping: torch.Tensor
+) -> None:
+    torch.ops._C_cache_ops.swap_blocks(src, dst, block_mapping)
+
+
 # pos encoding ops
 def rotary_embedding(
     positions: torch.Tensor,
@@ -183,31 +224,8 @@ def advance_step(
     )
 
 
-# fused quant layer norm ops
-def rms_norm_dynamic_per_token_quant(
-    input: torch.Tensor,
-    weight: torch.Tensor,
-    epsilon: float,
-    quant_dtype: torch.dtype,
-    scale_ub: Optional[torch.Tensor] = None,
-    residual: Optional[torch.Tensor] = None,
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    raise NotImplementedError
-
-
 # quantization ops
 # awq
-def awq_dequantize(
-    qweight: torch.Tensor,
-    scales: torch.Tensor,
-    zeros: torch.Tensor,
-    split_k_iters: int,
-    thx: int,
-    thy: int,
-) -> torch.Tensor:
-    return torch.ops._C.awq_dequantize(qweight, scales, zeros, split_k_iters, thx, thy)
-
-
 def awq_gemm_gcu(
     input: torch.Tensor,
     qweight: torch.Tensor,
@@ -259,24 +277,7 @@ def gptq_gemm_gcu(
         return output
 
 
-def gptq_shuffle(q_weight: torch.Tensor, q_perm: torch.Tensor, bit: int) -> None:
-    raise NotImplementedError
-
-
-# marlin
-def marlin_gemm(
-    a: torch.Tensor,
-    b_q_weight: torch.Tensor,
-    b_scales: torch.Tensor,
-    workspace: torch.Tensor,
-    size_m: int,
-    size_n: int,
-    size_k: int,
-) -> torch.Tensor:
-    raise NotImplementedError
-
-
-# fp8
+# 8bit
 def scaled_fp8_quant(
     input: torch.Tensor,
     scale: Optional[torch.Tensor] = None,
@@ -287,7 +288,6 @@ def scaled_fp8_quant(
     raise NotImplementedError
 
 
-# int8
 def scaled_int8_quant(
     input: torch.Tensor,
     scale: Optional[torch.Tensor] = None,
@@ -323,76 +323,6 @@ def scaled_int8_dequant(
         return output, scale
     else:
         assert False, "dynamic scaled int8 quant not support yet"
-
-
-def topk_softmax(
-    topk_weights: torch.Tensor,
-    topk_ids: torch.Tensor,
-    token_expert_indicies: torch.Tensor,
-    gating_output: float,
-) -> None:
-    torch.ops._moe_C.topk_softmax(
-        topk_weights, topk_ids, token_expert_indicies, gating_output
-    )
-
-
-def reshape_and_cache(
-    key: torch.Tensor,
-    value: torch.Tensor,
-    key_cache: torch.Tensor,
-    value_cache: torch.Tensor,
-    slot_mapping: torch.Tensor,
-    kv_cache_dtype: str,
-    k_scale_float: float,
-    v_scale_float: float,
-    k_zero_float: float = 0.0,
-    v_zero_float: float = 0.0,
-) -> None:
-    # TODO change hard code
-    torch.ops._C_cache_ops.reshape_and_cache(
-        key,
-        value,
-        key_cache,
-        value_cache,
-        slot_mapping,
-        kv_cache_dtype,
-        k_scale_float,
-        v_scale_float,
-        k_zero_float,
-        v_zero_float,
-    )
-
-
-def concat_and_cache_mla(
-    kv_c: torch.Tensor,
-    k_pe: torch.Tensor,
-    kv_cache: torch.Tensor,
-    slot_mapping: torch.Tensor,
-    kv_cache_dtype: str,
-    scale: torch.Tensor,
-) -> None:
-    torch.ops._C_cache_ops.concat_and_cache_mla(
-        kv_c,
-        k_pe,
-        kv_cache,
-        slot_mapping,
-        kv_cache_dtype,
-        scale.unsqueeze(0) if len(scale.shape) == 0 else scale,
-    )
-
-
-def copy_blocks(
-    key_caches: List[torch.Tensor],
-    value_caches: List[torch.Tensor],
-    block_mapping: torch.Tensor,
-) -> None:
-    torch.ops._C_cache_ops.copy_blocks(key_caches, value_caches, block_mapping)
-
-
-def swap_blocks(
-    src: torch.Tensor, dst: torch.Tensor, block_mapping: torch.Tensor
-) -> None:
-    torch.ops._C_cache_ops.swap_blocks(src, dst, block_mapping)
 
 
 def gelu_tanh_quant(
@@ -526,6 +456,7 @@ def dispatch_bgmv(
     torch.ops._C.dispatch_bgmv(y, x, w, indicies, layer_idx, scale)
 
 
+# dispatch bgmv
 def dispatch_bgmv_low_level(
     y: torch.Tensor,
     x: torch.Tensor,
@@ -543,20 +474,6 @@ def dispatch_bgmv_low_level(
     )
 
 
-def memory_efficient_attention_alibi(
-    output: torch.Tensor,
-    query: torch.Tensor,
-    key: torch.Tensor,
-    value: torch.Tensor,
-    alibi_slopes: torch.Tensor,
-    drop: float,
-    scale: float,
-):
-    torch.ops._C.memory_efficient_attention_alibi(
-        output, query, key, value, alibi_slopes, drop, scale
-    )
-
-
 def per_token_group_quant_fp8(
     x: torch.Tensor,
     group_size: int,
@@ -567,6 +484,7 @@ def per_token_group_quant_fp8(
     raise NotImplementedError
 
 
+# fused moe
 def moe_align_block_size(
     topk_ids: torch.Tensor,
     num_experts: int,
