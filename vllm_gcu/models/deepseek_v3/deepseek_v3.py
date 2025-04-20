@@ -192,7 +192,6 @@ class DeepseekV2MoE(nn.Module):
         )
         if self.experts.dp_size > 1 and self.experts.ep_size > 1:
             # ep impl is not for dpa
-            self.experts.use_direct_call = True
             self.experts.dp_size = 1
 
         self.tp_size = self.experts.tp_size

@@ -240,7 +240,7 @@ class Connector(SimpleConnector):
                         layer.self_attn.attn._v_scale_float,
                     )
                 elif isinstance(model_input.attn_metadata, GCUMLAMetadata):
-                    ops.concat_and_cache_mla(
+                    torch.ops._C_cache_ops.concat_and_cache_mla(
                         keys[i - model_executable.model.start_layer]
                         .to(kv_cache.device)
                         .squeeze(1),
