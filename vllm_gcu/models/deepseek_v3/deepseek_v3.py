@@ -77,16 +77,8 @@ import vllm_gcu.envs as gcu_envs
 from vllm_gcu.kernels.linear import MergedReplicatedLinear
 
 
-def _get_seq_lens(device_group, attn_metadata: AttentionMetadata):
-    size = device_group.size()
-    seqlen = (
-        attn_metadata.num_prefill_tokens
-        if attn_metadata.prefill_metadata
-        else attn_metadata.num_decode_tokens
-    )
-    padded_seqlen = (seqlen + size - 1) // size * size
-
-    return seqlen, padded_seqlen
+def align_up(seqlen, size):
+    return (seqlen + size - 1) // size * size
 
 
 class DeepseekV2MLP(nn.Module):
@@ -626,7 +618,7 @@ class DeepseekV2DecoderLayer(nn.Module):
         positions: torch.Tensor,
         hidden_states: torch.Tensor,
         residual: Optional[torch.Tensor],
-        attn_metadata: Optional[AttentionMetadata],
+        actual_seqlen: Optional[int],
     ) -> torch.Tensor:
         # Self Attention
 
@@ -637,16 +629,13 @@ class DeepseekV2DecoderLayer(nn.Module):
             hidden_states, residual = self.input_layernorm(hidden_states, residual)
 
         tp_group = get_tp_group().device_group
-        if attn_metadata is None:
-            seqlen = padded_seqlen = hidden_states.shape[0]
-        else:
-            seqlen, padded_seqlen = _get_seq_lens(tp_group, attn_metadata)
+        pad_size = align_up(actual_seqlen, tp_group.size()) - actual_seqlen
 
         if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
             if self.layer_idx == 0:
                 residual = torch.nn.functional.pad(
                     residual,
-                    (0, 0, 0, padded_seqlen - seqlen),
+                    (0, 0, 0, pad_size),
                     mode="constant",
                     value=0,
                 )
@@ -654,7 +643,7 @@ class DeepseekV2DecoderLayer(nn.Module):
                 residual = residual_list[tp_group.rank()]
             else:
                 hidden_states = get_tp_group().all_gather(hidden_states, dim=0)
-                hidden_states = hidden_states[:seqlen]
+                hidden_states = hidden_states[:actual_seqlen]
 
         hidden_states = self.self_attn(
             positions=positions,
@@ -664,7 +653,7 @@ class DeepseekV2DecoderLayer(nn.Module):
         if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
             hidden_states = torch.nn.functional.pad(
                 hidden_states,
-                (0, 0, 0, padded_seqlen - seqlen),
+                (0, 0, 0, pad_size),
                 mode="constant",
                 value=0,
             )
@@ -736,7 +725,7 @@ class DeepseekV2Model(nn.Module):
         intermediate_tensors: Optional[IntermediateTensors],
         inputs_embeds: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, IntermediateTensors]:
-        attn_metadata = get_forward_context().attn_metadata
+        actual_seqlen = len(input_ids)
 
         tp_group = get_tp_group().device_group
         if get_pp_group().is_first_rank:
@@ -757,7 +746,7 @@ class DeepseekV2Model(nn.Module):
                 positions,
                 hidden_states,
                 residual,
-                attn_metadata,
+                actual_seqlen,
             )
 
         if not get_pp_group().is_last_rank:
@@ -768,10 +757,9 @@ class DeepseekV2Model(nn.Module):
         hidden_states, _ = self.norm(hidden_states, residual)
 
         if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
-            hidden_states = get_tp_group().all_gather(hidden_states, dim=0)
-            if attn_metadata is not None:
-                seqlen, _ = _get_seq_lens(tp_group, attn_metadata)
-                hidden_states = hidden_states[:seqlen]
+            hidden_states = get_tp_group().all_gather(hidden_states, dim=0)[
+                :actual_seqlen
+            ]
         return hidden_states
 
 
