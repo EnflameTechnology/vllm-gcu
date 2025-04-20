@@ -1,13 +1,15 @@
 #!/usr/bin/env python
 # coding=utf-8
+import hashlib
+import os
 import random
 from functools import lru_cache
 from typing import List, Optional, Tuple, Union
 
 import numpy as np
 import torch
+from vllm.config import SupportsHash
 
-from vllm.config import VllmConfig
 from vllm.platforms.interface import (
     _Backend,
     CpuArchEnum,
@@ -15,7 +17,11 @@ from vllm.platforms.interface import (
     Platform,
     PlatformEnum,
 )
-from vllm.utils import FlexibleArgumentParser
+
+
+class AdditionalConfig(dict, SupportsHash):
+    def compute_hash(self) -> str:
+        return str(hash(frozenset(self.items())))
 
 
 class GCUPlatform(Platform):
@@ -33,6 +39,9 @@ class GCUPlatform(Platform):
         "moe_wna16_gcu",
         "w8a8_gcu",
     ]
+
+    def is_cuda_alike(self) -> bool:
+        return True
 
     @classmethod
     def get_attn_backend_cls(
@@ -114,22 +123,16 @@ class GCUPlatform(Platform):
             torch.manual_seed(seed)
 
     @classmethod
-    def pre_register_and_update(
-        cls, parser: Optional[FlexibleArgumentParser] = None
-    ) -> None:
+    def pre_register_and_update(cls, parser=None) -> None:
         import tops_extension.torch  # noqa: F401
         import torch_gcu  # noqa: F401
         import torch_gcu.transfer_to_gcu  # noqa: F401
 
+        import vllm_gcu.compilation  # noqa: F401
         import vllm_gcu.distributed  # noqa: F401
         import vllm_gcu.kernels  # noqa: F401
 
         if parser:
-            key = "--kv-cache-dtype"
-            if key in parser._option_string_actions:
-                # add kv cache dtype: int8
-                parser._option_string_actions[key].choices += ["int8"]
-
             key = "--disable-async-output-proc"
             if key in parser._option_string_actions:
                 # set disable_async_output_proc default True
@@ -141,7 +144,7 @@ class GCUPlatform(Platform):
                 parser._option_string_actions[key].choices += ["gcu"]
 
     @classmethod
-    def check_and_update_config(cls, vllm_config: VllmConfig) -> None:
+    def check_and_update_config(cls, vllm_config) -> None:
         import vllm.envs as envs
 
         parallel_config = vllm_config.parallel_config
@@ -176,13 +179,19 @@ class GCUPlatform(Platform):
             and parallel_config.world_size > 1
         ):
             # force spawn multiprocessing method as others not support
-            import os
             os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
             envs.VLLM_WORKER_MULTIPROC_METHOD = "spawn"
 
-        if cache_config and cache_config.block_size is None:
-            # set block size to 64 for gcu if not specific
-            cache_config.block_size = 64
+        if cache_config:
+            if cache_config.block_size is None:
+                # set block size to 64 for gcu if not specific
+                cache_config.block_size = 64
+
+            if (
+                cache_config.cache_dtype.startswith("fp8")
+                and cls.get_device_capability() == 130
+            ):
+                cache_config.cache_dtype = "int8"
 
         if (
             parallel_config.data_parallel_size > 1
@@ -194,16 +203,60 @@ class GCUPlatform(Platform):
                 "vllm_gcu.scheduler.PriorityScheduler"  # priority to preempt
             )
 
-        if compilation_config and compilation_config.level > 0:
-            compilation_config.backend = "topsgraph"
+        if compilation_config:
+            if compilation_config.level > 0:
+                compilation_config.backend = "topsgraph"
+
+            if compilation_config.level == 3:
+                compilation_config.use_inductor = False
+
+                # TODO: WA for bug in vllm, to be removed after 0.8.2
+                if not compilation_config.cache_dir:
+                    factors = []
+                    config_hash = vllm_config.compute_hash()
+                    factors.append(config_hash)
+
+                    hash_key = hashlib.md5(str(factors).encode()).hexdigest()[:10]
+
+                    cache_dir = os.path.join(
+                        envs.VLLM_CACHE_ROOT,
+                        "torch_compile_cache",
+                        hash_key,
+                    )
+                    compilation_config.cache_dir = cache_dir
+
+                os.makedirs(compilation_config.cache_dir, exist_ok=True)
+
+                world_size = vllm_config.parallel_config.world_size
+                dp_size = vllm_config.parallel_config.data_parallel_size
+                for rank in range(world_size):
+                    for dp_rank in range(dp_size):
+                        local_cache_dir = os.path.join(
+                            compilation_config.cache_dir, f"rank_{rank}_{dp_rank}"
+                        )
+                        os.makedirs(local_cache_dir, exist_ok=True)
+
+                # TODO: remove after rmsnorm pattern fix in official.
+                compilation_config.pass_config.enable_fusion = False
+
+                from vllm_gcu.compilation.fusion import GCUFusionPass
+                from vllm_gcu.compilation.pass_manager import PreGradPassManager
+
+                pre_grad_pass_manager = PreGradPassManager()
+                pre_grad_pass_manager.add(
+                    GCUFusionPass.instance(compilation_config.pass_config)
+                )
+                compilation_config.inductor_compile_config["pre_grad_custom_pass"] = (
+                    pre_grad_pass_manager
+                )
 
         if model_config:
             model_config.enable_sleep_mode = False
 
-        additional_config = vllm_config.additional_config
-        if additional_config is None:
-            # make sure additional_config is not None
-            vllm_config.additional_config = {}
+        if vllm_config.additional_config is None:
+
+            vllm_config.additional_config = AdditionalConfig({})
+
         vllm_config.additional_config.update({"all_dp_in_decode": False})
 
         # Disable usage status for security
@@ -249,7 +302,7 @@ class GCUPlatform(Platform):
         if current_capability is None:
             return False
 
-        return current_capability.to_int() >= 40
+        return current_capability.to_int() >= 140
 
     @classmethod
     def is_fp8_fnuz(cls) -> bool:
