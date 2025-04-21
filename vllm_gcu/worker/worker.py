@@ -1,5 +1,6 @@
 """A GCU worker class."""
 
+import os
 import gc
 from typing import Optional, Tuple, Type
 from datetime import timedelta
@@ -27,6 +28,7 @@ from vllm.worker.worker import Worker
 
 from vllm_gcu.utils import memory_profiling, MemorySnapshot
 from vllm_gcu.worker.model_runner import GCUModelRunner
+import vllm_gcu.envs as gcu_envs
 
 
 logger = init_logger(__name__)
@@ -43,6 +45,17 @@ class GCUWorker(Worker):
         model_runner_cls: Optional[Type[GPUModelRunnerBase]] = None,
     ) -> None:
         import vllm_gcu.kernels  # noqa: F401
+
+        if gcu_envs.VLLM_GCU_RANK_LOG_PATH:
+            # before init dist, since we want to split eccl init logs
+            dp_rank = vllm_config.parallel_config.data_parallel_rank
+            world_size = vllm_config.parallel_config.world_size
+            rank_across_dp = dp_rank * world_size + rank
+            f = open(os.path.join(gcu_envs.VLLM_GCU_RANK_LOG_PATH,
+                                  f'worker_{rank_across_dp}.log'),
+                     'w', buffering=1)
+            os.dup2(f.fileno(), 1)
+            os.dup2(f.fileno(), 2)
 
         super().__init__(
             vllm_config,
