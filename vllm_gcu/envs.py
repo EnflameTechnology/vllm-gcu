@@ -9,6 +9,8 @@ environment_variables: Dict[str, Callable[[], Any]] = {
     "VLLM_DUMP_SNAPSHOT_EVERY_N_STEP": lambda: int(
         os.getenv("VLLM_DUMP_SNAPSHOT_EVERY_N_STEP", 0)
     ),
+    "VLLM_GCU_RANK_LOG_PATH": lambda: (None if os.getenv("VLLM_GCU_RANK_LOG_PATH", None) is None else os
+                                             .path.expanduser(os.getenv("VLLM_GCU_RANK_LOG_PATH", ".")))
 }
 
 
