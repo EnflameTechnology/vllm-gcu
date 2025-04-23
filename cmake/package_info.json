@@ -66,8 +66,8 @@
         "type":["run"],
         "rpm_run_package_name":"TopsPlatform_[0-9][0-9a-z_\\.-]*_rpm_*.run",
         "deb_run_package_name":"TopsPlatform_[0-9][0-9a-z_\\.-]*_deb_*.run",
-        "install_command_template":"{package_path} -y -C {components} --container -v",
-        "uninstall_command_template":"{package_path} -y -C {components} --container --uninstall -v",
-        "component_option":"-y"
+        "install_command_template":"{package_path} -y --skip-update --noprogress --container -v",
+        "uninstall_command_template":"{package_path} -y --noprogress --container --uninstall -v",
+        "component_option":"-y --skip-update --noprogress --container -v"
     }
 }
