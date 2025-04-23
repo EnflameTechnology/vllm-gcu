@@ -114,7 +114,10 @@ def invoke_fused_moe_kernel(
             A, A_scale = ops.scaled_fp8_quant(A, A_scale)
         else:
             assert len(block_shape) == 2
-            _, block_k = block_shape[0], block_shape[1]
+            block_n, block_k = block_shape[0], block_shape[1]
+            assert (
+                block_n == block_k
+            ), "FP8 only support DeepSeek V3 with same group_n and group_k"
             A, A_scale = ops.per_token_group_quant_fp8(A, block_k)
     elif use_int8_w8a16 or use_int4_w4a16:
         assert B_scale is not None
@@ -130,7 +133,10 @@ def invoke_fused_moe_kernel(
     block_size = config["BLOCK_SIZE_M"]
 
     if use_fp8_w8a8 or use_int8_w8a16 or use_int4_w4a16 or use_int8_w8a8:
-        if use_int8_w8a8:
+        if use_fp8_w8a8:
+            B_zp = None
+            group_size = block_shape[1]
+        elif use_int8_w8a8:
             B_zp = None
             group_size = 1
         elif use_int4_w4a16:
@@ -140,7 +146,7 @@ def invoke_fused_moe_kernel(
             A_scale = None
             group_size = -1
         else:
-            raise NotImplementedError("use_fp8_w8a8 is not supported.")
+            raise NotImplementedError
 
         torch.ops._C.fused_moe_quant_kernel(
             C,
@@ -293,8 +299,8 @@ def fused_experts_impl(
     a1_scale: Optional[torch.Tensor] = None,
     a2_scale: Optional[torch.Tensor] = None,
     block_shape: Optional[List[int]] = None,
-    shared_experts = None,
-    routed_scaling_factor = None,
+    shared_experts=None,
+    routed_scaling_factor=None,
 ):
     from vllm.distributed import get_world_group
 
