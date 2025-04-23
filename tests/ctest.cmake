@@ -7,4 +7,4 @@ add_py_test (PROJECT scorpio
              ID 1
              NAME test_gcu_models
              COMMAND "cd tests && \
-             python -m pytest test_offline_inference.py")
+             export TORCH_DEVICE_BACKEND_AUTOLOAD=0 && python -m pytest test_offline_inference.py")
