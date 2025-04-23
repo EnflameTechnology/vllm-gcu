@@ -171,3 +171,6 @@
 
 - func: dynamic_split(Tensor[] out, Tensor input, Tensor size, int[] split_sizes, int dim) -> ()
   variants: function
+
+- func: dynamic_per_token_group_fp8_quant(Tensor(a!) out, Tensor(a!) scale, Tensor input, int group_size) -> ()
+  variants: function

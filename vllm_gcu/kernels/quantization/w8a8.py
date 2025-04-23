@@ -32,7 +32,7 @@ class W8A8Config(QuantizationConfig):
         self.group_size = group_size
 
     def __repr__(self) -> str:
-        return f"W8A8Config()"
+        return "W8A8Config()"
 
     @classmethod
     def get_name(cls) -> str:
