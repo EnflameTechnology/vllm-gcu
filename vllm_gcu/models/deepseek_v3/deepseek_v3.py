@@ -190,9 +190,6 @@ class DeepseekV2MoE(nn.Module):
             scoring_func=config.scoring_func,
             e_score_correction_bias=self.gate.e_score_correction_bias,
         )
-        if self.experts.dp_size > 1 and self.experts.ep_size > 1:
-            # ep impl is not for dpa
-            self.experts.dp_size = 1
 
         self.tp_size = self.experts.tp_size
 
