@@ -16,6 +16,7 @@
 
 #include "silu_and_mul.h"
 
+#include <ATen/ATen.h>
 #include <topsaten/topsaten_vllm.h>
 
 #include "tops_extension/torch/GCUAten.h"
@@ -23,9 +24,32 @@
 
 namespace vllm_gcu::llm_ops {
 
+at::Tensor silu_and_mul_native(const at::Tensor &input) {
+  int64_t d = input.size(-1) / 2;
+  auto left = input.slice(-1, 0, d);
+  auto right = input.slice(-1, d);
+
+  auto res = left * at::sigmoid(left) * right;
+  return res;
+}
+
 void silu_and_mul(at::Tensor &out, const at::Tensor &input) {
   const torch_gcu::OptionalGCUGuard device_guard(device_of(input));
   const topsStream_t stream = torch_gcu::getCurrentGCUStream();
+
+  auto use_native = c10::utils::check_env("VLLM_GCU_NATIVE");
+  auto fallback_cpu = c10::utils::check_env("VLLM_GCU_FALLBACK_CPU");
+
+  if (use_native) {
+    at::Tensor res;
+    if (fallback_cpu) {
+      res = TORCH_FALLBACK_CALL(silu_and_mul_native)(input);
+    } else {
+      res = silu_and_mul_native(input);
+    }
+    out.copy_(res);
+    return;
+  }
 
   at::Tensor view_out = out.view({-1, out.size(-1)});
   at::Tensor view_input = input.view({-1, input.size(-1)});
@@ -33,4 +57,4 @@ void silu_and_mul(at::Tensor &out, const at::Tensor &input) {
       view_out, view_input, stream));
 }
 
-}  // namespace vllm_gcu::llm_ops
+} // namespace vllm_gcu::llm_ops
