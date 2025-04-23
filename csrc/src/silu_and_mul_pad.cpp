@@ -27,8 +27,15 @@ void silu_and_mul_pad(at::Tensor &out, const at::Tensor &input,
   const torch_gcu::OptionalGCUGuard device_guard(device_of(input));
   const topsStream_t stream = torch_gcu::getCurrentGCUStream();
 
+  auto use_native = c10::utils::check_env("VLLM_GCU_NATIVE");
+  auto fallback_cpu = c10::utils::check_env("VLLM_GCU_FALLBACK_CPU");
+
+  if (use_native) {
+    return;
+  }
+
   ATEN_ATENOP_CHECK(
       ATEN_ATENOP_CALL(topsexts::topsextSiluAndMul)(out, input, size, stream));
 }
 
-}  // namespace vllm_gcu::llm_ops
+} // namespace vllm_gcu::llm_ops
