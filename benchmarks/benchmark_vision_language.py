@@ -31,6 +31,10 @@ def run_vllm(
     n: int,
     engine_args,
     temperature: float,
+    top_p: float,
+    presence_penalty: float,
+    frequency_penalty: float,
+    repetition_penalty: float,
     batch_size: int = 1,
     num_iters: int = 1,
     ignore_eos: bool = True,
@@ -45,7 +49,10 @@ def run_vllm(
     dummy_sampling_params = SamplingParams(
         n=n,
         temperature=temperature,
-        top_p=1.0,
+        top_p=top_p,
+        presence_penalty=presence_penalty,
+        frequency_penalty=frequency_penalty,
+        repetition_penalty=repetition_penalty,
         ignore_eos=True,
         max_tokens=1,
         stop_token_ids=requests.stop_token_ids,
@@ -90,7 +97,10 @@ def run_vllm(
                 sampling_params = SamplingParams(
                     n=n,
                     temperature=temperature,
-                    top_p=1.0,
+                    top_p=top_p,
+                    presence_penalty=presence_penalty,
+                    frequency_penalty=frequency_penalty,
+                    repetition_penalty=repetition_penalty,
                     ignore_eos=ignore_eos,
                     max_tokens=requests.max_output_len,
                     stop_token_ids=requests.stop_token_ids,
@@ -238,6 +248,10 @@ def main(args: argparse.Namespace):
             args.n,
             EngineArgs.from_cli_args(args),
             args.temperature,
+            args.top_p,
+            args.presence_penalty,
+            args.frequency_penalty,
+            args.repetition_penalty,
             args.batch_size,
             args.num_iters,
             ignore_eos,
@@ -298,7 +312,6 @@ if __name__ == "__main__":
 
     parser.add_argument("--model-arch-suffix", type=str, default="")
     parser.add_argument("--model-type", type=str, default=None)
-    parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument(
         "--n", type=int, default=1, help="Number of generated sequences per prompt."
     )
@@ -363,6 +376,28 @@ if __name__ == "__main__":
         type=int,
         default=1,
         help="number of multi modal file per prompt",
+    )
+
+    # sampling args
+    parser.add_argument("--temperature", type=float, default=0.0)
+    parser.add_argument("--top_p", type=float, default=1.0)
+    parser.add_argument(
+        "--presence-penalty",
+        type=float,
+        default=0.0,
+        help="Float that penalizes new tokens based on whether they appear in the generated text so far. default=0.0 (no penalty)",
+    )
+    parser.add_argument(
+        "--frequency-penalty",
+        type=float,
+        default=0.0,
+        help="Float that penalizes new tokens based on their frequency in the generated text so far. default=0.0 (no penalty)",
+    )
+    parser.add_argument(
+        "--repetition-penalty",
+        type=float,
+        default=1.0,
+        help="Float that penalizes new tokens based on whether they appear in the prompt and the generated text so far. default=1.0 (no penalty)",
     )
 
     parser = AsyncEngineArgs.add_cli_args(parser)
