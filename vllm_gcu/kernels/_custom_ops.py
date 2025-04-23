@@ -481,7 +481,15 @@ def per_token_group_quant_fp8(
     dtype: Optional[torch.dtype] = None,
     column_major_scales: bool = False,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    raise NotImplementedError
+    dtype = torch.float8_e4m3fn if dtype is None else dtype
+    x_q = torch.empty_like(x, device=x.device, dtype=dtype)
+
+    shape = x.shape[:-1] + (x.shape[-1] // group_size,)
+    x_s = torch.empty(shape, device=x.device, dtype=torch.float32)
+
+    torch.ops._C.dynamic_per_token_group_fp8_quant(x_q, x_s, x, group_size)
+
+    return x_q, x_s
 
 
 # fused moe
@@ -557,3 +565,21 @@ def get_ep_indices(
         expert_per_rank,
         ep_size,
     )
+
+
+def w8a8_block_fp8_matmul(
+    A: torch.Tensor,
+    B: torch.Tensor,
+    As: torch.Tensor,
+    Bs: torch.Tensor,
+    block_size: List[int],
+    output_dtype: torch.dtype = torch.float16,
+    bias: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    N, _ = B.shape
+    C_shape = A.shape[:-1] + (N, )
+    C = A.new_empty(C_shape, dtype=output_dtype)
+
+    torch.ops._C.linear_quant(C, A, B, bias, As, Bs)
+
+    return C

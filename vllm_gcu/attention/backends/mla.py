@@ -77,6 +77,8 @@ class GCUMLAImpl(MLACommonImpl[MLACommonMetadata]):
         attn_type: str,
         **kwargs,
     ) -> None:
+        from flash_attn.vllm_flash_attn import flash_attn_varlen_func
+
         super().__init__(
             num_heads,
             head_size,
@@ -107,6 +109,8 @@ class GCUMLAImpl(MLACommonImpl[MLACommonMetadata]):
             raise NotImplementedError(
                 "Encoder self-attention and encoder/decoder cross-attention are not implemented for GCUMLAImpl"
             )
+
+        self.flash_attn_varlen_func = flash_attn_varlen_func
 
     def process_weights_after_loading(self, act_dtype: torch.dtype):
         super().process_weights_after_loading(act_dtype)
