@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <stdexcept>
 
 #include "tops_utils.h"
 
@@ -8,6 +9,7 @@ __global__ void advance_step_kernel(int num_queries, int block_size,
                                     int *slot_mapping_ptr,  // num_seqs
                                     int *block_tables_ptr,  // num_seqs, stride
                                     int64_t const block_table_stride) {
+#if __GCU_ARCH__ == 300
   int thread_num = GetThreadNum();
   int thread_id = GetThreadIdx();
 
@@ -125,6 +127,7 @@ __global__ void advance_step_kernel(int num_queries, int block_size,
                  tops::mdspan(tops::Global, slot_mapping_ptr + n, n_stride),
                  tops::mdspan(tops::Private, l1_slot_num, n_stride));
   }
+#endif
 }
 
 void launch_advance_step_kernel(int64_t num_queries, int64_t block_size,
@@ -132,9 +135,13 @@ void launch_advance_step_kernel(int64_t num_queries, int64_t block_size,
                                 int *block_tables_ptr,
                                 int64_t const block_table_stride,
                                 int64_t num_blocks, int64_t num_threads) {
+#if __GCU_ARCH__ == 300
   advance_step_kernel<<<num_blocks, num_threads>>>(
       num_queries, block_size, seq_lens_ptr, slot_mapping_ptr, block_tables_ptr,
       block_table_stride);
+#else
+  throw std::logic_error("advance step on support on ARCH 300");
+#endif
 }
 
 }  // namespace vllm_gcu::llm_ops

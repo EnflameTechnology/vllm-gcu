@@ -4,7 +4,6 @@ import itertools
 from typing import Any, Dict, List, Optional, Type
 
 import torch
-
 from vllm.attention.backends.abstract import AttentionType
 from vllm.attention.backends.mla.common import (
     MLACommonBackend,
@@ -12,6 +11,8 @@ from vllm.attention.backends.mla.common import (
     MLACommonMetadata,
     MLACommonMetadataBuilder,
 )
+
+from vllm.platforms import current_platform
 
 import vllm_gcu.kernels._custom_ops as ops
 
@@ -147,6 +148,11 @@ class GCUMLAImpl(MLACommonImpl[MLACommonMetadata]):
         kv_c_and_k_pe_cache: torch.Tensor,
         attn_metadata: MLACommonMetadata,
     ) -> torch.Tensor:
+        if current_platform.get_device_capability()[0] != 13:
+            return super()._forward_prefill(
+                q, kv_c_normed, k_pe, kv_c_and_k_pe_cache, attn_metadata
+            )
+
         assert isinstance(attn_metadata, MLACommonMetadata)
 
         prefill_metadata = attn_metadata.prefill_metadata
