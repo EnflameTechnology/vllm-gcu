@@ -78,6 +78,7 @@ from vllm.sequence import IntermediateTensors, SequenceData
 import vllm_gcu.envs as gcu_envs
 from vllm_gcu.kernels.fused_moe import fused_experts_impl
 from vllm_gcu.kernels.linear import MergedReplicatedLinear
+from vllm_gcu.models.deepseek_v3.deepseek_v3_fusion import DeepseekV2MLAAttentionFusion
 
 
 def align_up(seqlen, size):
@@ -391,7 +392,7 @@ class DeepseekV2Attention(nn.Module):
         kv = self.kv_b_proj(kv_a)[0]
         kv = kv.view(-1, self.num_local_heads, self.qk_nope_head_dim + self.v_head_dim)
         k_nope, v = kv.split([self.qk_nope_head_dim, self.v_head_dim], dim=-1)
-        k_pe = latent_cache[:, :, self.kv_lora_rank :]
+        k_pe = latent_cache[:, :, self.kv_lora_rank:]
 
         if self.use_normal_rope:
             seq_len = positions.size(0)
@@ -404,10 +405,10 @@ class DeepseekV2Attention(nn.Module):
         if self.use_normal_rope:
             q_pe, k_pe = q_pe.view(ori_q_pe_shape), k_pe.view(ori_k_pe_shape)
 
-        q[..., self.qk_nope_head_dim :] = q_pe
+        q[..., self.qk_nope_head_dim:] = q_pe
         k = torch.empty_like(q)
         k[..., : self.qk_nope_head_dim] = k_nope
-        k[..., self.qk_nope_head_dim :] = k_pe
+        k[..., self.qk_nope_head_dim:] = k_pe
         # padding value to qk_head_dim for alignment
         v = torch.nn.functional.pad(
             v, [0, self.qk_head_dim - self.v_head_dim], value=0
@@ -608,7 +609,10 @@ class DeepseekV2DecoderLayer(nn.Module):
         # with the layer's index.
         self.layer_idx = int(prefix.split(sep=".")[-1])
         if model_config.use_mla:
-            attn_cls = DeepseekV2MLAAttention
+            if gcu_envs.VLLM_GCU_DEEPSEEK_FUSION:
+                attn_cls = DeepseekV2MLAAttentionFusion
+            else:
+                attn_cls = DeepseekV2MLAAttention
         else:
             attn_cls = DeepseekV2Attention
         self.self_attn = attn_cls(
@@ -952,6 +956,11 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP):
             ("gate_up_proj", "gate_proj", 0),
             ("gate_up_proj", "up_proj", 1),
         ]
+        if gcu_envs.VLLM_GCU_DEEPSEEK_FUSION:
+            stacked_params_mapping += [
+                ("qkv_a_proj_with_mqa", "q_a_proj", 0),
+                ("qkv_a_proj_with_mqa", "kv_a_proj_with_mqa", 1),
+            ]
 
         # Params for weights, fp8 weight scales, fp8 activation scales
         # (param_name, weight_name, expert_id, shard_id)

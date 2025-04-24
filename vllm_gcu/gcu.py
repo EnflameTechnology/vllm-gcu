@@ -17,6 +17,7 @@ from vllm.platforms.interface import (
     Platform,
     PlatformEnum,
 )
+import vllm_gcu.envs as gcu_envs
 
 
 class AdditionalConfig(dict, SupportsHash):
@@ -61,7 +62,10 @@ class GCUPlatform(Platform):
             if use_v1:
                 return "vllm_gcu.v1.attention.mla.GCUMLABackend"
             else:
-                return "vllm_gcu.attention.backends.mla.GCUMLABackend"
+                if gcu_envs.VLLM_GCU_DEEPSEEK_FUSION:
+                    return "vllm_gcu.attention.backends.mla_fusion.GCUMLABackend"
+                else:
+                    return "vllm_gcu.attention.backends.mla.GCUMLABackend"
         if use_v1:
             return "vllm_gcu.v1.attention.flash_attn.GCUFlashAttentionBackend"
         if selected_backend == _Backend.FLASHINFER:

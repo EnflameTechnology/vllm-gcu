@@ -22,10 +22,18 @@ void rotary_embedding_with_kv_cache(
                                       static_cast<int64_t>(split_size.size()));
 
   const char *kv_dtype = kv_cache_dtype.data();
-  ATEN_ATENOP_CHECK(ATEN_ATENOP_CALL(
-      topsexts::topsextsRotaryEmbeddingWithKVCache)(
-      q_out, kv_cache, q, kv, positions, cos_sin_cache, weight, slot_mapping,
-      scale, static_cast<double>(eps), topsaten_split_sizes, kv_dtype, stream));
+  at::Tensor scale_tensor = scale;
+  if (scale.dim() == 0) {
+    scale_tensor = scale.unsqueeze(0);
+  }
+  auto view_q = q.view({-1, q.size(-1)});
+  auto view_q_out = q_out.view({-1, q_out.size(-1)});
+  auto view_positions = positions.view({-1});
+  ATEN_ATENOP_CHECK(
+      ATEN_ATENOP_CALL(topsexts::topsextsRotaryEmbeddingWithKVCache)(
+          view_q_out, kv_cache, view_q, kv, view_positions, cos_sin_cache,
+          weight, slot_mapping, scale_tensor, static_cast<double>(eps),
+          topsaten_split_sizes, kv_dtype, stream));
 }
 
 }  // namespace vllm_gcu::llm_ops
