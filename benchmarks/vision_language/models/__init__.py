@@ -21,6 +21,8 @@ VLM_MODELS = {
     "MiniCPMVImage": ("minicpmv_input", "MinicpmvImageInput"),
     "MiniCPMVVideo": ("minicpmv_input", "MinicpmvVideoInput"),
     "DeepseekVLV2ForCausalLM": ("deepseek_vl2_input", "DeepSeekVL2Input"),
+    "GotOcr2ForConditionalGeneration": ("got_ocr", "GOTOCR2Input"),
+
 }
 
 

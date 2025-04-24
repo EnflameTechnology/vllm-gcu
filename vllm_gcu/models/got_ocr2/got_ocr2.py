@@ -754,11 +754,28 @@ class GotOcr2MultiModalProcessor(BaseMultiModalProcessor[GotOcr2ProcessingInfo]
         mm_data: Mapping[str, object],
         mm_kwargs: Mapping[str, object],
     ) -> BatchFeature:
+        if not mm_data:
+            tokenizer = self.info.get_tokenizer()
+            prompt = [prompt] if isinstance(prompt, str) else prompt
+            text_inputs = tokenizer(prompt,padding=False, return_tensors='pt')
+            return BatchFeature(data={**text_inputs})
         return self.info.ctx.call_hf_processor(
             self.info.get_hf_processor(**mm_kwargs),
             dict(text=prompt, **mm_data),
             self.info._get_image_processor_kwargs(**mm_kwargs),
         )
+
+    def _apply_hf_processor_text_only(self, prompt_text: str) -> list[int]:
+        """
+        Apply the HF processor on the prompt text only.
+
+        Since HF processor requires that text and multi-modal items
+        correspond to each other, we create dummy multi-modal items
+        to go along with the text.
+        """
+        tokenizer = self.info.get_tokenizer()
+        prompt_ids = tokenizer.encode(prompt_text)
+        return prompt_ids
 
 
     def _get_prompt_updates(

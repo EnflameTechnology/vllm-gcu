@@ -3,7 +3,8 @@ import importlib
 VLM_DATASETS = {
     "llava-bench-coco": ("llava_bench_coco", "LlavaBenchCocoDataset"),
     "MMMU": ("mmmu", "MMMUDataset"),
-    "videomme":("videomme", "VideoMMEDataset")
+    "videomme":("videomme", "VideoMMEDataset"),
+    "fox_benchmark_data":("fox_benchmark_data", "FoxBenchmarkData")
 }
 
 
