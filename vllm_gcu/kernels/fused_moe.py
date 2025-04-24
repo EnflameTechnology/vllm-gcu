@@ -25,6 +25,7 @@ from vllm.utils import vllm_lib
 
 from vllm_gcu.distributed.parallel_state import all_to_all_v2
 from vllm_gcu.kernels import _custom_ops as ops
+import vllm_gcu.envs as gcu_envs
 
 
 def moe_align_block_size(
@@ -47,15 +48,29 @@ def moe_align_block_size(
     num_tokens_post_pad = torch.empty((1), dtype=torch.int32, device=topk_ids.device)
 
     if topk_ids_size is not None:
-        ops.moe_align_block_size_pad(
-            topk_ids,
-            topk_ids_size,
-            num_experts,
-            block_size,
-            sorted_ids,
-            expert_ids,
-            num_tokens_post_pad,
-        )
+        if not gcu_envs.VLLM_GCU_DEEPSEEK_FUSION or expert_map is None:
+            ops.moe_align_block_size_pad(
+                topk_ids,
+                topk_ids_size,
+                num_experts,
+                block_size,
+                sorted_ids,
+                expert_ids,
+                num_tokens_post_pad,
+            )
+            if expert_map is not None:
+                expert_ids = torch_gcu.gcu.efficient.gcu_index(expert_map, [expert_ids])
+        else:
+            torch.ops._C.ets_moe_align_block_size(
+                sorted_ids,
+                expert_ids,
+                num_tokens_post_pad,
+                topk_ids,
+                topk_ids_size,
+                expert_map,
+                num_experts,
+                block_size,
+            )
     else:
         if num_experts >= 224:
             if envs.VLLM_ENABLE_MOE_ALIGN_BLOCK_SIZE_TRITON:
@@ -79,9 +94,8 @@ def moe_align_block_size(
                 num_tokens_post_pad,
             )
 
-    if expert_map is not None:
-        expert_ids = torch_gcu.gcu.efficient.gcu_index(expert_map, [expert_ids])
-        # expert_ids = expert_map[expert_ids.to(torch.int64)]
+        if expert_map is not None:
+            expert_ids = expert_map[expert_ids]
     return sorted_ids, expert_ids, num_tokens_post_pad
 
 
@@ -308,8 +322,6 @@ def fused_experts_impl(
 ):
     from vllm.distributed import get_world_group
 
-    import vllm_gcu.envs as gcu_envs
-
     assert activation == "silu", f"not support activation: {activation}"
 
     parallel_config = get_current_vllm_config().parallel_config
@@ -474,14 +486,21 @@ def fused_experts_impl(
             dtype=hidden_states.dtype,
             device=hidden_states.device,
         )
-
-        torch.ops._C.dynamic_split(
-            [hidden_states, topk_ids_, topk_weights_],
-            recv_packed,
-            recv_token_total.to(torch.uint32),
-            [hidden_states.shape[1], topk_ids_width, topk_weights_width],
-            1,
-        )
+        if gcu_envs.VLLM_GCU_DEEPSEEK_FUSION:
+            torch.ops._C.fused_dispatch_decode(
+                [hidden_states, topk_ids_, topk_weights_],
+                recv_packed,
+                sp_split_size,
+                [hidden_states.shape[1], topk_ids_width, topk_weights_width],
+            )
+        else:
+            torch.ops._C.dynamic_split(
+                [hidden_states, topk_ids_, topk_weights_],
+                recv_packed,
+                recv_token_total,
+                [hidden_states.shape[1], topk_ids_width, topk_weights_width],
+                1,
+            )
         topk_ids = topk_ids_.view(topk_ids.dtype)
         topk_weights = topk_weights_.view(topk_weights.dtype)
 

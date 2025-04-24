@@ -28,6 +28,7 @@
 #include "src/fused_grouped_topk.h"
 #include "src/fused_moe_kernel.h"
 #include "src/fused_moe_quant_kernel.h"
+#include "src/fused_qkv_gemm_quant.h"
 #include "src/fused_qkv_proj.h"
 #include "src/gelu_and_mul.h"
 #include "src/gelu_asym_quant.h"
@@ -693,10 +694,10 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
            &silu_mul_per_token_group_quant_with_size);
 
   ops.def(
-    "rotary_embedding_with_kv_cache(Tensor! q_out, Tensor! kv_cache, "
-    "Tensor q, Tensor kv, Tensor positions, Tensor cos_sin_cache, "
-    "Tensor weight, Tensor slot_mapping, Tensor scale, "
-    "float eps, int[] split_size, str kv_cache_dtype) -> ()");
+      "rotary_embedding_with_kv_cache(Tensor! q_out, Tensor! kv_cache, "
+      "Tensor q, Tensor kv, Tensor positions, Tensor cos_sin_cache, "
+      "Tensor weight, Tensor slot_mapping, Tensor scale, "
+      "float eps, int[] split_size, str kv_cache_dtype) -> ()");
   ops.impl("rotary_embedding_with_kv_cache", torch::kPrivateUse1,
            &rotary_embedding_with_kv_cache);
 
@@ -719,6 +720,11 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
       "fused_qkv_proj(Tensor(a!) q, Tensor(a!) kv, Tensor x, Tensor weight, "
       "Tensor x_scale, Tensor weight_scale, int group_size) -> ()");
   ops.impl("fused_qkv_proj", torch::kPrivateUse1, &fused_qkv_proj);
+
+  ops.def(
+      "fused_qkv_gemm_quant(Tensor(a!) q, Tensor(a!) kv, Tensor x, Tensor "
+      "weight, Tensor scale, Tensor zeros, int group_size) -> ()");
+  ops.impl("fused_qkv_gemm_quant", torch::kPrivateUse1, &fused_qkv_gemm_quant);
 }
 
 TORCH_LIBRARY_EXPAND(CONCAT(TORCH_EXTENSION_NAME, _cache_ops), cache_ops) {
