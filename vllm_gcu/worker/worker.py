@@ -221,13 +221,13 @@ def init_worker_distributed_environment(
     ensure_kv_transfer_initialized(vllm_config)
 
     group = get_tp_group()
-    group.device = torch.device(f"gcu:{group.local_rank}")
+    group.use_custom_op_call = False
 
     group = get_pp_group()
-    group.device = torch.device(f"gcu:{group.local_rank}")
+    group.use_custom_op_call = False
 
     group = get_dp_group()
-    group.device = torch.device(f"gcu:{group.local_rank}")
+    group.use_custom_op_call = False
 
     all_ranks = torch.arange(parallel_config.world_size_across_dp).reshape(parallel_config.data_parallel_size, -1)
     group_ranks = all_ranks.transpose(0, 1).unbind(0)
@@ -240,4 +240,4 @@ def init_worker_distributed_environment(
     group.cpu_group = rank_cpu_group
 
     group = get_world_group()
-    group.device = torch.device(f"gcu:{group.local_rank}")
+    group.use_custom_op_call = False
