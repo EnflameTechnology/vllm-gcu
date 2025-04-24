@@ -15,6 +15,8 @@ function arm_normal_build() {
 }
 
 function x86_normal_build() {
+  
+  sudo python3.10 -m pip install --index-url http://artifact.enflame.cn/artifactory/api/pypi/pypi-remote/simple --trusted-host artifact.enflame.cn torch==2.5.1 patch pyyaml packaging numpy==1.22.4
   echo "Current build job: $FUNCNAME"
   echo `pwd`
   cmake ${project_name} --preset ci_all -B cmake_build
