@@ -15,6 +15,7 @@
 #include "src/dynamic_split.h"
 #include "src/fatrelu_and_mul.h"
 #include "src/fused_add_rms_norm.h"
+#include "src/fused_add_rms_norm_per_token_group_quant_fp8.h"
 #include "src/fused_add_rms_norm_quant.h"
 #include "src/fused_add_rms_norm_static_fp8_quant.h"
 #include "src/fused_grouped_topk.h"
@@ -39,6 +40,7 @@
 #include "src/gptq_gemm_gcu.h"
 #include "src/gptq_shuffle.h"
 #include "src/layer_norm_quant.h"
+#include "src/linear_quant.h"
 #include "src/memory_efficient_attention_alibi.h"
 #include "src/moe_align_block_size.h"
 #include "src/moe_align_block_size_pad.h"
@@ -54,6 +56,8 @@
 #include "src/silu_and_mul.h"
 #include "src/silu_and_mul_pad.h"
 #include "src/silu_asym_quant.h"
+#include "src/silu_mul_per_token_group_quant.h"
+#include "src/silu_mul_per_token_group_quant_with_size.h"
 #include "src/silu_mul_quant.h"
 #include "src/silu_quant.h"
 #include "src/static_scaled_int8_asym_dequant.h"
@@ -63,6 +67,8 @@
 #include "src/topk_softmax.h"
 #include "src/weak_ref_tensor.h"
 #include "src/weight_only_quant.h"
+#include "src/rms_norm_per_token_group_quant.h"
+
 // Note on op signatures:
 // The X_meta signatures are for the meta functions corresponding to op X.
 // They must be kept in sync with the signature for X. Generally, only
@@ -569,6 +575,10 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
   ops.def("dot_bias_quant", &dot_bias_quant);
   ops.impl("dot_bias_quant", c10::kPrivateUse1, &dot_bias_quant);
 
+  ops.def("linear_quant(Tensor! out, Tensor lhs, Tensor rhs, Tensor? bias, "
+    "Tensor lhs_scale, Tensor rhs_scale) -> ()");
+  ops.impl("linear_quant", torch::kPrivateUse1, linear_quant);
+
   ops.def("memory_efficient_attention_alibi",
           &memory_efficient_attention_alibi);
   ops.impl("memory_efficient_attention_alibi", c10::kPrivateUse1,
@@ -591,6 +601,23 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
           "Tensor input, int group_size) -> ()");
   ops.impl("dynamic_per_token_group_fp8_quant", torch::kPrivateUse1,
            dynamic_per_token_group_fp8_quant);
+  ops.def("silu_mul_per_token_group_quant("
+            "Tensor! out, Tensor! scale, Tensor input, "
+            "int group_size) -> ()");
+  ops.impl("silu_mul_per_token_group_quant", torch::kPrivateUse1,
+             &silu_mul_per_token_group_quant);
+
+  ops.def("fused_add_rms_norm_per_token_group_quant_fp8("
+    "Tensor! out, Tensor! residual_update, "
+    "Tensor! scale, Tensor input, Tensor residual, Tensor weight, "
+    "float epsilon, int group_size) -> ()");
+  ops.impl("fused_add_rms_norm_per_token_group_quant_fp8", torch::kPrivateUse1,
+           &fused_add_rms_norm_per_token_group_quant_fp8);
+
+  ops.def("rms_norm_per_token_group_quant(Tensor! out, Tensor! scale, "
+          "Tensor input, Tensor weight, float epsilon, int group_size) -> ()");
+  ops.impl("rms_norm_per_token_group_quant", torch::kPrivateUse1,
+             &rms_norm_per_token_group_quant);
 }
 
 TORCH_LIBRARY_EXPAND(CONCAT(TORCH_EXTENSION_NAME, _cache_ops), cache_ops) {
