@@ -169,8 +169,21 @@
 - func: moe_sum(Tensor(a!) out, Tensor input, Tensor size, int dim, bool keepdim) -> ()
   variants: function
 
+- func: linear_quant(Tensor(a!) out, Tensor lhs, Tensor rhs, Tensor? bias, Tensor lhs_scale, Tensor rhs_scale) -> ()
+  variants: function
+
 - func: dynamic_split(Tensor[] out, Tensor input, Tensor size, int[] split_sizes, int dim) -> ()
   variants: function
 
 - func: dynamic_per_token_group_fp8_quant(Tensor(a!) out, Tensor(a!) scale, Tensor input, int group_size) -> ()
+- func: silu_mul_per_token_group_quant(Tensor(a!) out, Tensor(a!) scale, Tensor input, int group_size) -> ()
+  variants: function
+
+- func: rms_norm_per_token_group_quant(Tensor(a!) out, Tensor(a!) scale, Tensor input, Tensor weight, float epsilon, int group_size) -> ()
+  variants: function
+
+- func: fused_add_rms_norm_per_token_group_quant_fp8(Tensor(a!) out, Tensor(a!) residual_update, Tensor(a!) scale, Tensor input, Tensor residual, Tensor weight, float epsilon, int group_size) -> ()
+  variants: function
+  
+- func: silu_mul_per_token_group_quant_with_size(Tensor(a!) out, Tensor(a!) scale, Tensor input, Tensor size, int group_size) -> ()
   variants: function
