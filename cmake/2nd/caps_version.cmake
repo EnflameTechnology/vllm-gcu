@@ -1,0 +1,6 @@
+# set(PREBUILD_XNAS_CAPS_BASE "http://xnas.enflame.cn/driver_packages/release/2024-02-26/1349/integration/f5802a3/")
+set(PREBUILD_CAPS_COMMIT 6dfa38b)
+set(PREBUILD_CAPS_DATE 2025-05-06)
+set(PREBUILD_CAPS_VERSION_BIG 1.4.3.10)
+set(PREBUILD_CAPS_BRANCH "integration_1.4.3_topsplatform_20250415")
+set(IGNORE_DDEB_ERROR ON)
