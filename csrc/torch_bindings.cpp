@@ -49,7 +49,7 @@
 #include "src/paged_attention_v1.h"
 #include "src/paged_attention_v2.h"
 #include "src/rms_norm.h"
-#include "src/rms_norm_per_token_group_quant.h"
+#include "src/rms_norm_per_token_group_quant_fp8.h"
 #include "src/rms_norm_quant.h"
 #include "src/rms_norm_static_fp8_quant.h"
 #include "src/rotary_embedding.h"
@@ -70,6 +70,7 @@
 #include "src/weight_only_quant.h"
 #include "src/static_scaled_fp8_quant.h"
 #include "src/dynamic_scaled_fp8_quant.h"
+#include "src/dynamic_per_token_scaled_fp8_quant.h"
 
 // Note on op signatures:
 // The X_meta signatures are for the meta functions corresponding to op X.
@@ -493,8 +494,8 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
       "dynamic_per_token_scaled_fp8_quant(Tensor! result, Tensor input, "
       "Tensor! scale, Tensor? scale_ub) -> "
       "()");
-  // ops.impl("dynamic_per_token_scaled_fp8_quant", torch::kPrivateUse1,
-  // &dynamic_per_token_scaled_fp8_quant);
+  ops.impl("dynamic_per_token_scaled_fp8_quant", torch::kPrivateUse1,
+      &dynamic_per_token_scaled_fp8_quant);
 
   // Compute int8 quantized tensor for given scaling factor.
   ops.def(
@@ -653,11 +654,10 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
   ops.impl("fused_add_rms_norm_per_token_group_quant_fp8", torch::kPrivateUse1,
            &fused_add_rms_norm_per_token_group_quant_fp8);
 
-  ops.def(
-      "rms_norm_per_token_group_quant(Tensor! out, Tensor! scale, "
-      "Tensor input, Tensor weight, float epsilon, int group_size) -> ()");
-  ops.impl("rms_norm_per_token_group_quant", torch::kPrivateUse1,
-           &rms_norm_per_token_group_quant);
+  ops.def("rms_norm_per_token_group_quant_fp8(Tensor! out, Tensor! scale, "
+          "Tensor input, Tensor weight, float epsilon, int group_size) -> ()");
+  ops.impl("rms_norm_per_token_group_quant_fp8", torch::kPrivateUse1,
+           &rms_norm_per_token_group_quant_fp8);
 }
 
 TORCH_LIBRARY_EXPAND(CONCAT(TORCH_EXTENSION_NAME, _cache_ops), cache_ops) {
