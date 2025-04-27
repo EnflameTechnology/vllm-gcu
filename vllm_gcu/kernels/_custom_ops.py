@@ -4,6 +4,11 @@ import tops_extension.torch  # noqa: F401
 import torch
 import torch_gcu  # noqa: F401
 
+try:
+    from torch.library import register_fake
+except ImportError:
+    from torch.library import impl_abstract as register_fake
+
 import vllm_gcu._C  # noqa: F401
 
 
@@ -238,6 +243,20 @@ def awq_gemm_gcu(
     return torch.ops._C.awq_gemm_gcu(
         input, qweight, qzeros, scales, split_k_iters, bias, group_size
     )
+
+
+@register_fake("_C::awq_gemm_gcu")
+def _awq_gemm_gcu_fake(
+    input: torch.Tensor,
+    qweight: torch.Tensor,
+    qzeros: torch.Tensor,
+    scales: torch.Tensor,
+    split_k_iters: int,
+    bias=None,
+    group_size=128,
+) -> torch.Tensor:
+    out_shape = input.shape[:-1] + (qweight.shape[-1],)
+    return torch.empty(out_shape, dtype=input.dtype, device=input.device)
 
 
 # gptq
@@ -577,7 +596,7 @@ def w8a8_block_fp8_matmul(
     bias: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     N, _ = B.shape
-    C_shape = A.shape[:-1] + (N, )
+    C_shape = A.shape[:-1] + (N,)
     C = A.new_empty(C_shape, dtype=output_dtype)
 
     torch.ops._C.linear_quant(C, A, B, bias, As, Bs)
