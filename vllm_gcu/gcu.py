@@ -39,6 +39,7 @@ class GCUPlatform(Platform):
         "moe_wna16_gcu",
         "w8a8_gcu",
         "fp8",
+        "fp8_gcu",
     ]
 
     def is_cuda_alike(self) -> bool:
