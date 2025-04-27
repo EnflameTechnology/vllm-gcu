@@ -184,6 +184,12 @@
 
 - func: fused_add_rms_norm_per_token_group_quant_fp8(Tensor(a!) out, Tensor(a!) residual, Tensor(a!) scale, Tensor input, Tensor weight, float epsilon, int group_size) -> ()
   variants: function
-  
+
 - func: silu_mul_per_token_group_quant_with_size(Tensor(a!) out, Tensor(a!) scale, Tensor input, Tensor size, int group_size) -> ()
+  variants: function
+
+- func: static_scaled_fp8_quant(Tensor(a!) result, Tensor input, Tensor scale) -> ()
+  variants: function
+
+- func: dynamic_scaled_fp8_quant(Tensor(a!) result, Tensor input, Tensor(a!) scale) -> ()
   variants: function

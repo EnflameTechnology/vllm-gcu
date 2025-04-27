@@ -18,6 +18,9 @@ import vllm_gcu.kernels._custom_ops as ops
 
 
 class GCUMLABackend(MLACommonBackend):
+
+    accept_output_buffer: bool = True
+
     @staticmethod
     def get_name() -> str:
         return "TRITON_MLA"
@@ -128,21 +131,29 @@ class GCUMLAImpl(MLACommonImpl[MLACommonMetadata]):
         output=None,
     ):
         if attn_metadata is None:
-            return torch.empty(
-                [0, self.o_proj.output_size],
-                dtype=hidden_states_or_q_c.dtype,
-                device=hidden_states_or_q_c.device,
-            )
+            if output is not None:
+                return output
+            else:
+                return torch.empty(
+                    [0, self.o_proj.output_size],
+                    dtype=hidden_states_or_q_c.dtype,
+                    device=hidden_states_or_q_c.device,
+                )
 
-        return super().forward(
+        res = super().forward(
             layer,
             hidden_states_or_q_c,
             k_c_normed,
             k_pe,
             kv_cache,
             attn_metadata,
-            output,
+            None,
         )
+
+        if output is not None:
+            return output.copy_(res)
+        else:
+            return res
 
     def _forward_prefill(
         self,
