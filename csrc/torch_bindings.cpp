@@ -49,6 +49,7 @@
 #include "src/paged_attention_v1.h"
 #include "src/paged_attention_v2.h"
 #include "src/rms_norm.h"
+#include "src/rms_norm_per_token_group_quant.h"
 #include "src/rms_norm_quant.h"
 #include "src/rms_norm_static_fp8_quant.h"
 #include "src/rotary_embedding.h"
@@ -67,7 +68,6 @@
 #include "src/topk_softmax.h"
 #include "src/weak_ref_tensor.h"
 #include "src/weight_only_quant.h"
-#include "src/rms_norm_per_token_group_quant.h"
 
 // Note on op signatures:
 // The X_meta signatures are for the meta functions corresponding to op X.
@@ -576,7 +576,7 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
   ops.impl("dot_bias_quant", c10::kPrivateUse1, &dot_bias_quant);
 
   ops.def("linear_quant(Tensor! out, Tensor lhs, Tensor rhs, Tensor? bias, "
-    "Tensor lhs_scale, Tensor rhs_scale) -> ()");
+          "Tensor lhs_scale, Tensor rhs_scale) -> ()");
   ops.impl("linear_quant", torch::kPrivateUse1, linear_quant);
 
   ops.def("memory_efficient_attention_alibi",
@@ -602,22 +602,22 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
   ops.impl("dynamic_per_token_group_fp8_quant", torch::kPrivateUse1,
            dynamic_per_token_group_fp8_quant);
   ops.def("silu_mul_per_token_group_quant("
-            "Tensor! out, Tensor! scale, Tensor input, "
-            "int group_size) -> ()");
+          "Tensor! out, Tensor! scale, Tensor input, "
+          "int group_size) -> ()");
   ops.impl("silu_mul_per_token_group_quant", torch::kPrivateUse1,
-             &silu_mul_per_token_group_quant);
+           &silu_mul_per_token_group_quant);
 
   ops.def("fused_add_rms_norm_per_token_group_quant_fp8("
-    "Tensor! out, Tensor! residual_update, "
-    "Tensor! scale, Tensor input, Tensor residual, Tensor weight, "
-    "float epsilon, int group_size) -> ()");
+          "Tensor! out, Tensor! residual, "
+          "Tensor! scale, Tensor input, Tensor weight, "
+          "float epsilon, int group_size) -> ()");
   ops.impl("fused_add_rms_norm_per_token_group_quant_fp8", torch::kPrivateUse1,
            &fused_add_rms_norm_per_token_group_quant_fp8);
 
   ops.def("rms_norm_per_token_group_quant(Tensor! out, Tensor! scale, "
           "Tensor input, Tensor weight, float epsilon, int group_size) -> ()");
   ops.impl("rms_norm_per_token_group_quant", torch::kPrivateUse1,
-             &rms_norm_per_token_group_quant);
+           &rms_norm_per_token_group_quant);
 }
 
 TORCH_LIBRARY_EXPAND(CONCAT(TORCH_EXTENSION_NAME, _cache_ops), cache_ops) {
