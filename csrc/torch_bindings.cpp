@@ -12,6 +12,8 @@
 #include "src/dispatch_bgmv_low_level.h"
 #include "src/dot_bias_quant.h"
 #include "src/dynamic_per_token_group_fp8_quant.h"
+#include "src/dynamic_per_token_scaled_fp8_quant.h"
+#include "src/dynamic_scaled_fp8_quant.h"
 #include "src/dynamic_split.h"
 #include "src/fatrelu_and_mul.h"
 #include "src/fused_add_rms_norm.h"
@@ -61,6 +63,7 @@
 #include "src/silu_mul_per_token_group_quant_with_size.h"
 #include "src/silu_mul_quant.h"
 #include "src/silu_quant.h"
+#include "src/static_scaled_fp8_quant.h"
 #include "src/static_scaled_int8_asym_dequant.h"
 #include "src/static_scaled_int8_asym_quant.h"
 #include "src/static_scaled_int8_dequant.h"
@@ -68,9 +71,6 @@
 #include "src/topk_softmax.h"
 #include "src/weak_ref_tensor.h"
 #include "src/weight_only_quant.h"
-#include "src/static_scaled_fp8_quant.h"
-#include "src/dynamic_scaled_fp8_quant.h"
-#include "src/dynamic_per_token_scaled_fp8_quant.h"
 
 // Note on op signatures:
 // The X_meta signatures are for the meta functions corresponding to op X.
@@ -127,7 +127,7 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
   ops.def("silu_and_mul(Tensor! out, Tensor input) -> ()");
   ops.impl("silu_and_mul", torch::kPrivateUse1, &silu_and_mul);
 
-  ops.def("silu_and_mul_pad", &silu_and_mul_pad);
+  ops.def("silu_and_mul_pad(Tensor(a!) out, Tensor input, Tensor size) -> ()");
   ops.impl("silu_and_mul_pad", torch::kPrivateUse1, &silu_and_mul_pad);
 
   ops.def("mul_and_silu(Tensor! out, Tensor input) -> ()");
@@ -495,7 +495,7 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
       "Tensor! scale, Tensor? scale_ub) -> "
       "()");
   ops.impl("dynamic_per_token_scaled_fp8_quant", torch::kPrivateUse1,
-      &dynamic_per_token_scaled_fp8_quant);
+           &dynamic_per_token_scaled_fp8_quant);
 
   // Compute int8 quantized tensor for given scaling factor.
   ops.def(
@@ -628,7 +628,11 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
   ops.impl("dispatch_bgmv_low_level", c10::kPrivateUse1,
            &dispatch_bgmv_low_level);
 
-  ops.def("fused_grouped_topk", &fused_grouped_topk);
+  ops.def(
+      "fused_grouped_topk(Tensor! topk_weights, Tensor! topk_ids, Tensor "
+      "gating_output, SymInt topk, bool renormalize, SymInt num_expert_group, "
+      "SymInt topk_group, Tensor e_score_correction_bias, str scoring_func) -> "
+      "()");
   ops.impl("fused_grouped_topk", c10::kPrivateUse1, &fused_grouped_topk);
 
   ops.def("dynamic_split", &dynamic_split);
@@ -654,10 +658,17 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
   ops.impl("fused_add_rms_norm_per_token_group_quant_fp8", torch::kPrivateUse1,
            &fused_add_rms_norm_per_token_group_quant_fp8);
 
-  ops.def("rms_norm_per_token_group_quant_fp8(Tensor! out, Tensor! scale, "
-          "Tensor input, Tensor weight, float epsilon, int group_size) -> ()");
+  ops.def(
+      "rms_norm_per_token_group_quant_fp8(Tensor! out, Tensor! scale, "
+      "Tensor input, Tensor weight, float epsilon, int group_size) -> ()");
   ops.impl("rms_norm_per_token_group_quant_fp8", torch::kPrivateUse1,
            &rms_norm_per_token_group_quant_fp8);
+
+  ops.def(
+      "silu_mul_per_token_group_quant_with_size(Tensor(a!) out, Tensor(a!) "
+      "scale, Tensor input, Tensor size, int group_size) -> ()");
+  ops.impl("silu_mul_per_token_group_quant_with_size", torch::kPrivateUse1,
+           &silu_mul_per_token_group_quant_with_size);
 }
 
 TORCH_LIBRARY_EXPAND(CONCAT(TORCH_EXTENSION_NAME, _cache_ops), cache_ops) {
