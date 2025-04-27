@@ -118,7 +118,8 @@ def invoke_fused_moe_kernel(
             assert (
                 block_n == block_k
             ), "FP8 only support DeepSeek V3 with same group_n and group_k"
-            A, A_scale = ops.per_token_group_quant_fp8(A, block_k)
+            if A_scale is None:
+                A, A_scale = ops.per_token_group_quant_fp8(A, block_k)
     elif use_int8_w8a16 or use_int4_w4a16:
         assert B_scale is not None
         assert block_shape and block_shape[0] == 0
@@ -513,10 +514,11 @@ def fused_experts_impl(
         (M, topk_ids.shape[1], w2.shape[1])
     )
 
+    cache2_dtype = torch.float8_e4m3fn if use_fp8_w8a8 else hidden_states.dtype
     intermediate_cache2 = torch.empty(
         (M * top_k_num, N // 2),
         device=hidden_states.device,
-        dtype=hidden_states.dtype,
+        dtype=cache2_dtype,
     )
 
     if inplace:
@@ -595,11 +597,28 @@ def fused_experts_impl(
             real_token_num=valid_in_chunk,
         )
 
-        torch.ops._C.silu_and_mul_pad(
-            intermediate_cache2.view(-1, top_k_num, N // 2),
-            intermediate_cache1,
-            valid_in_chunk,
-        )
+        if use_fp8_w8a8:
+            group_size = block_shape[1]
+            shape = (
+                *intermediate_cache1.shape[:-1],
+                N // 2 // group_size,
+            )
+            a2_scale = torch.empty(
+                shape, dtype=torch.float32, device=intermediate_cache1.device
+            )
+            torch.ops._C.silu_mul_per_token_group_quant_with_size(
+                intermediate_cache2.view(-1, top_k_num, N // 2),
+                a2_scale,
+                intermediate_cache1,
+                valid_in_chunk,
+                group_size,
+            )
+        else:
+            torch.ops._C.silu_and_mul_pad(
+                intermediate_cache2.view(-1, top_k_num, N // 2),
+                intermediate_cache1,
+                valid_in_chunk,
+            )
 
         invoke_fused_moe_kernel(
             intermediate_cache2,
