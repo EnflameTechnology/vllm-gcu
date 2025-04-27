@@ -194,6 +194,7 @@ class DeepseekV2MoE(nn.Module):
         self.tp_size = self.experts.tp_size
 
         self.do_shared_and_scale = True
+        self.context = nullcontext()
         if config.n_shared_experts is not None:
             intermediate_size = config.moe_intermediate_size * config.n_shared_experts
             self.shared_experts = DeepseekV2MLP(
@@ -206,6 +207,11 @@ class DeepseekV2MoE(nn.Module):
             )
             if self.experts.ep_size > 1:
                 self.do_shared_and_scale = False
+                self.context = patch(
+                    'vllm_gcu.kernels.fused_moe.fused_experts_impl',
+                    partial(fused_experts_impl, shared_experts=self.shared_experts,
+                            routed_scaling_factor=self.routed_scaling_factor)
+                )
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         num_tokens, hidden_dim = hidden_states.shape
@@ -214,11 +220,7 @@ class DeepseekV2MoE(nn.Module):
         if self.n_shared_experts is not None and self.do_shared_and_scale:
             shared_output = self.shared_experts(hidden_states)
         router_logits, _ = self.gate(hidden_states)
-        shared_experts_inner = None if self.do_shared_and_scale else self.shared_experts
-        context = patch('vllm_gcu.kernels.fused_moe.fused_experts_impl',
-                        partial(fused_experts_impl, shared_experts=shared_experts_inner,
-                                routed_scaling_factor=self.routed_scaling_factor))
-        with context:
+        with self.context:
             final_hidden_states = (
                 self.experts(
                     hidden_states=hidden_states,
