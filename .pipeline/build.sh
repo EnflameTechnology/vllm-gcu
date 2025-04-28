@@ -53,6 +53,7 @@ function zx_normal_build() {
   echo `pwd`
   PROJECT_GIT_URL="git@git.tencent.com:sy-zx/enflame_caps"
   sudo python3.10 -m pip install torch==2.5.1 patch pyyaml packaging numpy==1.22.4
+  rm -rf cmake_build
   mkdir -p ${BUILD_ROOT_DIR}/cmake_build/ci
   cd ${BUILD_ROOT_DIR}/cmake_build
   touch ${BUILD_ROOT_DIR}/cmake_build/ci/module_packages.json
@@ -81,6 +82,8 @@ function zx_normal_build() {
   cd ${BUILD_ROOT_DIR}/cmake_build
   ninja -j4 install
   ninja -j4 package_all
+  cd ${BUILD_ROOT_DIR}
+  ./vllm/.pippeline/copy_packages.sh
 }
 
 function main() {
