@@ -64,7 +64,6 @@ pull_from_repo "xformers_binary" "$XFORMERS_39_FILE"
 cp ${ROOT_DIR}/cmake_build/xformers_binary/$XFORMERS_310_FILE ${ROOT_DIR}/cmake_build/x86_64-linux-rel/python_packages/
 cp ${ROOT_DIR}/cmake_build/xformers_binary/$XFORMERS_39_FILE ${ROOT_DIR}/cmake_build/x86_64-linux-rel/python_packages/
 
-
 # find torch_zx_utils
 TORCH_ZX_UTILS_COMMITID=$(grep 'set(TORCH_ZX_UTILS_COMMIT' ${ROOT_DIR}/vllm/cmake/fetch_dependences.cmake | sed -E 's/.*set\(TORCH_ZX_UTILS_COMMITID ([a-f0-9]+)\).*/\1/')
 echo "Found TORCH_ZX_UTILS_COMMITID is: $TORCH_ZX_UTILS_COMMITID"
@@ -80,7 +79,20 @@ pull_from_repo "torch_gcu_binary" "$TORCH_ZX_UTILS_39_FILE"
 cp ${ROOT_DIR}/cmake_build/torch_gcu_binary/$TORCH_ZX_UTILS_310_FILE ${ROOT_DIR}/cmake_build/x86_64-linux-rel/python_packages/
 cp ${ROOT_DIR}/cmake_build/torch_gcu_binary/$TORCH_ZX_UTILS_39_FILE ${ROOT_DIR}/cmake_build/x86_64-linux-rel/python_packages/
 
+# find topsaten
+TOPSOP_COMMITID=$(grep 'set(TOPSOP_COMMITID' ${ROOT_DIR}/vllm/cmake/fetch_dependences.cmake | sed -E 's/.*set\(TOPSOP_COMMITID "([^"]+)"\).*/\1/')
+echo "Found TOPSOP_COMMITID is: $TOPSOP_COMMITID"
+
+TOPSOP_PACKAGE_VERSION=$(grep 'set(TOPSOP_PACKAGE_VERSION' ${ROOT_DIR}/vllm/cmake/fetch_dependences.cmake | sed -E 's/.*set\(TOPSOP_PACKAGE_VERSION "([^"]+)"\).*/\1/')
+echo "Found TOPSOP_PACKAGE_VERSION is: $TOPSOP_PACKAGE_VERSION"
+
+TOPSATEN_FILE=${TOPSOP_COMMITID}/topsaten_cape_${TOPSOP_PACKAGE_VERSION}-1_amd64.deb
+pull_from_repo "topsaten_binary" "${TOPSATEN_FILE}"
+
+cp ${ROOT_DIR}/cmake_build/topsaten_binary/$TOPSATEN_FILE ${ROOT_DIR}/cmake_build/x86_64-linux-rel/python_packages/
+
 cd ${ROOT_DIR}/cmake_build/x86_64-linux-rel/python_packages/
 mv tops_extension_cape-${TOPS_EXTENSION_DAILY_TAG}+torch.2.5.1-cp39-cp39-linux_x86_64.whl tops_extension-${TOPS_EXTENSION_DAILY_TAG}+torch.2.5.1-cp39-cp39-linux_x86_64.whl
 mv xformers_cape-${XFORMERS_DAILY_TAG}-cp310-cp310-linux_x86_64.whl xformers-${XFORMERS_DAILY_TAG}-cp310-cp310-linux_x86_64.whl
 mv xformers_cape-${XFORMERS_DAILY_TAG}-cp39-cp39-linux_x86_64.whl xformers-${XFORMERS_DAILY_TAG}-cp39-cp39-linux_x86_64.whl
+mv topsaten_cape_${TOPSOP_PACKAGE_VERSION}-1_amd64.deb topsaten_${TOPSOP_PACKAGE_VERSION}-1_amd64.deb

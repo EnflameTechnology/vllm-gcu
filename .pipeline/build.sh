@@ -83,7 +83,7 @@ function zx_normal_build() {
   ninja -j4 install
   ninja -j4 package_all
   cd ${BUILD_ROOT_DIR}
-  ./vllm/.pippeline/copy_packages.sh
+  ./vllm/.pipeline/copy_packages.sh
 }
 
 function main() {
