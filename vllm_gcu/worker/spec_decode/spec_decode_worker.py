@@ -1,0 +1,328 @@
+import copy
+from typing import Any, Dict, List, Optional, Set, Tuple, Type
+
+import torch
+import torch_gcu
+
+from vllm.logger import init_logger
+from vllm.config import ParallelConfig, SpeculativeConfig, VllmConfig
+from vllm.sequence import (VLLM_INVALID_TOKEN_ID,
+                           CompletionSequenceGroupOutput, ExecuteModelRequest,
+                           HiddenStates, SequenceOutput,
+                           Logprob)
+from vllm.model_executor.layers.rejection_sampler import RejectionSampler
+from vllm.model_executor.layers.sampler import SamplerOutput
+from vllm.model_executor.layers.spec_decode_base_sampler import (
+    SpecDecodeBaseSampler, SpecDecodeStochasticBaseSampler)
+from vllm.model_executor.layers.typical_acceptance_sampler import (
+    TypicalAcceptanceSampler)
+from vllm.spec_decode.target_model_runner import TargetModelRunner
+from vllm.spec_decode.spec_decode_worker import SpecDecodeWorker, prepare_prefill_hidden_states
+from vllm.worker.worker_base import WorkerBase
+from vllm.spec_decode.multi_step_worker import MultiStepWorker
+from vllm.spec_decode.ngram_worker import NGramWorker
+from vllm.spec_decode.mlp_speculator_worker import MLPSpeculatorWorker
+from vllm.spec_decode.medusa_worker import MedusaWorker
+from vllm.spec_decode.proposer_worker_base import ProposerWorkerBase
+from vllm.spec_decode.util import nvtx_range
+from vllm.utils import resolve_obj_by_qualname
+
+from .smaller_tp_proposer_worker import SmallerTpProposerGCUWorker
+from .metrics import AsyncMetricsGCUCollector
+
+logger = init_logger(__name__)
+
+def create_spec_worker(*args, **kwargs) -> "SpecDecodeGCUWorker":
+    """Helper method that is the entrypoint for Executors which use
+    WorkerWrapper. It constructs a SpecDecodeWorker from the speculative config.
+    """
+    vllm_config: VllmConfig = kwargs.get("vllm_config")
+    speculative_config: SpeculativeConfig = vllm_config.speculative_config
+    assert speculative_config is not None
+
+    if vllm_config.parallel_config.pipeline_parallel_size > 1:
+        raise NotImplementedError("Speculative decoding is currently "
+                                  "incompatible with pipeline parallelism")
+
+    draft_worker_kwargs = kwargs.copy()
+
+    kwargs["model_runner_cls"] = TargetModelRunner
+    target_worker_config = copy.deepcopy(vllm_config)
+    target_worker_config.parallel_config.worker_cls =\
+        target_worker_config.parallel_config.sd_worker_cls
+    cls = resolve_obj_by_qualname(
+        target_worker_config.parallel_config.worker_cls)
+    target_worker = cls(*args, **kwargs)
+    # Set the disable_logprobs variable in the TargetModelRunner instance
+    # as per its value specified in the SpeculativeConfig.
+    target_worker.model_runner.disable_logprobs =\
+         speculative_config.disable_logprobs
+
+    draft_worker_config = copy.deepcopy(vllm_config)
+    draft_worker_config.model_config = speculative_config.draft_model_config
+    draft_worker_config.quant_config = VllmConfig._get_quantization_config(
+        draft_worker_config.model_config,
+        vllm_config.load_config,
+    )
+    speculative_config.draft_parallel_config.worker_cls =\
+        draft_worker_config.parallel_config.sd_worker_cls
+    draft_worker_config.parallel_config = speculative_config.draft_parallel_config  # noqa
+    # Only support none ep for now, get rid of communication between ep ranks. Otherwise in dp will get dead-locked.
+    draft_worker_config.parallel_config.data_parallel_size = 1
+    draft_worker_config.parallel_config.data_parallel_rank = 0
+    draft_worker_config.parallel_config.enable_expert_parallel = False
+    draft_worker_config.parallel_config.disable_custom_all_reduce = True
+    # TODO allow draft-model specific load config.
+
+    # Override draft-model specific worker args.
+    draft_worker_kwargs.update(
+        vllm_config=draft_worker_config,
+        ngram_prompt_lookup_max=speculative_config.ngram_prompt_lookup_max,
+        ngram_prompt_lookup_min=speculative_config.ngram_prompt_lookup_min,
+    )
+
+    spec_decode_worker = SpecDecodeGCUWorker.create_worker(
+        scorer_worker=target_worker,
+        draft_worker_kwargs=draft_worker_kwargs,
+        disable_mqa_scorer=speculative_config.speculative_disable_mqa_scorer,
+        disable_by_batch_size=speculative_config.
+        speculative_disable_by_batch_size,
+        draft_token_acceptance_method=speculative_config.
+        draft_token_acceptance_method,
+        typical_acceptance_sampler_posterior_threshold=speculative_config.
+        typical_acceptance_sampler_posterior_threshold,
+        typical_acceptance_sampler_posterior_alpha=speculative_config.
+        typical_acceptance_sampler_posterior_alpha,
+        disable_logprobs=speculative_config.disable_logprobs,
+        disable_log_stats=speculative_config.disable_log_stats,
+        num_speculative_tokens=speculative_config.num_speculative_tokens,
+    )
+
+    return spec_decode_worker
+
+class SpecDecodeGCUWorker(SpecDecodeWorker):
+    @classmethod
+    def create_worker(
+        cls,
+        scorer_worker: WorkerBase,
+        draft_worker_kwargs: Dict[str, Any],
+        disable_mqa_scorer: bool,
+        disable_by_batch_size: Optional[int],
+        draft_token_acceptance_method: str,
+        typical_acceptance_sampler_posterior_threshold: float,
+        typical_acceptance_sampler_posterior_alpha: float,
+        disable_logprobs: bool,
+        disable_log_stats: bool,
+        num_speculative_tokens: int,
+    ) -> "SpecDecodeGCUWorker":
+
+        allow_zero_draft_token_step = True
+        enable_lm_head_weight_load = False
+        num_spec_prefill_steps = 1
+        ngram_prompt_lookup_max = (
+            draft_worker_kwargs.pop("ngram_prompt_lookup_max"))
+        ngram_prompt_lookup_min = (
+            draft_worker_kwargs.pop("ngram_prompt_lookup_min"))
+        draft_model_config = draft_worker_kwargs["vllm_config"].model_config
+        draft_parallel_config: ParallelConfig = draft_worker_kwargs[
+            'vllm_config'].parallel_config
+        if ngram_prompt_lookup_max > 0:
+            draft_worker_kwargs[
+                "device_type"] = scorer_worker.device_config.device.type
+            proposer_worker = NGramWorker(**draft_worker_kwargs)
+            proposer_worker.set_ngram_window_size(ngram_prompt_lookup_min,
+                                                  ngram_prompt_lookup_max)
+        else:
+            draft_tp = draft_parallel_config.tensor_parallel_size
+            target_tp = scorer_worker.parallel_config.tensor_parallel_size
+
+            if draft_model_config.hf_config.model_type == "mlp_speculator":
+                proposer_worker = MLPSpeculatorWorker(**draft_worker_kwargs)
+            elif draft_model_config.hf_config.model_type == "medusa":
+                proposer_worker = MedusaWorker(**draft_worker_kwargs)
+            else:
+                if draft_tp == 1:
+                    # if current_platform.is_cuda_alike():
+                    #     draft_worker_kwargs[
+                    #         "model_runner_cls"] = TP1DraftModelRunner
+                    pass
+                else:
+                    if draft_model_config.hf_config.model_type == "eagle":
+                        raise NotImplementedError(
+                            f"{draft_model_config.hf_config.model_type} "
+                            "does not support TP > 1 yet")
+
+                    allow_zero_draft_token_step = False
+
+                # Load lm_head weight for eagle in init_device
+                if draft_model_config.hf_config.model_type == "eagle":
+                    enable_lm_head_weight_load = True
+
+                proposer_worker = MultiStepWorker(**draft_worker_kwargs)
+                if draft_model_config.hf_config.model_type == "deepseek_mtp":
+                    num_spec_prefill_steps = \
+                        draft_model_config.hf_config.n_predict
+
+            proposer_worker = SmallerTpProposerGCUWorker.maybe_wrap_worker(
+                proposer_worker, draft_tp, target_tp)
+
+        logger.info("Configuring SpecDecodeWorker with proposer=%s",
+                    type(proposer_worker))
+
+        spec_decode_sampler: SpecDecodeBaseSampler = None
+        if draft_token_acceptance_method == "rejection_sampler":
+            spec_decode_sampler = RejectionSampler()
+        elif draft_token_acceptance_method == "typical_acceptance_sampler":
+            spec_decode_sampler = TypicalAcceptanceSampler(
+                posterior_threshold=\
+                    typical_acceptance_sampler_posterior_threshold,
+                posterior_alpha=typical_acceptance_sampler_posterior_alpha,
+            )
+        logger.info(
+            "[Speculative Decoding] Configuring"
+            " SpecDecodeWorker with sampler=%s", type(spec_decode_sampler))
+
+        if not disable_mqa_scorer:
+            if scorer_worker.model_runner.attn_backend.get_name(
+            ) != "FLASH_ATTN":
+                disable_mqa_scorer = True
+                logger.info(
+                    "[Speculative Decoding] Disabling MQA scorer as the "
+                    "MQA is only available with flash attn backend.")
+
+            if draft_model_config and \
+                draft_model_config.max_model_len < \
+                    scorer_worker.model_config.max_model_len:
+                disable_mqa_scorer = True
+                logger.info(
+                    "[Speculative Decoding] Disabling MQA scorer as the "
+                    "draft model max_model_len is smaller than the target "
+                    "model max_model_len.")
+
+            if not scorer_worker.model_runner.model_config.enforce_eager:
+                disable_mqa_scorer = True
+                logger.info(
+                    "[Speculative Decoding] Disabling MQA scorer as the "
+                    "target model is not running in eager mode.")
+
+        return SpecDecodeGCUWorker(
+            proposer_worker,
+            scorer_worker,
+            disable_mqa_scorer=disable_mqa_scorer,
+            disable_logprobs=disable_logprobs,
+            disable_log_stats=disable_log_stats,
+            disable_by_batch_size=disable_by_batch_size,
+            spec_decode_sampler=spec_decode_sampler,
+            allow_zero_draft_token_step=allow_zero_draft_token_step,
+            enable_lm_head_weight_load=enable_lm_head_weight_load,
+            num_spec_prefill_steps=num_spec_prefill_steps)
+
+    def __init__(
+        self,
+        proposer_worker: ProposerWorkerBase,
+        scorer_worker: WorkerBase,
+        spec_decode_sampler: SpecDecodeBaseSampler,
+        disable_mqa_scorer: bool = False,
+        disable_logprobs: bool = False,
+        disable_log_stats: bool = False,
+        metrics_collector: Optional[AsyncMetricsGCUCollector] = None,
+        disable_by_batch_size: Optional[int] = None,
+        allow_zero_draft_token_step: Optional[bool] = True,
+        enable_lm_head_weight_load: Optional[bool] = False,
+        num_spec_prefill_steps: int = 1,
+    ):
+        metrics_collector = AsyncMetricsGCUCollector(
+            spec_decode_sampler
+        ) if metrics_collector is None else metrics_collector
+        super().__init__(
+            proposer_worker=proposer_worker,
+            scorer_worker=scorer_worker,
+            spec_decode_sampler=spec_decode_sampler,
+            disable_mqa_scorer=disable_mqa_scorer,
+            disable_logprobs=disable_logprobs,
+            disable_log_stats=disable_log_stats,
+            metrics_collector=metrics_collector,
+            disable_by_batch_size=disable_by_batch_size,
+            allow_zero_draft_token_step=allow_zero_draft_token_step,
+            enable_lm_head_weight_load=enable_lm_head_weight_load,
+            num_spec_prefill_steps=num_spec_prefill_steps
+        )
+
+    @nvtx_range("spec_decode_worker._run_no_spec")
+    def _run_no_spec(self, execute_model_req: ExecuteModelRequest,
+                     skip_proposer: bool) -> List[SamplerOutput]:
+        """Run a single generation step without any speculation. The input is
+        sent to the proposer and scorer model so that the KV cache is consistent
+        between the two. When skip_proposer is True, the proposer model is
+        not called, meaning that the kv-cache in proposer for requests is not
+        updated, so they cannot enable spec decode in the rest decoding.
+        """
+        sampler_output = self.scorer_worker.execute_model(execute_model_req)
+        assert len(sampler_output) == 1
+        sampler_output = sampler_output[0]
+        # Store hidden states from target model execution, BxD.
+        hidden_states = sampler_output.hidden_states
+        # for idle
+        if hidden_states is not None and len(hidden_states) == 0:
+            seq_data_entries = [
+                (seq_id, seq_data) for sg in \
+                execute_model_req.seq_group_metadata_list \
+                for seq_id, seq_data in sg.seq_data.items()
+            ]
+            output = [
+                SamplerOutput(
+                    outputs=[
+                            CompletionSequenceGroupOutput(
+                                    samples=[
+                                        SequenceOutput(
+                                            seq_data_entries[idx][0], 0,
+                                            {0: Logprob(logprob=float('inf'), rank=None, decoded_token=None)})
+                                    ], prompt_logprobs=None)
+                        for idx, sgm in enumerate(execute_model_req.seq_group_metadata_list)
+                    ]
+                )
+            ]
+
+            return output
+        if hidden_states is not None:
+            # Only decodes and prefill terminal chunks need a hidden state.
+            seq_group_meta_with_hidden = [
+                sg for sg in execute_model_req.seq_group_metadata_list
+                if sg.do_sample
+            ]
+            if any(seq.is_prompt for seq in seq_group_meta_with_hidden):
+                # Drop hidden_states with no prediction (eg non-terminal chunks)
+                hidden_states = hidden_states[
+                    torch.where(sampler_output.sampled_token_ids -
+                                VLLM_INVALID_TOKEN_ID)[0]]
+            if self.previous_hidden_states is None and len(
+                    seq_group_meta_with_hidden):
+                self.previous_hidden_states = HiddenStates(
+                    hidden_states, seq_group_meta_with_hidden)
+            elif self.previous_hidden_states and len(
+                    seq_group_meta_with_hidden):
+                self.previous_hidden_states.update(hidden_states,
+                                                   seq_group_meta_with_hidden)
+
+        if not skip_proposer:
+            # We prepare the prefill hidden states here so that there no
+            # additional complexity in worker for spec_decode vs non_spec_decode
+            # flow and execute_model doesn't need additional modifications.
+            execute_model_req.previous_hidden_states = \
+                prepare_prefill_hidden_states(
+                    sampler_output.prefill_hidden_states)
+            for i in range(self._num_spec_prefill_steps):
+                execute_model_req.spec_step_idx = i
+                self.proposer_worker.execute_model(execute_model_req)
+
+        sampler_output_to_return = (self._serialize_sampler_output_no_logprobs(
+            execute_model_req=execute_model_req, sampler_output=sampler_output)
+                                    if self._disable_logprobs else
+                                    [sampler_output])
+
+        # Clear device tensors from sampler output. This reduces communication
+        # overhead when the engine runs in a different process than the workers.
+        sampler_output.sampled_token_probs = None
+        sampler_output.sampled_token_ids = None
+        sampler_output.logprobs = None
+        return sampler_output_to_return

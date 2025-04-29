@@ -89,19 +89,19 @@ class PatchedFusedMoE(FusedMoE):
         if params_dtype is None:
             params_dtype = torch.get_default_dtype()
 
-        # Note: here we guard against accessing the TP and DP groups when
-        # uninitialized (this happens when testing)
+        # Use expert parallelism instead of tensor parallelism?
+        vllm_config = get_current_vllm_config()
+
+        # when this is in mtp, it may have different parallel state compared with target model.
         self.tp_size = (tp_size if tp_size is not None else
-                        get_tensor_model_parallel_world_size())
+                        vllm_config.parallel_config.tensor_parallel_size)
         tp_rank = 0 if self.tp_size == 1 else get_tensor_model_parallel_rank()
+        # same as tp_size
         self.dp_size = (dp_size
-                        if dp_size is not None else get_dp_group().world_size)
+                        if dp_size is not None else vllm_config.parallel_config.data_parallel_size)
         self.dp_rank = (0
                         if self.dp_size == 1 else get_dp_group().rank_in_group)
         self.global_num_experts = num_experts
-
-        # Use expert parallelism instead of tensor parallelism?
-        vllm_config = get_current_vllm_config()
 
         # NOTE: vllm_gcu patch
         use_ep = (vllm_config.parallel_config.enable_expert_parallel
