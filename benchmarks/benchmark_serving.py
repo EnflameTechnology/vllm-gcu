@@ -749,19 +749,19 @@ async def benchmark(
 
     print("{s:{c}^{n}}".format(s=' Serving Benchmark Result ', n=50, c='='))
     print("{:<40} {:<10}".format("Successful requests:", metrics.completed))
-    print("{:<40} {:<10.2f}".format("Benchmark duration (s):",
+    print("{:<40} {:<10.5f}".format("Benchmark duration (s):",
                                     benchmark_duration))
     print("{:<40} {:<10}".format("Total input tokens:", metrics.total_input))
     print("{:<40} {:<10}".format("Total generated tokens:",
                                  metrics.total_output))
-    print("{:<40} {:<10.2f}".format("Request throughput (req/s):",
+    print("{:<40} {:<10.5f}".format("Request throughput (req/s):",
                                     metrics.request_throughput))
     if goodput_config_dict:
-        print("{:<40} {:<10.2f}".format("Request goodput (req/s):",
+        print("{:<40} {:<10.5f}".format("Request goodput (req/s):",
                                         metrics.request_goodput))
-    print("{:<40} {:<10.2f}".format("Output token throughput (tok/s):",
+    print("{:<40} {:<10.5f}".format("Output token throughput (tok/s):",
                                     metrics.output_throughput))
-    print("{:<40} {:<10.2f}".format("Total Token throughput (tok/s):",
+    print("{:<40} {:<10.5f}".format("Total Token throughput (tok/s):",
                                     metrics.total_token_throughput))
 
     result = {
@@ -795,10 +795,10 @@ async def benchmark(
         if metric_attribute_name not in selected_percentile_metrics:
             return
         print("{s:{c}^{n}}".format(s=metric_header, n=50, c='-'))
-        print("{:<40} {:<10.2f}".format(
+        print("{:<40} {:<10.5f}".format(
             f"Mean {metric_name} (ms):",
             getattr(metrics, f"mean_{metric_attribute_name}_ms")))
-        print("{:<40} {:<10.2f}".format(
+        print("{:<40} {:<10.5f}".format(
             f"Median {metric_name} (ms):",
             getattr(metrics, f"median_{metric_attribute_name}_ms")))
         result[f"mean_{metric_attribute_name}_ms"] = getattr(
@@ -810,7 +810,7 @@ async def benchmark(
         for p, value in getattr(metrics,
                                 f"percentiles_{metric_attribute_name}_ms"):
             p_word = str(int(p)) if int(p) == p else str(p)
-            print("{:<40} {:<10.2f}".format(f"P{p_word} {metric_name} (ms):",
+            print("{:<40} {:<10.5f}".format(f"P{p_word} {metric_name} (ms):",
                                             value))
             result[f"p{p_word}_{metric_attribute_name}_ms"] = value
 
