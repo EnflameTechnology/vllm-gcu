@@ -600,7 +600,7 @@ def fused_experts_impl(
         if use_fp8_w8a8:
             group_size = block_shape[1]
             shape = (
-                *intermediate_cache1.shape[:-1],
+                *intermediate_cache2.shape[:-1],
                 N // 2 // group_size,
             )
             a2_scale = torch.empty(
@@ -608,7 +608,7 @@ def fused_experts_impl(
             )
             torch.ops._C.silu_mul_per_token_group_quant_with_size(
                 intermediate_cache2.view(-1, top_k_num, N // 2),
-                a2_scale,
+                a2_scale.view(-1, top_k_num, N // 2 // group_size),
                 intermediate_cache1,
                 valid_in_chunk,
                 group_size,

@@ -210,8 +210,8 @@ class GCUPlatform(Platform):
                 compilation_config.backend = "topsgraph"
 
             if compilation_config.level == 3:
-                compilation_config.use_inductor = False
-
+                os.environ["VLLM_DISABLE_COMPILE_CACHE"] = "1"
+                envs.VLLM_DISABLE_COMPILE_CACHE = True
                 # TODO: WA for bug in vllm, to be removed after 0.8.2
                 if not compilation_config.cache_dir:
                     factors = []
@@ -242,15 +242,13 @@ class GCUPlatform(Platform):
                 compilation_config.pass_config.enable_fusion = False
 
                 from vllm_gcu.compilation.fusion import GCUFusionPass
-                from vllm_gcu.compilation.pass_manager import PreGradPassManager
 
-                pre_grad_pass_manager = PreGradPassManager()
-                pre_grad_pass_manager.add(
-                    GCUFusionPass.instance(compilation_config.pass_config)
-                )
-                compilation_config.inductor_compile_config["pre_grad_custom_pass"] = (
-                    pre_grad_pass_manager
-                )
+                compilation_config.pass_config.enable_fusion = False
+                compilation_config.inductor_compile_config[
+                    "post_grad_custom_post_pass"
+                ] = GCUFusionPass.instance(compilation_config.pass_config)
+
+                compilation_config.custom_ops = ["all"]
 
         if model_config:
             model_config.enable_sleep_mode = False
