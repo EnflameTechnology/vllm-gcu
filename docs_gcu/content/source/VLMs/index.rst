@@ -15,3 +15,4 @@
    yi-vl
    llava-next
    phi3v
+   got-ocr
