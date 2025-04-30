@@ -12,7 +12,7 @@ from distutils.command.clean import clean
 from typing import List
 
 import torch
-from packaging.version import Version
+from build_utils import get_tag, get_tops_version
 
 from setuptools import Extension, find_packages, setup
 from setuptools.command.install import install
@@ -21,7 +21,6 @@ from tops_extension import TopsBuildExtension
 from tops_extension.torch import TopsTorchExtension
 from tops_extension.torch.codegen_utils import gen_custom_ops
 from wheel.bdist_wheel import bdist_wheel
-from build_utils import get_tag, get_tops_version
 
 ROOT_DIR = os.path.dirname(__file__)
 
@@ -79,6 +78,9 @@ TOPSCC_FLAGS = [
     "-Wno-unused-function",
     "-Wno-unused-variable",
     f"-D_GLIBCXX_USE_CXX11_ABI={ABI}",
+    "-arch=gcu300",
+    "-D__GCU_ARCH__=300",
+    "-D__KRT_ARCH__=300",
 ]
 
 

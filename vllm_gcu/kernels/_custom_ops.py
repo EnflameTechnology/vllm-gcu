@@ -9,6 +9,7 @@ try:
 except ImportError:
     from torch.library import impl_abstract as register_fake
 
+from vllm.platforms import current_platform
 import vllm_gcu._C  # noqa: F401
 
 
@@ -216,6 +217,9 @@ def advance_step(
     slot_mapping: torch.Tensor,
     block_tables: torch.Tensor,
 ) -> None:
+    if current_platform.get_device_capability() != 130:
+        raise NotImplementedError
+
     return torch.ops._C.advance_step_xformers(
         num_seqs,
         num_queries,
