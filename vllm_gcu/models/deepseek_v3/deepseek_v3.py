@@ -737,7 +737,6 @@ class DeepseekV2Model(nn.Module):
         intermediate_tensors: Optional[IntermediateTensors],
         inputs_embeds: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, IntermediateTensors]:
-        actual_seqlen = len(input_ids)
 
         tp_group = get_tp_group().device_group
         if get_pp_group().is_first_rank:
@@ -751,6 +750,8 @@ class DeepseekV2Model(nn.Module):
             assert intermediate_tensors is not None
             hidden_states = intermediate_tensors["hidden_states"]
             residual = intermediate_tensors["residual"]
+
+        actual_seqlen = hidden_states.shape[0]
 
         for i in range(self.start_layer, self.end_layer):
             layer = self.layers[i]
