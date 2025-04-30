@@ -155,6 +155,7 @@ class PatchedFusedMoE(FusedMoE):
             moe_quant_params["intermediate_size_full"] = intermediate_size
 
         self.quant_method.create_weights(layer=self, **moe_quant_params)
+        self.use_direct_call = True
 
         # NOTE: vllm_gcu patch
         if self.dp_size > 1 and self.ep_size > 1:
