@@ -240,10 +240,12 @@ class GCUPlatform(Platform):
 
                 # TODO: remove after rmsnorm pattern fix in official.
                 compilation_config.pass_config.enable_fusion = False
+                compilation_config.pass_config.dump_graph_stages.extend(
+                    ["before_fusion", "after_pattern_match", "after_fusion"]
+                )
 
                 from vllm_gcu.compilation.fusion import GCUFusionPass
 
-                compilation_config.pass_config.enable_fusion = False
                 compilation_config.inductor_compile_config[
                     "post_grad_custom_post_pass"
                 ] = GCUFusionPass.instance(compilation_config.pass_config)

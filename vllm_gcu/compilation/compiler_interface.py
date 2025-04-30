@@ -2,13 +2,13 @@
 # coding=utf-8
 
 import copy
-from contextlib import ExitStack, contextmanager
+from contextlib import contextmanager, ExitStack
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from unittest.mock import patch
 
 import torch
-import torch_gcu
 import torch.fx as fx
+import torch_gcu
 from torch._inductor.codegen.common import device_codegens, get_scheduling_for_device
 from torch._inductor.codegen.triton import TritonScheduling
 from vllm.compilation.compiler_interface import (
@@ -50,10 +50,11 @@ class CustomInductorAdaptor(InductorAdaptor):
         current_config = config.get_config_copy()
         from torch._inductor.compile_fx import compile_fx
 
-        for _pass in get_passes():
-            graph = _pass(graph)
+        # for _pass in get_passes():
+        #     graph = _pass(graph)
 
         # disable remote cache
+        # current_config["force_disable_caches"] = True
         current_config["fx_graph_cache"] = True
         current_config["fx_graph_remote_cache"] = False
 
@@ -110,16 +111,19 @@ class CustomInductorAdaptor(InductorAdaptor):
             original_load_name = None
 
             def hijacked_compile_fx_inner(*args, **kwargs):
-                output = torch._inductor.compile_fx.compile_fx_inner(*args, **kwargs)
-                nonlocal hash_str
-                inductor_compiled_graph = output
-                if inductor_compiled_graph is not None:
-                    nonlocal file_path
-                    file_path = (
-                        inductor_compiled_graph.current_callable.__code__.co_filename
-                    )  # noqa
-                    hash_str = inductor_compiled_graph._fx_graph_cache_key
-                return args[0]
+                with version():
+                    output = torch._inductor.compile_fx.compile_fx_inner(
+                        *args, **kwargs
+                    )
+                    nonlocal hash_str
+                    inductor_compiled_graph = output
+                    if inductor_compiled_graph is not None:
+                        nonlocal file_path
+                        file_path = (
+                            inductor_compiled_graph.current_callable.__code__.co_filename
+                        )  # noqa
+                        hash_str = inductor_compiled_graph._fx_graph_cache_key
+                    return args[0]
 
         def hijack_compiled_fx_graph_hash(*args, **kwargs):
             with version():
@@ -203,5 +207,7 @@ class CustomEagerAdaptor(EagerAdaptor):
 patcher1 = patch("vllm.compilation.compiler_interface.EagerAdaptor", CustomEagerAdaptor)
 patcher1.start()
 
-patcher2 = patch("vllm.compilation.compiler_interface.InductorAdaptor", CustomInductorAdaptor)
+patcher2 = patch(
+    "vllm.compilation.compiler_interface.InductorAdaptor", CustomInductorAdaptor
+)
 patcher2.start()
