@@ -17,14 +17,17 @@
 #include "src/cutlass_scaled_mm.h"
 #include "src/dynamic_scaled_int8_quant.h"
 #include "src/dynamic_split.h"
+#include "src/ets_moe_align_block_size.h"
 #include "src/fatrelu_and_mul.h"
 #include "src/fused_add_rms_norm.h"
 #include "src/fused_add_rms_norm_per_token_group_quant_fp8.h"
 #include "src/fused_add_rms_norm_quant.h"
 #include "src/fused_add_rms_norm_static_fp8_quant.h"
+#include "src/fused_dispatch_decode.h"
 #include "src/fused_grouped_topk.h"
 #include "src/fused_moe_kernel.h"
 #include "src/fused_moe_quant_kernel.h"
+#include "src/fused_qkv_proj.h"
 #include "src/gelu_and_mul.h"
 #include "src/gelu_asym_quant.h"
 #include "src/gelu_fast.h"
@@ -57,6 +60,7 @@
 #include "src/rms_norm_quant.h"
 #include "src/rms_norm_static_fp8_quant.h"
 #include "src/rotary_embedding.h"
+#include "src/rotary_embedding_with_kv_cache.h"
 #include "src/sgl_moe_align_block_size.h"
 #include "src/silu_and_mul.h"
 #include "src/silu_and_mul_pad.h"
@@ -686,6 +690,34 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
       "scale, Tensor input, Tensor size, int group_size) -> ()");
   ops.impl("silu_mul_per_token_group_quant_with_size", torch::kPrivateUse1,
            &silu_mul_per_token_group_quant_with_size);
+
+  ops.def(
+    "rotary_embedding_with_kv_cache(Tensor! q_out, Tensor! kv_cache, "
+    "Tensor q, Tensor kv, Tensor positions, Tensor cos_sin_cache, "
+    "Tensor weight, Tensor slot_mapping, Tensor scale, "
+    "float eps, int[] split_size, str kv_cache_dtype) -> ()");
+  ops.impl("rotary_embedding_with_kv_cache", torch::kPrivateUse1,
+           &rotary_embedding_with_kv_cache);
+
+  ops.def(
+      "fused_dispatch_decode(Tensor(a!)[] outputs, Tensor recv_packed, "
+      "Tensor sp_split_size, int[] split_sizes) -> ()");
+  ops.impl("fused_dispatch_decode", torch::kPrivateUse1,
+           &fused_dispatch_decode);
+
+  ops.def(
+      "ets_moe_align_block_size(Tensor(a!) sorted_token_ids, "
+      "Tensor(a!) experts_ids, "
+      "Tensor(a!) num_tokens_post_pad, Tensor topk_ids, Tensor real_token_num, "
+      "Tensor expert_map, int num_experts, int block_size) -> ()");
+  ops.impl("ets_moe_align_block_size", torch::kPrivateUse1,
+           &ets_moe_align_block_size);
+
+  // 添加 fused_qkv_proj 算子
+  ops.def(
+      "fused_qkv_proj(Tensor(a!) q, Tensor(a!) kv, Tensor x, Tensor weight, "
+      "Tensor x_scale, Tensor weight_scale, int group_size) -> ()");
+  ops.impl("fused_qkv_proj", torch::kPrivateUse1, &fused_qkv_proj);
 }
 
 TORCH_LIBRARY_EXPAND(CONCAT(TORCH_EXTENSION_NAME, _cache_ops), cache_ops) {

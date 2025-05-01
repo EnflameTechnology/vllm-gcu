@@ -191,6 +191,15 @@
 - func: silu_mul_per_token_group_quant_with_size(Tensor(a!) out, Tensor(a!) scale, Tensor input, Tensor size, int group_size) -> ()
   variants: function
 
+- func: rotary_embedding_with_kv_cache(Tensor(a!) q_out, Tensor(a!) kv_cache, Tensor q, Tensor kv, Tensor positions, Tensor cos_sin_cache, Tensor weight, Tensor slot_mapping, Tensor scale, float eps, int[] split_size, str kv_cache_dtype) -> ()
+  variants: function
+
+- func: fused_dispatch_decode(Tensor(a!)[] outputs, Tensor recv_packed, Tensor sp_split_size, int[] split_sizes) -> ()
+  variants: function
+
+- func: ets_moe_align_block_size(Tensor(a!) sorted_token_ids, Tensor(a!) experts_ids, Tensor(a!) num_tokens_post_pad, Tensor topk_ids, Tensor real_token_num, Tensor expert_map, int num_experts, int block_size) -> ()
+  variants: function
+
 - func: static_scaled_fp8_quant(Tensor(a!) result, Tensor input, Tensor scale) -> ()
   variants: function
 
@@ -201,4 +210,7 @@
   variants: function
 
 - func: dynamic_per_token_scaled_fp8_quant(Tensor(a!) result, Tensor input, Tensor(a!) scale, Tensor? scale_ub) -> ()
+  variants: function
+
+- func: fused_qkv_proj(Tensor(a!) q, Tensor(a!) kv, Tensor x, Tensor weight, Tensor x_scale, Tensor weight_scale, int group_size) -> ()
   variants: function
