@@ -7,7 +7,7 @@ set(icmake_REPOSITORY "git@git.enflame.cn:i")
 if(PROJECT_GIT_URL)
     set(icmake_REPOSITORY ${PROJECT_GIT_URL})
 endif()
-set(icmake_GIT_REVISION 1.4.97)
+set(icmake_GIT_REVISION 1.5.73)
 FetchContent_Declare(
     I_CMAKE
     GIT_REPOSITORY ${icmake_REPOSITORY}/cmake.git
