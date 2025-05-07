@@ -22,14 +22,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Inference-only DeepseekV2/DeepseekV3 model."""
+from contextlib import nullcontext
+from functools import partial
 from typing import Any, Dict, Iterable, Mapping, Optional, Set, Tuple, Union
+from unittest.mock import patch
 
 import numpy as np
 import torch
 from torch import nn
-from unittest.mock import patch
-from functools import partial
-from contextlib import nullcontext
 from transformers import PretrainedConfig
 from vllm.attention import Attention, AttentionMetadata
 from vllm.compilation.decorators import support_torch_compile
@@ -77,8 +77,8 @@ from vllm.model_executor.sampling_metadata import SamplingMetadata
 from vllm.sequence import IntermediateTensors, SequenceData
 
 import vllm_gcu.envs as gcu_envs
-from vllm_gcu.kernels.linear import MergedReplicatedLinear
 from vllm_gcu.kernels.fused_moe import fused_experts_impl
+from vllm_gcu.kernels.linear import MergedReplicatedLinear
 
 
 def align_up(seqlen, size):
@@ -208,9 +208,12 @@ class DeepseekV2MoE(nn.Module):
             if self.experts.ep_size > 1:
                 self.do_shared_and_scale = False
                 self.context = patch(
-                    'vllm_gcu.kernels.fused_moe.fused_experts_impl',
-                    partial(fused_experts_impl, shared_experts=self.shared_experts,
-                            routed_scaling_factor=self.routed_scaling_factor)
+                    "vllm_gcu.kernels.fused_moe.fused_experts_impl",
+                    partial(
+                        fused_experts_impl,
+                        shared_experts=self.shared_experts,
+                        routed_scaling_factor=self.routed_scaling_factor,
+                    ),
                 )
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
@@ -221,11 +224,9 @@ class DeepseekV2MoE(nn.Module):
             shared_output = self.shared_experts(hidden_states)
         router_logits, _ = self.gate(hidden_states)
         with self.context:
-            final_hidden_states = (
-                self.experts(
-                    hidden_states=hidden_states,
-                    router_logits=router_logits,
-                )
+            final_hidden_states = self.experts(
+                hidden_states=hidden_states,
+                router_logits=router_logits,
             )
 
         if shared_output is not None:
@@ -518,6 +519,15 @@ class DeepseekV2MLAAttention(nn.Module):
             mscale = yarn_get_mscale(scaling_factor, float(mscale_all_dim))
             self.scaling = self.scaling * mscale * mscale
 
+        self.q_proj_outside = (
+            True if quant_config.get_name().startswith("fp8") else False
+        )
+
+        if self.q_proj_outside:
+            q_proj = nn.Identity()
+        else:
+            q_proj = self.q_proj if self.q_lora_rank is None else self.q_b_proj
+
         self.mla_attn = Attention(
             num_heads=self.num_local_heads,
             head_size=self.kv_lora_rank + self.qk_rope_head_dim,
@@ -535,7 +545,7 @@ class DeepseekV2MLAAttention(nn.Module):
             qk_head_dim=self.qk_head_dim,
             v_head_dim=self.v_head_dim,
             rotary_emb=self.rotary_emb,
-            q_proj=self.q_proj if self.q_lora_rank is None else self.q_b_proj,
+            q_proj=q_proj,
             kv_b_proj=self.kv_b_proj,
             o_proj=self.o_proj,
         )
@@ -553,6 +563,11 @@ class DeepseekV2MLAAttention(nn.Module):
             hidden_states_or_q_c = self.q_a_layernorm(ckq)
         else:
             hidden_states_or_q_c = hidden_states
+
+        if self.q_proj_outside:
+            q_proj = self.q_proj if self.q_lora_rank is None else self.q_b_proj
+            hidden_states_or_q_c = q_proj(hidden_states_or_q_c)[0].unsqueeze(0)
+
         kv_c, k_pe = self.kv_a_proj_with_mqa(hidden_states)[0].split(
             [self.kv_lora_rank, self.qk_rope_head_dim], dim=-1
         )
