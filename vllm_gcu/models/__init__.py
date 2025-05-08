@@ -5,7 +5,7 @@ import os as _os
 import warnings as _warnings
 
 
-_MODEL_LIST = ["baichuan", "cusllama", "glm", "hunyuan", "moose", "deepseek_v3", "roberta", "got_ocr2", "qwen2_5_vl"]
+_MODEL_LIST = ["baichuan", "cusllama", "glm", "hunyuan", "moose", "deepseek_v3", "roberta", "got_ocr2", "qwen2_5_vl", "qwen3"]
 
 
 def register_custom_models():
