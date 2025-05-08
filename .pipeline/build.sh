@@ -101,6 +101,7 @@ fi
 export project_name=${project_name:-"vllm"}
 export cpu_count=${process_num:-$(nproc)}
 export PY_PACKAGE_VERSION=${package_version:-""}
+export MAX_JOBS=${cpu_count}
 
 main "$@"
 exit $?
