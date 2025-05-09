@@ -217,7 +217,7 @@ def advance_step(
     slot_mapping: torch.Tensor,
     block_tables: torch.Tensor,
 ) -> None:
-    if current_platform.get_device_capability() != 130:
+    if current_platform.get_device_capability().to_int() != 130:
         raise NotImplementedError
 
     return torch.ops._C.advance_step_xformers(
