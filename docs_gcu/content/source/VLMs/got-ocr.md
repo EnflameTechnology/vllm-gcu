@@ -9,6 +9,12 @@
 
 - 将上述url设定的路径下的内容全部下载到`GOT-OCR-2.0-hf`文件夹中。
 
+注：需要安装以下依赖：
+
+```shell
+python3 -m pip install git+https://github.com/huggingface/transformers.git@1931a351408dbd1d0e2c4d6d7ee0eb5e8807d7bf
+```
+
 #### 批量离线推理
 ```shell
 python3 -m vllm_utils.benchmark_vision_language \
