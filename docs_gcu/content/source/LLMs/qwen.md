@@ -1549,10 +1549,9 @@ python3 -m vllm_utils.benchmark_serving \
  --demo=te \
  --tensor-parallel-size 8 \
  --max-model-len=32768 \
- --output-len=1024 \
+ --output-len=128 \
  --dtype=bfloat16 \
  --device gcu \
- --num-prompts 1 \
  --block-size=64 \
  --gpu-memory-utilization 0.9 \
  --trust-remote-code
