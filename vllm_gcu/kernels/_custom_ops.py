@@ -217,6 +217,19 @@ def advance_step(
     slot_mapping: torch.Tensor,
     block_tables: torch.Tensor,
 ) -> None:
+    if current_platform.get_device_capability().to_int() == 140:
+        return torch.ops._C.advance_step_flashattn(
+            num_seqs,
+            num_queries,
+            block_size,
+            input_tokens,
+            sampled_token_ids,
+            input_positions,
+            seq_lens,
+            slot_mapping,
+            block_tables,
+        )
+
     if current_platform.get_device_capability().to_int() != 130:
         raise NotImplementedError
 

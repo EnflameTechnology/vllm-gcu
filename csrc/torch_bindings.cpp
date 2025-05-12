@@ -1,6 +1,7 @@
 #include <torch/library.h>
 
 #include "registration.h"
+#include "src/reshape_and_cache_flash.h"
 #include "src/advance_step_xformers.h"
 #include "src/awq_dequantize.h"
 #include "src/awq_gemm_gcu.h"
@@ -173,10 +174,10 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
            &advance_step_xformers);
 
   ops.def(
-      "advance_step_flashattn(int num_seqs, int num_queries, int block_size, "
-      "Tensor! input_tokens, Tensor sampled_token_ids, "
-      "Tensor! input_positions, Tensor! seq_lens, Tensor! slot_mapping, "
-      "Tensor block_tables) -> ()");
+        "advance_step_flashattn(int num_seqs, int num_queries, int block_size, "
+        "Tensor! input_tokens, Tensor sampled_token_ids, "
+        "Tensor! input_positions, Tensor! seq_lens, Tensor! slot_mapping, "
+        "Tensor block_tables) -> ()");
   ops.impl("advance_step_flashattn", torch::kPrivateUse1,
            &advance_step_xformers);
 
@@ -751,13 +752,11 @@ TORCH_LIBRARY_EXPAND(CONCAT(TORCH_EXTENSION_NAME, _cache_ops), cache_ops) {
   // Reshape the key and value tensors and cache them.
   cache_ops.def(
       "reshape_and_cache_flash(Tensor key, Tensor value,"
-      "                        Tensor! key_cache,"
-      "                        Tensor! value_cache,"
-      "                        Tensor slot_mapping,"
-      "                        str kv_cache_dtype,"
-      "                        Tensor k_scale, Tensor v_scale) -> ()");
-  // cache_ops.impl("reshape_and_cache_flash", torch::kPrivateUse1,
-  // &reshape_and_cache_flash);
+      "Tensor! key_cache,"
+      "Tensor! value_cache,"
+      "Tensor slot_mapping) -> ()");
+  cache_ops.impl("reshape_and_cache_flash", torch::kPrivateUse1,
+        &reshape_and_cache_flash);
 
   // Concat kv_c and k_pe and cache them.
   cache_ops.def(

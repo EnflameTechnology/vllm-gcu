@@ -214,3 +214,6 @@
 
 - func: fused_qkv_proj(Tensor(a!) q, Tensor(a!) kv, Tensor x, Tensor weight, Tensor x_scale, Tensor weight_scale, int group_size) -> ()
   variants: function
+
+- func: reshape_and_cache_flash(Tensor key, Tensor value, Tensor(a!) key_cache, Tensor(a!) value_cache, Tensor slot_mapping) -> ()
+  variants: function
