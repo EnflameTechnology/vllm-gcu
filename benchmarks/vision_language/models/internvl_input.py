@@ -4,8 +4,68 @@ from typing import List, Optional, Union
 from decord import VideoReader, cpu
 from vllm_utils.vision_language.models.base import VLMInput
 from PIL import Image
-from vllm.model_executor.models.internvl import calculate_num_blocks,get_internvl_num_patches
 
+def get_internvl_target_ratios(
+    min_num: int,
+    max_num: int,
+) -> list[tuple[int, int]]:
+    target_ratios = {(i, j)
+                     for n in range(min_num, max_num + 1)
+                     for i in range(1, n + 1)
+                     for j in range(1, n + 1) if min_num <= i * j <= max_num}
+    return sorted(target_ratios, key=lambda x: x[0] * x[1])
+
+def calculate_internvl_targets(
+    *,
+    orig_width: int,
+    orig_height: int,
+    target_ratios: list[tuple[int, int]],
+    image_size: int,
+    use_thumbnail: bool,
+) -> tuple[int, int, int]:
+    aspect_ratio = orig_width / orig_height
+
+    # find the closest aspect ratio to the target
+    target_aspect_ratio = find_closest_aspect_ratio(
+        aspect_ratio,
+        target_ratios,
+        width=orig_width,
+        height=orig_height,
+        image_size=image_size,
+    )
+
+    # calculate the target width and height
+    target_width = image_size * target_aspect_ratio[0]
+    target_height = image_size * target_aspect_ratio[1]
+    blocks = target_aspect_ratio[0] * target_aspect_ratio[1]
+
+    # add thumbnail image if num_blocks != 1
+    if use_thumbnail and blocks != 1:
+        blocks += 1
+
+    return blocks, target_width, target_height
+
+def find_closest_aspect_ratio(
+    aspect_ratio: float,
+    target_ratios: list[tuple[int, int]],
+    *,
+    width: int,
+    height: int,
+    image_size: int,
+) -> tuple[int, int]:
+    best_ratio_diff = float('inf')
+    best_ratio = (1, 1)
+    area = width * height
+    for ratio in target_ratios:
+        target_aspect_ratio = ratio[0] / ratio[1]
+        ratio_diff = abs(aspect_ratio - target_aspect_ratio)
+        if ratio_diff < best_ratio_diff:
+            best_ratio_diff = ratio_diff
+            best_ratio = ratio
+        elif ratio_diff == best_ratio_diff:
+            if area > 0.5 * image_size * image_size * ratio[0] * ratio[1]:
+                best_ratio = ratio
+    return best_ratio
 
 class InternVLChatInput(VLMInput):
     def get_chat_template(self):
@@ -93,6 +153,7 @@ class InternVL2Input(VLMInput):
         return {self.modality: image_data}
 
     def get_image_feature_size(self, input_vision_shape: str, **kwargs):
+
         vision_shapes = input_vision_shape.split(";")
         if kwargs["mm_per_prompt"] != len(vision_shapes):
             raise ValueError('mm_per_prompt must be equal to input_vision_shape group')
@@ -107,48 +168,44 @@ class InternVL2Input(VLMInput):
 
             image_size =vision_config.image_size
             patch_size = vision_config.patch_size
-            num_patches = get_internvl_num_patches(image_size, patch_size,
-                                                downsample_ratio)
             min_num = self.hf_config.min_dynamic_patch
             max_num = self.hf_config.max_dynamic_patch
             use_thumbnail = self.hf_config.use_thumbnail
-            
-            num_blocks, _, _ = calculate_num_blocks(input_width, input_height, min_num,
-                                                    max_num, image_size,
-                                                    use_thumbnail)
-            image_feature_size = num_blocks * num_patches
+            num_image_token = int(
+            (image_size // patch_size)**2 * (downsample_ratio**2))
+            target_ratios = get_internvl_target_ratios(min_num=min_num,max_num=max_num)
+            num_patches, _, _ = calculate_internvl_targets(
+                orig_width=input_width,
+                orig_height=input_height,
+                image_size=image_size,
+                target_ratios=target_ratios,
+                use_thumbnail=use_thumbnail,
+            )
+
+            image_feature_size = num_image_token * num_patches
             image_feature_sizes.append(image_feature_size)
         return image_feature_sizes
 
     def get_placeholder(self):
-        image_token_id = 92546
-        image_place_holder = self.tokenizer.decode(image_token_id)
-        return image_place_holder
+        return '<image>'
     
     def get_dummy_prompt(self,
                          input_len: int,
                          placeholder: str,
-                         image_feature_sizes: List[int],
+                         image_feature_size: int,
                          **kwargs):
-        import re
-        IMG_START = '<img>'
-        IMG_END = '</img>'
-        IMG_CONTEXT = '<IMG_CONTEXT>'
-        new_prompt = self.get_demo_prompt("hi", **kwargs)
-        image_idx = sorted(map(int, re.findall(r"Image-(\d+): <image>\n", new_prompt)))
-        for idx, feature_size in enumerate(image_feature_sizes, start=1):
-            image_prompt = IMG_START + IMG_CONTEXT * feature_size + IMG_END
-            if not image_idx:
-                image_prompt = f"Image-{idx}: {image_prompt}"
-            new_prompt = new_prompt.replace('<image>', image_prompt, 1)
-        new_prompt_token_ids = self.tokenizer.encode(new_prompt)
-        fake_prompt_len = input_len - len(new_prompt_token_ids)
-        fake_prompt = "hi" * fake_prompt_len
-        special_tokens_len = len(self.tokenizer(new_prompt + fake_prompt).input_ids) - input_len
+        prompt = "hi" * input_len
+        special_tokens_len = len(self.tokenizer(prompt).input_ids) - input_len
         if special_tokens_len > 0:
-            fake_prompt = "hi" * (input_len - special_tokens_len)
-        all_prompt = new_prompt + fake_prompt
-        return all_prompt
+            prompt = "hi" * (input_len - special_tokens_len)
+        for image_feature in image_feature_size:
+            if placeholder:
+                prompt = prompt.replace(
+                    "hi" * image_feature,
+                    placeholder,
+                    1,
+                )
+        return prompt
     
     def dataset_pred_post_process(self,
                                   dataset_name: str,

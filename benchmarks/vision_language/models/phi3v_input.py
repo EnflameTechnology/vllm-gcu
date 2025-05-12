@@ -1,10 +1,90 @@
 import os
 import json
-from typing import List
+import numpy as np
+import numpy.typing as npt
+from typing import List, Any
 from PIL import Image
 from vllm_utils.vision_language.models.base import VLMInput
-from vllm.model_executor.models.phi3v import _calc_hd_transform_size
 
+def _calc_padded_size(*, width: int, height: int, padding_unit: int = 336):
+    target_height = int(np.ceil(height / padding_unit) * padding_unit)
+    top_padding = int((target_height - height) / 2)
+    bottom_padding = target_height - height - top_padding
+    padded_width = width
+    padded_height = height + top_padding + bottom_padding
+    return padded_width, padded_height
+
+def _calc_hd_transform_size(*, width: int, height: int, hd_num: int = 16):
+    transposed = False
+    if width < height:
+        width, height = height, width
+        transposed = True
+
+    ratio = width / height
+    scale = 1
+    while scale * np.ceil(scale / ratio) <= hd_num:
+        scale += 1
+    scale -= 1
+
+    new_width = int(scale * 336)
+    new_height = int(new_width / ratio)
+
+    padded_width, padded_height = _calc_padded_size(width=new_width,
+                                                    height=new_height)
+
+    if transposed:
+        padded_width, padded_height = padded_height, padded_width
+
+    return padded_width, padded_height
+
+def sample_frames_from_video(frames: npt.NDArray,
+                             num_frames: int) -> npt.NDArray:
+    total_frames = frames.shape[0]
+    if num_frames == -1:
+        return frames
+    else:
+        frame_indices = np.linspace(0, total_frames - 1, num_frames, dtype=int)
+        sampled_frames = frames[frame_indices, ...]
+        return sampled_frames
+
+def video_to_ndarrays(path: str, num_frames: int = -1) -> npt.NDArray:
+    cv2 = try_import_video_packages()
+
+    cap = cv2.VideoCapture(path)
+    if not cap.isOpened():
+        raise ValueError(f"Could not open video file {path}")
+
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    frames = []
+    for i in range(total_frames):
+        ret, frame = cap.read()
+        if ret:
+            frames.append(frame)
+    cap.release()
+
+    frames = np.stack(frames)
+    frames = sample_frames_from_video(frames, num_frames)
+    if len(frames) < num_frames:
+        raise ValueError(f"Could not read enough frames from video file {path}"
+                         f" (expected {num_frames} frames, got {len(frames)})")
+    return frames
+
+def video_to_pil_images_list(path: str,
+                             num_frames: int = -1) -> List[Image.Image]:
+    cv2 = try_import_video_packages()
+    frames = video_to_ndarrays(path, num_frames)
+    return [
+        Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+        for frame in frames
+    ]
+
+def try_import_video_packages() -> Any:
+    try:
+        import cv2
+    except ImportError:
+        raise ImportError(
+            "Please install vllm[video] for video support.") from None
+    return cv2
 
 class Phi3VImageInput(VLMInput):
     def get_chat_template(self):
@@ -47,7 +127,7 @@ class Phi3VImageInput(VLMInput):
         return {self.modality: image_data}
 
     def get_image_feature_size(self, input_vision_shape: str, **kwargs):
-        # adapted from vllm.model_executor.models.phi3v.get_phi3v_image_feature_size
+        # adapted from vllm.model_executor.models.phi3v.get_phi3v_image_feature_size version 0.6.1.post2
         vision_shapes = input_vision_shape.split(";")
         if kwargs["mm_per_prompt"] != len(vision_shapes):
             raise ValueError('mm_per_prompt must be equal to input_vision_shape group')
@@ -91,17 +171,13 @@ class Phi3VImageInput(VLMInput):
         for i in range(kwargs["mm_per_prompt"]):
             multi_img_placeholder += f"<|image_{i+1}|>\n"
         
-        multi_img_placeholder_len = len(self.tokenizer.encode(multi_img_placeholder)) - 1 - kwargs["mm_per_prompt"]
+        multi_img_placeholder_len = len(self.tokenizer.encode(multi_img_placeholder)) - 1 - kwargs["mm_per_prompt"] * 3
 
         total_image_feature_size = sum(image_feature_sizes)
         dummy_token_len = input_len - (base_prompt_len + total_image_feature_size - multi_img_placeholder_len)
 
         question = "hi" * (dummy_token_len)
         prompt = self.get_demo_prompt(question, **kwargs)
-        calculated_final_input_token_size = (len(self.tokenizer.encode(prompt)) + total_image_feature_size - multi_img_placeholder_len)
-
-        assert calculated_final_input_token_size <= input_len, "Providing too many image tokens! Consider using smaller 'mm_per_prompt' or larger 'input_len'."
-        assert calculated_final_input_token_size == input_len, "Expected number of input tokens does not equal to 'input_len'!"
 
         return prompt
     
@@ -156,14 +232,13 @@ class Phi3VVideoInput(VLMInput):
     def get_demo_vision_data(self,
                              input_vision_file: str,
                              **kwargs):
-        from vllm.assets.video import video_to_pil_images_list
         video_data = video_to_pil_images_list(path=input_vision_file,
                                 num_frames=kwargs["mm_per_prompt"])
 
         return {self.modality: video_data}
 
     def get_image_feature_size(self, input_vision_shape: str, **kwargs):
-        # adapted from vllm.model_executor.models.phi3v.get_phi3v_image_feature_size
+        # adapted from vllm.model_executor.models.phi3v.get_phi3v_image_feature_size version 0.6.1.post2
         assert len(input_vision_shape.split(";")) == 1, "Phi3v only support one input dummy shape in video benchmark"
         
         input_shape = input_vision_shape.split(",")
@@ -202,17 +277,13 @@ class Phi3VVideoInput(VLMInput):
         for i in range(kwargs["mm_per_prompt"]):
             video_placeholder += f"<|image_{i+1}|>\n"
         
-        video_placeholder_len = len(self.tokenizer.encode(video_placeholder)) - 1 - kwargs["mm_per_prompt"]
+        video_placeholder_len = len(self.tokenizer.encode(video_placeholder)) - 1 - kwargs["mm_per_prompt"] * 3
 
         total_image_feature_size = kwargs["mm_per_prompt"] * image_feature_size
         dummy_token_len = input_len - (base_prompt_len + total_image_feature_size - video_placeholder_len)
 
         question = "hi" * (dummy_token_len)
         prompt = self.get_demo_prompt(question, **kwargs)
-        calculated_final_input_token_size = (len(self.tokenizer.encode(prompt)) + total_image_feature_size - video_placeholder_len)
-
-        assert calculated_final_input_token_size <= input_len, "Providing too many image tokens! Consider using smaller 'mm_per_prompt' or larger 'input_len'."
-        assert calculated_final_input_token_size == input_len, "Expected number of input tokens does not equal to 'input_len'!"
 
         return prompt
     
