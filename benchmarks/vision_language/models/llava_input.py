@@ -1,9 +1,20 @@
-import os
 from PIL import Image
 from vllm_utils.vision_language.models.base import VLMInput
+from transformers.models.llava import LlavaProcessor
+import transformers.models.llava
 
+
+vision_patch_size = None
 
 class LlavaInput(VLMInput):
+    def __init__(self, model, tokenizer):
+        super().__init__(model, tokenizer)
+        
+        global vision_patch_size
+        vision_patch_size = self.hf_config.vision_config.patch_size
+        setattr(transformers.models.llava,'LlavaProcessor', ModifyLlavaProcessor)
+
+
     def get_chat_template(self):
         from transformers import AutoProcessor
         processor = AutoProcessor.from_pretrained(self.model)
@@ -42,3 +53,10 @@ class LlavaInput(VLMInput):
         patch_size = self.hf_config.vision_config.patch_size
         assert input_height % patch_size == 0 and input_width % patch_size == 0
         return (input_height // patch_size) * (input_width // patch_size)
+
+
+class ModifyLlavaProcessor(LlavaProcessor):
+    def __init__(self, image_processor=None, tokenizer=None, patch_size=None, vision_feature_select_strategy=None, chat_template=None, image_token="<image>", num_additional_image_tokens=0, **kwargs):
+        super().__init__(image_processor, tokenizer, patch_size, vision_feature_select_strategy, chat_template, image_token, num_additional_image_tokens, **kwargs)
+        if self.patch_size is None:
+            self.patch_size = vision_patch_size
