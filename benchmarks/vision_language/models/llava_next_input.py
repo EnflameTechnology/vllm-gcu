@@ -1,11 +1,139 @@
 from typing import List, Optional, Union
 import os
+import math
 import numpy as np
 from PIL import Image
 from vllm_utils.vision_language.models.base import VLMInput
 from vllm.assets.video import VideoAsset
 from transformers import LlavaNextVideoProcessor
+from transformers import (CLIPVisionConfig, LlavaOnevisionConfig,
+                          SiglipVisionConfig)
+from transformers.models.llava_onevision.modeling_llava_onevision import get_anyres_image_grid_shape
+
 import cv2
+
+
+def get_llava_onevision_video_frame_feature_size(
+        hf_config: LlavaOnevisionConfig) -> int:
+    # Support both CLIPVisionConfig and SiglipVisionConfig
+    image_size = hf_config.vision_config.image_size
+    patch_size = hf_config.vision_config.patch_size
+    spatial_pool_stride = hf_config.spatial_pool_stride if hasattr(
+        hf_config, "spatial_pool_stride") else 2
+
+    height = width = image_size // patch_size
+    return math.ceil(height / spatial_pool_stride) * math.ceil(
+        width / spatial_pool_stride)
+
+
+def _get_llava_onevision_image_unppaded_feature_size(height, width, patches,
+                                                     scale_height,
+                                                     scale_width):
+    current_height = patches * scale_height
+    current_width = patches * scale_width
+
+    original_aspect_ratio = width / height
+    current_aspect_ratio = current_width / current_height
+    if original_aspect_ratio > current_aspect_ratio:
+        new_height = int(height * (current_width / width))
+        padding = (current_height - new_height) // 2
+        current_height -= padding * 2
+    else:
+        new_width = int(width * (current_height / height))
+        padding = (current_width - new_width) // 2
+        current_width -= padding * 2
+
+    unpadded_features = current_height * current_width
+    newline_features = current_height
+
+    ratio = math.sqrt(current_height * current_width / (9 * patches**2))
+    if ratio > 1.1:
+        unpadded_features = int(current_height // ratio) * int(
+            current_width // ratio)
+        newline_features = int(current_height // ratio)
+
+    return (unpadded_features, newline_features)
+
+
+def get_siglip_patch_grid_length(*, image_size: int, patch_size: int) -> int:
+    # Since interpolation is applied, the image size need not be divisible
+    # assert image_size % patch_size == 0
+    return image_size // patch_size
+
+
+def get_siglip_num_patches(*, image_size: int, patch_size: int) -> int:
+    grid_length = get_siglip_patch_grid_length(image_size=image_size,
+                                               patch_size=patch_size)
+    return grid_length * grid_length
+
+
+def get_siglip_image_feature_size(hf_config: SiglipVisionConfig) -> int:
+    return get_siglip_num_patches(image_size=hf_config.image_size,
+                                  patch_size=hf_config.patch_size)
+
+
+def get_clip_patch_grid_length(*, image_size: int, patch_size: int) -> int:
+    assert image_size % patch_size == 0
+    return image_size // patch_size
+
+def get_clip_num_patches(*, image_size: int, patch_size: int) -> int:
+    grid_length = get_clip_patch_grid_length(image_size=image_size,
+                                             patch_size=patch_size)
+    return grid_length * grid_length
+
+
+def get_clip_image_feature_size(hf_config: CLIPVisionConfig) -> int:
+    return get_clip_num_patches(image_size=hf_config.image_size,
+                                patch_size=hf_config.patch_size) + 1
+
+
+def get_llava_onevision_image_feature_size(
+    hf_config: LlavaOnevisionConfig,
+    *,
+    input_height: int,
+    input_width: int,
+) -> int:
+    vision_config = hf_config.vision_config
+
+    if isinstance(vision_config, CLIPVisionConfig):
+        num_patches = get_clip_patch_grid_length(
+            image_size=vision_config.image_size,
+            patch_size=vision_config.patch_size,
+        )
+        base_feature_size = get_clip_image_feature_size(vision_config)
+    elif isinstance(vision_config, SiglipVisionConfig):
+        num_patches = get_siglip_patch_grid_length(
+            image_size=vision_config.image_size,
+            patch_size=vision_config.patch_size,
+        )
+        base_feature_size = get_siglip_image_feature_size(vision_config)
+    else:
+        msg = f"Unsupported vision config: {type(vision_config)}"
+        raise NotImplementedError(msg)
+
+    strategy = hf_config.vision_feature_select_strategy
+    if strategy == "default":
+        base_feature_size -= 1
+    elif strategy == "full":
+        pass
+    else:
+        raise ValueError(f"Unexpected select feature strategy: {strategy}")
+
+    num_patch_height, num_patch_width = get_anyres_image_grid_shape(
+        image_size=(input_height, input_width),
+        grid_pinpoints=hf_config.image_grid_pinpoints,
+        patch_size=vision_config.image_size,
+    )
+
+    (
+        unpadded_feature_size,
+        newline_feature_size,
+    ) = _get_llava_onevision_image_unppaded_feature_size(
+        input_height, input_width, num_patches, num_patch_height,
+        num_patch_width)
+
+    return unpadded_feature_size + newline_feature_size + base_feature_size
+
 
 class LlavaNextVideoInput(VLMInput):
     def __init__(self, model: str,
@@ -136,7 +264,6 @@ class LlavaOnevisionInputImage(VLMInput):
         input_height = int(input_shape[-2])
         input_width = int(input_shape[-1])
 
-        from vllm.model_executor.models.llava_onevision import get_llava_onevision_image_feature_size
         vision_feature_size = get_llava_onevision_image_feature_size(
             self.hf_config,input_height=input_height,input_width=input_width)
         return vision_feature_size
@@ -176,7 +303,6 @@ class LlavaOnevisionInputVideo(VLMInput):
         return {self.modality: vision_data}
 
     def get_image_feature_size(self, input_vision_shape: str, **kwargs):
-        from vllm.model_executor.models.llava_onevision import get_llava_onevision_video_frame_feature_size
         num_token_image_newline = 1
         tokens_per_frame = get_llava_onevision_video_frame_feature_size(self.hf_config)
         vision_feature_size = kwargs["num_frames"] * tokens_per_frame + num_token_image_newline
