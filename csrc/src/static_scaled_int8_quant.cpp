@@ -14,7 +14,9 @@ void static_scaled_int8_quant(at::Tensor& output, const at::Tensor& input,
                               const ::std::optional<at::Tensor>& azp) {
   const torch_gcu::OptionalGCUGuard device_guard(device_of(output));
   const topsStream_t stream = torch_gcu::getCurrentGCUStream();
-  const at::Tensor scales_dtype = scales.to(input.dtype());
+  const at::Tensor scales_dtype = scales.reciprocal()
+                                      .to(input.dtype())
+                                      .unsqueeze(0);
 
   ATEN_ATENOP_CHECK(ATEN_ATENOP_CALL(topsaten::topsatenQuantize)(
       output, input, scales_dtype, stream));

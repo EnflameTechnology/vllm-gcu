@@ -14,6 +14,8 @@
 #include "src/dynamic_per_token_group_fp8_quant.h"
 #include "src/dynamic_per_token_scaled_fp8_quant.h"
 #include "src/dynamic_scaled_fp8_quant.h"
+#include "src/cutlass_scaled_mm.h"
+#include "src/dynamic_scaled_int8_quant.h"
 #include "src/dynamic_split.h"
 #include "src/fatrelu_and_mul.h"
 #include "src/fused_add_rms_norm.h"
@@ -374,10 +376,10 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
 
   // CUTLASS w8a8 GEMM, supporting symmetric per-tensor or per-row/column
   // quantization, as well as bias
-  ops.def(
-      "cutlass_scaled_mm(Tensor! out, Tensor a,"
-      "                  Tensor b, Tensor a_scales,"
-      "                  Tensor b_scales, Tensor? bias) -> ()");
+  //   ops.def(
+  //       "cutlass_scaled_mm(Tensor! out, Tensor a,"
+  //       "                  Tensor b, Tensor a_scales,"
+  //       "                  Tensor b_scales, Tensor? bias) -> ()");
   // ops.impl("cutlass_scaled_mm", torch::kPrivateUse1, &cutlass_scaled_mm);
 
   // CUTLASS w8a8 GEMM, supporting asymmetric per-tensor or per-row/column
@@ -489,6 +491,14 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
   ops.impl("dynamic_scaled_fp8_quant", torch::kPrivateUse1,
            &dynamic_scaled_fp8_quant);
 
+  // Compute dynamic scaled INT8 quantized tensor with azp
+  ops.def(
+      "dynamic_scaled_int8_quant(Tensor! output, "
+      "Tensor input, Tensor! scales, "
+      "Tensor azp) -> ()");
+  ops.impl("dynamic_scaled_int8_quant", torch::kPrivateUse1,
+           &dynamic_scaled_int8_quant);
+
   // Compute dynamic-per-token FP8 quantized tensor and scaling factor.
   ops.def(
       "dynamic_per_token_scaled_fp8_quant(Tensor! result, Tensor input, "
@@ -505,9 +515,10 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
            &static_scaled_int8_quant);
 
   // Compute int8 quantized tensor and scaling factor
-  ops.def(
-      "dynamic_scaled_int8_quant(Tensor! result, Tensor input, Tensor! scale, "
-      "Tensor!? azp) -> ()");
+  //   ops.def(
+  //       "dynamic_scaled_int8_quant(Tensor! result, Tensor input, "
+  //   "Tensor! scale, "
+  //       "Tensor!? azp) -> ()");
   // ops.impl("dynamic_scaled_int8_quant", torch::kPrivateUse1,
   // &dynamic_scaled_int8_quant);
 
@@ -610,6 +621,12 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
 
   ops.def("dot_bias_quant", &dot_bias_quant);
   ops.impl("dot_bias_quant", c10::kPrivateUse1, &dot_bias_quant);
+
+  ops.def(
+      "cutlass_scaled_mm(Tensor! out, "
+      "Tensor x, Tensor weight, Tensor x_scale, "
+      "Tensor w_scale, Tensor? bias) -> ()");
+  ops.impl("cutlass_scaled_mm", torch::kPrivateUse1, &cutlass_scaled_mm);
 
   ops.def(
       "linear_quant(Tensor! out, Tensor lhs, Tensor rhs, Tensor? bias, "
