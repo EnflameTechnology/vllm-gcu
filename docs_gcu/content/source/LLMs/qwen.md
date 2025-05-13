@@ -1650,18 +1650,6 @@ python3 -m vllm_utils.benchmark_serving \
 
 将上述url设定的路径下的内容全部下载到`QWen3-30B-A3B`文件夹中。
 
-#### 批量离线推理
-```shell
-python3 -m vllm_utils.benchmark_test \
- --model=[path of QWen3-30B-A3B] \
- --tensor-parallel-size=2 \
- --max-model-len=32768 \
- --output-len=128 \
- --demo=te \
- --dtype=bfloat16 \
- --device gcu
-```
-
 #### serving模式
 
 ```shell
