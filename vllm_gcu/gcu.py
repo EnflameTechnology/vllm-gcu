@@ -40,6 +40,7 @@ class GCUPlatform(Platform):
         "w8a8_gcu",
         "fp8",
         "fp8_gcu",
+        "compressed-tensors",
     ]
 
     def is_cuda_alike(self) -> bool:
