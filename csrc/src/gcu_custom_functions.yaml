@@ -124,6 +124,9 @@
 - func: dot_bias_quant(Tensor(a!) out, Tensor lhs, Tensor rhs, Tensor scale, Tensor? bias) -> ()
   variants: function
 
+- func: cutlass_scaled_mm(Tensor(a!) out, Tensor x, Tensor weight, Tensor x_scale, Tensor w_scale, Tensor? bias) -> ()
+  variants: function
+
 - func: memory_efficient_attention_alibi(Tensor(a!) output, Tensor query, Tensor key, Tensor value, Tensor alibi_slopes, float drop, float scale) -> ()
   variants: function
 
@@ -192,6 +195,9 @@
   variants: function
 
 - func: dynamic_scaled_fp8_quant(Tensor(a!) result, Tensor input, Tensor(a!) scale) -> ()
+  variants: function
+
+- func: dynamic_scaled_int8_quant(Tensor(a!) output, Tensor input, Tensor(a!) scales, Tensor azp) -> ()
   variants: function
 
 - func: dynamic_per_token_scaled_fp8_quant(Tensor(a!) result, Tensor input, Tensor(a!) scale, Tensor? scale_ub) -> ()
