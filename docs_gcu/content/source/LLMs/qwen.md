@@ -1638,3 +1638,59 @@ python3 -m vllm_utils.benchmark_serving \
 *  本模型支持的`max-model-len`为131072；
 *  `input-len`、`output-len`和`num-prompts`可按需调整；
 *  配置 `output-len`为1时,输出内容中的`latency`即为time_to_first_token_latency;
+
+### QWen3-30B-A3B
+
+#### 模型下载
+*  url: [QWen3-30B-A3B](https://www.modelscope.cn/models/Qwen/QWen3-30B-A3B/files)
+
+*  branch: `master`
+
+*  commit id: `e34b3e98`
+
+将上述url设定的路径下的内容全部下载到`QWen3-30B-A3B`文件夹中。
+
+#### 批量离线推理
+```shell
+python3 -m vllm_utils.benchmark_test \
+ --model=[path of QWen3-30B-A3B] \
+ --tensor-parallel-size=2 \
+ --max-model-len=32768 \
+ --output-len=128 \
+ --demo=te \
+ --dtype=bfloat16 \
+ --device gcu
+```
+
+#### serving模式
+
+```shell
+# 启动服务端
+python3 -m vllm.entrypoints.openai.api_server \
+ --model [path of QWen3-30B-A3B] \
+ --tensor-parallel-size 2 \
+ --max-model-len 32768 \
+ --disable-log-requests \
+ --block-size=64 \
+ --dtype=bfloat16 \
+ --device gcu \
+ --trust-remote-code
+
+
+# 启动客户端
+python3 -m vllm_utils.benchmark_serving \
+ --backend vllm \
+ --dataset-name random \
+ --model [path of QWen3-30B-A3B] \
+ --num-prompts 1 \
+ --random-input-len 1024 \
+ --random-output-len 1024 \
+ --trust-remote-code \
+ --ignore_eos \
+ --strict-in-out-len \
+ --keep-special-tokens
+```
+注：
+*  本模型支持的`max-model-len`为40960；
+*  `input-len`、`output-len`和`num-prompts`可按需调整；
+*  配置 `output-len`为1时,输出内容中的`latency`即为time_to_first_token_latency;
