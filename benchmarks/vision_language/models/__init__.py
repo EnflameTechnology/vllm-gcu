@@ -9,7 +9,7 @@ VLM_MODELS = {
     "InternVLChatModel": ("internvl_input", "InternVL2Input"),
     "InternVLChatModelVideo": ("internvl_input", "InternVL2VideoInput"),
     "LlavaLlamaForCausalLM": ("yi_vl_input", "YiVLInput"),
-    "QWenLMHeadModel": ("qwen_vl_input","QwenVLInput"),
+    "QwenVLForConditionalGeneration": ("qwen_vl_input","QwenVLInput"),
     "ChatGLMModel": ("glm4v_input", "GLM4VInput"),
     "MultiModalityCausalLM": ("deepseek_vl_input","DeepSeekVLInput"),
     "Phi3VForCausalLMImage": ("phi3v_input", "Phi3VImageInput"),
