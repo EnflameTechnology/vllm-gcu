@@ -390,9 +390,9 @@ def fused_experts_impl(
                 send_packed, [ep_token_indices]
             )
             # send_packed_sorted = send_packed[ep_token_indices.to(torch.int64)]
-        enable_parallel_compute = current_platform.get_device_capability().to_int() == 130
+        enable_parallel_compute = gcu_envs.VLLM_GCU_ENABLE_PARALLEL_COMPUTE
         parallel_compute_context = torch.gcu.ParallelCompute(2, 10) \
-            if current_platform.get_device_capability().to_int() == 130 \
+            if current_platform.get_device_capability().to_int() == 130 and enable_parallel_compute \
             else nullcontext()
         if all_dp_in_decode:
             padded_recv_len = scheduler_config.max_num_seqs
