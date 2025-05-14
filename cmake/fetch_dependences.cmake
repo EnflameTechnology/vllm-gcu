@@ -276,10 +276,10 @@ foreach(TORCH_GCU_PY_VER IN LISTS TORCH_GCU_PY_VERS)
     else()
         set(torch_gcu_git_name "torch_gcu_binary")
 
-        download_tx_whl(${torch_gcu_git_name} ${torch_gcu_${TOPS_EXTENSION_PY_VER}_link})
+        download_tx_whl(${torch_gcu_git_name} ${torch_gcu_${TORCH_GCU_PY_VER}_link})
 
-        set(torch_gcu_${TOPS_EXTENSION_PY_VER}_whl_FILE ${CMAKE_CURRENT_BINARY_DIR}/${torch_gcu_git_name}/${torch_gcu_${TOPS_EXTENSION_PY_VER}_link})
-        set(torch_gcu_${TOPS_EXTENSION_PY_VER}_whl_SOURCE_DIR ${CMAKE_CURRENT_BINARY_DIR}/${torch_gcu_git_name})
+        set(torch_gcu_${TORCH_GCU_PY_VER}_whl_FILE ${CMAKE_CURRENT_BINARY_DIR}/${torch_gcu_git_name}/${torch_gcu_${TORCH_GCU_PY_VER}_link})
+        set(torch_gcu_${TORCH_GCU_PY_VER}_whl_SOURCE_DIR ${CMAKE_CURRENT_BINARY_DIR}/${torch_gcu_git_name})
     endif()
 endforeach()
 
