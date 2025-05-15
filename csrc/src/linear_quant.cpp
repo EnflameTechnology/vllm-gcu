@@ -16,6 +16,8 @@ void linear_quant(at::Tensor &out, const at::Tensor &lhs,
   const torch_gcu::OptionalGCUGuard device_guard(device_of(out));
   const topsStream_t stream = torch_gcu::getCurrentGCUStream();
 
+  if (lhs.numel() == 0) return;
+
   at::Tensor bias_tensor;
   if (bias.has_value()) {
     bias_tensor = bias.value();

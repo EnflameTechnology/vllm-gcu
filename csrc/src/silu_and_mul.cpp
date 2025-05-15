@@ -40,6 +40,8 @@ void silu_and_mul(at::Tensor &out, const at::Tensor &input) {
   auto use_native = c10::utils::check_env("VLLM_GCU_NATIVE");
   auto fallback_cpu = c10::utils::check_env("VLLM_GCU_FALLBACK_CPU");
 
+  if (input.numel() == 0) return;
+
   if (use_native) {
     at::Tensor res;
     if (fallback_cpu) {
@@ -57,4 +59,4 @@ void silu_and_mul(at::Tensor &out, const at::Tensor &input) {
       view_out, view_input, stream));
 }
 
-} // namespace vllm_gcu::llm_ops
+}  // namespace vllm_gcu::llm_ops

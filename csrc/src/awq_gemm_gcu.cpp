@@ -32,6 +32,9 @@ at::Tensor awq_gemm_gcu(at::Tensor &input, at::Tensor &qweight,
   const torch_gcu::OptionalGCUGuard device_guard(device_of(input));
   const topsStream_t stream = torch_gcu::getCurrentGCUStream();
   at::Tensor out = at::empty({input.size(0), qweight.size(1)}, input.options());
+
+  if (input.numel() == 0) return out;
+
   at::Tensor bias_tensor;
   if (bias.has_value()) {
     bias_tensor = bias.value();

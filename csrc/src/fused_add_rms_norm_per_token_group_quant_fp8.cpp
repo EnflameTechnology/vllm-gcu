@@ -16,6 +16,8 @@ void fused_add_rms_norm_per_token_group_quant_fp8(
   const torch_gcu::OptionalGCUGuard device_guard(device_of(out));
   const topsStream_t stream = torch_gcu::getCurrentGCUStream();
 
+  if (input.numel() == 0) return;
+
   ATEN_ATENOP_CHECK(
       ATEN_ATENOP_CALL(topsvllm::topsvllmFusedAddRmsNormPerTokenGroupQuantFp8)(
           out, residual, scale, input, const_cast<at::Tensor &>(residual),

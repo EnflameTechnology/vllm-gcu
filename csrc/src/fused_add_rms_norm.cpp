@@ -47,6 +47,8 @@ void fused_add_rms_norm(at::Tensor &input, at::Tensor &residual,
   const torch_gcu::OptionalGCUGuard device_guard(device_of(input));
   const topsStream_t stream = torch_gcu::getCurrentGCUStream();
 
+  if (input.numel() == 0) return;
+
   auto use_native = c10::utils::check_env("VLLM_GCU_NATIVE");
   auto fallback_cpu = c10::utils::check_env("VLLM_GCU_FALLBACK_CPU");
 

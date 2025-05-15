@@ -14,6 +14,8 @@ void silu_mul_per_token_group_quant(at::Tensor &out, at::Tensor &scale,
   const torch_gcu::OptionalGCUGuard device_guard(device_of(out));
   const topsStream_t stream = torch_gcu::getCurrentGCUStream();
 
+  if (input.numel() == 0) return;
+
   ATEN_ATENOP_CHECK(
       ATEN_ATENOP_CALL(topsvllm::topsvllmSiluMulPerTokenGroupQuant)(
           out, scale, input, group_size, stream));

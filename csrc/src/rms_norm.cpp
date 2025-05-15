@@ -29,6 +29,8 @@ void rms_norm(at::Tensor &out, const at::Tensor &input,
   const torch_gcu::OptionalGCUGuard device_guard(device_of(input));
   const topsStream_t stream = torch_gcu::getCurrentGCUStream();
 
+  if (input.numel() == 0) return;
+
   at::Tensor view_out = out.view({-1, out.size(-1)});
   at::Tensor view_input = input.view({-1, input.size(-1)});
   at::Scalar xeps(epsilon);
