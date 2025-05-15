@@ -109,12 +109,12 @@ class PatchedFusedMoE(FusedMoE):
 
         # For smuggling this layer into the fused moe custom op
         self.use_direct_call = self.dp_size == 1
-        if not self.use_direct_call:
-            compilation_config = vllm_config.compilation_config
-            if prefix in compilation_config.static_forward_context:
-                raise ValueError("Duplicate layer name: {}".format(prefix))
-            compilation_config.static_forward_context[prefix] = self
-            self.layer_name = prefix
+
+        compilation_config = vllm_config.compilation_config
+        if prefix in compilation_config.static_forward_context:
+            raise ValueError("Duplicate layer name: {}".format(prefix))
+        compilation_config.static_forward_context[prefix] = self
+        self.layer_name = prefix
 
         if use_ep:
             # Set TP size to 1 to adjust for EP and adjust EP size and rank
@@ -153,7 +153,7 @@ class PatchedFusedMoE(FusedMoE):
         self.custom_routing_function = custom_routing_function
         self.scoring_func = scoring_func
         self.e_score_correction_bias = e_score_correction_bias
-        self.activation = activation
+        self.activation = f"{activation}_{prefix}"
 
         if self.scoring_func != "softmax" and not self.use_grouped_topk:
             raise ValueError("Only softmax scoring function is supported for "

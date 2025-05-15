@@ -22,10 +22,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Inference-only DeepseekV2/DeepseekV3 model."""
-from contextlib import nullcontext
-from functools import partial
-from typing import Any, Dict, Iterable, Mapping, Optional, Set, Tuple, Union
-from unittest.mock import patch
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple, Union
 
 import numpy as np
 import torch
@@ -33,7 +30,13 @@ from torch import nn
 from transformers import PretrainedConfig
 from vllm.attention import Attention
 from vllm.compilation.decorators import support_torch_compile
-from vllm.config import CacheConfig, ModelConfig, set_current_vllm_config, VllmConfig
+from vllm.config import (
+    CacheConfig,
+    get_current_vllm_config,
+    ModelConfig,
+    set_current_vllm_config,
+    VllmConfig,
+)
 from vllm.distributed import (
     get_pp_group,
     get_tensor_model_parallel_world_size,
@@ -76,7 +79,6 @@ from vllm.model_executor.sampling_metadata import SamplingMetadata
 from vllm.sequence import IntermediateTensors, SequenceData
 
 import vllm_gcu.envs as gcu_envs
-from vllm_gcu.kernels.fused_moe import fused_experts_impl
 from vllm_gcu.kernels.linear import MergedReplicatedLinear
 from vllm_gcu.models.deepseek_v3.deepseek_v3_fusion import DeepseekV2MLAAttentionFusion
 
@@ -201,8 +203,6 @@ class DeepseekV2MoE(nn.Module):
 
         self.tp_size = self.experts.tp_size
 
-        self.do_shared_and_scale = True
-        self.context = nullcontext()
         if config.n_shared_experts is not None:
             intermediate_size = config.moe_intermediate_size * config.n_shared_experts
             self.shared_experts = DeepseekV2MLP(
@@ -213,32 +213,45 @@ class DeepseekV2MoE(nn.Module):
                 reduce_results=False,
                 prefix=f"{prefix}.shared_experts",
             )
-            if self.experts.ep_size > 1:
-                self.do_shared_and_scale = False
-                self.context = patch(
-                    "vllm_gcu.kernels.fused_moe.fused_experts_impl",
-                    partial(
-                        fused_experts_impl,
-                        shared_experts=self.shared_experts,
-                        routed_scaling_factor=self.routed_scaling_factor,
-                        log2phy=self.layer_log2phy,
-                    ),
+
+            def custom_pass(graph: torch.fx.Graph) -> torch.fx.Graph:
+                from vllm_gcu.compilation.fusion import GCUFusionPass
+
+                vllm_config = get_current_vllm_config()
+                GCUFusionPass.instance(vllm_config.compilation_config).patterns.apply(
+                    graph
                 )
+                graph.eliminate_dead_code()
+                return graph
+
+            def custom_backend(
+                graph: torch.fx.GraphModule, example_inputs: List[torch.Tensor]
+            ):
+                from torch._inductor import config
+                from torch._inductor.compile_fx import compile_fx
+
+                current_config = config.get_config_copy()
+                current_config["post_grad_custom_post_pass"] = custom_pass
+                current_config["enable_auto_functionalized_v2"] = False
+
+                return compile_fx(graph, example_inputs, config_patches=current_config)
+
+            self.experts.shared_experts = torch.compile(
+                backend=custom_backend, dynamic=True
+            )(self.shared_experts)
+            self.experts.routed_scaling_factor = self.routed_scaling_factor
+            self.experts.log2phy = self.layer_log2phy
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         num_tokens, hidden_dim = hidden_states.shape
         hidden_states = hidden_states.view(-1, hidden_dim)
         shared_output = None
 
-        if self.n_shared_experts is not None and self.do_shared_and_scale:
-            shared_output = self.shared_experts(hidden_states)
-
         router_logits, _ = self.gate(hidden_states)
-        with self.context:
-            final_hidden_states = self.experts(
-                hidden_states=hidden_states,
-                router_logits=router_logits,
-            )
+        final_hidden_states = self.experts(
+            hidden_states=hidden_states,
+            router_logits=router_logits,
+        )
 
         if shared_output is not None:
             final_hidden_states *= self.routed_scaling_factor
@@ -392,7 +405,7 @@ class DeepseekV2Attention(nn.Module):
         kv = self.kv_b_proj(kv_a)[0]
         kv = kv.view(-1, self.num_local_heads, self.qk_nope_head_dim + self.v_head_dim)
         k_nope, v = kv.split([self.qk_nope_head_dim, self.v_head_dim], dim=-1)
-        k_pe = latent_cache[:, :, self.kv_lora_rank:]
+        k_pe = latent_cache[:, :, self.kv_lora_rank :]
 
         if self.use_normal_rope:
             seq_len = positions.size(0)
@@ -405,10 +418,10 @@ class DeepseekV2Attention(nn.Module):
         if self.use_normal_rope:
             q_pe, k_pe = q_pe.view(ori_q_pe_shape), k_pe.view(ori_k_pe_shape)
 
-        q[..., self.qk_nope_head_dim:] = q_pe
+        q[..., self.qk_nope_head_dim :] = q_pe
         k = torch.empty_like(q)
         k[..., : self.qk_nope_head_dim] = k_nope
-        k[..., self.qk_nope_head_dim:] = k_pe
+        k[..., self.qk_nope_head_dim :] = k_pe
         # padding value to qk_head_dim for alignment
         v = torch.nn.functional.pad(
             v, [0, self.qk_head_dim - self.v_head_dim], value=0
@@ -977,6 +990,12 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP):
             if "rotary_emb.inv_freq" in name:
                 continue
 
+            if "mlp.shared_experts" in name and name not in params_dict:
+                # shared_experts was setattr to self.experts when not in params_dict
+                name = name.replace(
+                    "mlp.shared_experts", "mlp.experts.shared_experts._orig_mod"
+                )
+
             # TODO(simon): support nextn predict layers
             if (
                 hasattr(self.config, "num_nextn_predict_layers")
@@ -997,9 +1016,14 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP):
                 # name will be updated to mlp.experts[0].gate_up_proj, which
                 # will then be updated below in expert_params_mapping
                 # for mlp.experts[0].gate_gate_up_proj, which breaks load.
-                if ("mlp.experts." in name) and name not in params_dict:
+                if (
+                    ("mlp.experts." in name)
+                    and ("shared_experts." not in name)
+                    and name not in params_dict
+                ):
                     continue
                 name = name.replace(weight_name, param_name)
+
                 # Skip loading extra bias for GPTQ models.
                 if name.endswith(".bias") and name not in params_dict:
                     continue
