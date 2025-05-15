@@ -40,8 +40,8 @@ echo "Found TOPS_EXTENSION_COMMITID is: $TOPS_EXTENSION_COMMITID"
 
 TOPS_EXTENSION_DAILY_TAG=$(grep "set(TOPS_EXTENSION_DAILY_TAG" ${ROOT_DIR}/vllm/cmake/fetch_dependences.cmake | sed -E 's/.*set\(TOPS_EXTENSION_DAILY_TAG ([0-9.]+)\).*/\1/')
 echo "Found TOPS_EXTENSION_DAILY_TAG is: $TOPS_EXTENSION_DAILY_TAG"
-TOPS_EXTENSION_310_FILE=${TOPS_EXTENSION_COMMITID}/tops_extension-${TOPS_EXTENSION_DAILY_TAG}+torch.2.5.1-cp310-cp310-linux_x86_64.whl
-TOPS_EXTENSION_39_FILE=${TOPS_EXTENSION_COMMITID}/tops_extension_cape-${TOPS_EXTENSION_DAILY_TAG}+torch.2.5.1-cp39-cp39-linux_x86_64.whl
+TOPS_EXTENSION_310_FILE=${TOPS_EXTENSION_COMMITID}/tops_extension-${TOPS_EXTENSION_DAILY_TAG}+torch.2.6.0-cp310-cp310-linux_x86_64.whl
+TOPS_EXTENSION_39_FILE=${TOPS_EXTENSION_COMMITID}/tops_extension_cape-${TOPS_EXTENSION_DAILY_TAG}+torch.2.6.0-cp39-cp39-linux_x86_64.whl
 
 #pull_from_repo "tops_extension_binary" "$TOPS_EXTENSION_310_FILE"
 pull_from_repo "tops_extension_binary" "$TOPS_EXTENSION_39_FILE"
@@ -71,8 +71,8 @@ echo "Found TORCH_ZX_UTILS_COMMITID is: $TORCH_ZX_UTILS_COMMITID"
 TORCH_ZX_UTILS_DAILY_TAG=$(grep "set(TORCH_ZX_UTILS_DAILY_TAG" ${ROOT_DIR}/vllm/cmake/fetch_dependences.cmake | sed -E 's/.*set\(TORCH_ZX_UTILS_DAILY_TAG ([0-9.]+)\).*/\1/')
 echo "Found TORCH_ZX_UTILS_DAILY_TAG is: $TORCH_ZX_UTILS_DAILY_TAG"
 
-TORCH_ZX_UTILS_310_FILE=${TORCH_ZX_UTILS_COMMITID}/torch_zx_utils-2.5.1+${TORCH_ZX_UTILS_DAILY_TAG}-cp310-cp310-linux_x86_64.whl
-TORCH_ZX_UTILS_39_FILE=${TORCH_ZX_UTILS_COMMITID}/torch_zx_utils-2.5.1+${TORCH_ZX_UTILS_DAILY_TAG}-cp39-cp39-linux_x86_64.whl
+TORCH_ZX_UTILS_310_FILE=${TORCH_ZX_UTILS_COMMITID}/torch_zx_utils-2.6.0+${TORCH_ZX_UTILS_DAILY_TAG}-cp310-cp310-linux_x86_64.whl
+TORCH_ZX_UTILS_39_FILE=${TORCH_ZX_UTILS_COMMITID}/torch_zx_utils-2.6.0+${TORCH_ZX_UTILS_DAILY_TAG}-cp39-cp39-linux_x86_64.whl
 
 pull_from_repo "torch_gcu_binary" "$TORCH_ZX_UTILS_310_FILE"
 pull_from_repo "torch_gcu_binary" "$TORCH_ZX_UTILS_39_FILE"
@@ -92,7 +92,7 @@ pull_from_repo "topsaten_binary" "${TOPSATEN_FILE}"
 cp ${ROOT_DIR}/cmake_build/topsaten_binary/$TOPSATEN_FILE ${ROOT_DIR}/cmake_build/x86_64-linux-rel/python_packages/
 
 cd ${ROOT_DIR}/cmake_build/x86_64-linux-rel/python_packages/
-mv tops_extension_cape-${TOPS_EXTENSION_DAILY_TAG}+torch.2.5.1-cp39-cp39-linux_x86_64.whl tops_extension-${TOPS_EXTENSION_DAILY_TAG}+torch.2.5.1-cp39-cp39-linux_x86_64.whl
+mv tops_extension_cape-${TOPS_EXTENSION_DAILY_TAG}+torch.2.6.0-cp39-cp39-linux_x86_64.whl tops_extension-${TOPS_EXTENSION_DAILY_TAG}+torch.2.6.0-cp39-cp39-linux_x86_64.whl
 mv xformers_cape-${XFORMERS_DAILY_TAG}-cp310-cp310-linux_x86_64.whl xformers-${XFORMERS_DAILY_TAG}-cp310-cp310-linux_x86_64.whl
 mv xformers_cape-${XFORMERS_DAILY_TAG}-cp39-cp39-linux_x86_64.whl xformers-${XFORMERS_DAILY_TAG}-cp39-cp39-linux_x86_64.whl
 mv topsaten_cape_${TOPSOP_PACKAGE_VERSION}-1_amd64.deb topsaten_${TOPSOP_PACKAGE_VERSION}-1_amd64.deb
