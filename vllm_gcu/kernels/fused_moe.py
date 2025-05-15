@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 # coding=utf-8
-from contextlib import nullcontext
 import functools
 import math
 import sys
+from contextlib import nullcontext
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import torch
@@ -11,6 +11,7 @@ import torch_gcu
 import vllm.envs as envs
 from vllm.config import get_current_vllm_config
 from vllm.distributed.parallel_state import get_tp_group
+from vllm.forward_context import ForwardContext, get_forward_context
 
 from vllm.model_executor.layers.fused_moe.fused_moe import (
     fused_experts,
@@ -316,19 +317,28 @@ def fused_experts_impl(
     a1_scale: Optional[torch.Tensor] = None,
     a2_scale: Optional[torch.Tensor] = None,
     block_shape: Optional[List[int]] = None,
-    shared_experts=None,
-    routed_scaling_factor=None,
-    log2phy=None
 ):
     from vllm.distributed import get_world_group
 
+    activation, layer_name = activation.split("_")
     assert activation == "silu", f"not support activation: {activation}"
+
+    forward_context: ForwardContext = get_forward_context()
+    layer = forward_context.no_compile_layers[layer_name]
+
+    shared_experts = getattr(layer, "shared_experts", None)
+    routed_scaling_factor = getattr(layer, "routed_scaling_factor", None)
+    log2phy = getattr(layer, "log2phy", None)
 
     parallel_config = get_current_vllm_config().parallel_config
     scheduler_config = get_current_vllm_config().scheduler_config
     if shared_experts is not None:
         assert parallel_config.enable_expert_parallel
         assert routed_scaling_factor is not None
+
+    if log2phy is not None:
+        assert parallel_config.enable_expert_parallel
+
     recv_token_total = None
     shared_output = None
     if parallel_config.enable_expert_parallel:
@@ -403,9 +413,12 @@ def fused_experts_impl(
             )
             # send_packed_sorted = send_packed[ep_token_indices.to(torch.int64)]
         enable_parallel_compute = gcu_envs.VLLM_GCU_ENABLE_PARALLEL_COMPUTE
-        parallel_compute_context = torch.gcu.ParallelCompute(2, 10) \
-            if current_platform.get_device_capability().to_int() == 130 and enable_parallel_compute \
+        parallel_compute_context = (
+            torch.gcu.ParallelCompute(2, 10)
+            if current_platform.get_device_capability().to_int() == 130
+            and enable_parallel_compute
             else nullcontext()
+        )
         if all_dp_in_decode:
             padded_recv_len = scheduler_config.max_num_seqs
             if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
