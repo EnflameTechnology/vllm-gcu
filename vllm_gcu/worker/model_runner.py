@@ -958,12 +958,12 @@ class GCUModelRunner(GCUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
                     input_ids=(
                         model_input.input_tokens
                         if model_input.input_tokens is not None
-                        else torch.tensor([], device="gcu")
+                        else torch.tensor([], dtype=torch.int64, device="gcu")
                     ),
                     positions=(
                         model_input.input_positions
                         if model_input.input_positions is not None
-                        else torch.tensor([], device="gcu")
+                        else torch.tensor([], dtype=torch.int64, device="gcu")
                     ),
                     intermediate_tensors=intermediate_tensors,
                     **MultiModalKwargs.as_kwargs(

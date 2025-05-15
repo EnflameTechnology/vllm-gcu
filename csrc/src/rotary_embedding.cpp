@@ -29,6 +29,8 @@ void rotary_embedding(const at::Tensor &positions, at::Tensor &query,
   const torch_gcu::OptionalGCUGuard device_guard(device_of(query));
   const topsStream_t stream = torch_gcu::getCurrentGCUStream();
 
+  if (query.numel() == 0) return;
+
   auto view_query = query.view({-1, query.size(-1)});
   auto view_key = key.view({-1, key.size(-1)});
   auto view_positions = positions.view({-1});
