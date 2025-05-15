@@ -25,6 +25,9 @@ void fused_grouped_topk(at::Tensor &topk_weights, at::Tensor &topk_ids,
             c10::string_view scoring_func) {
   const torch_gcu::OptionalGCUGuard device_guard(device_of(gating_output));
   const topsStream_t stream = torch_gcu::getCurrentGCUStream();
+
+  if (gating_output.numel() == 0) return;
+
   const char *scoring_func_name = scoring_func.data();
   if(!e_score_correction_bias.defined()) {
     ATEN_ATENOP_CHECK(ATEN_ATENOP_CALL(topsvllm::topsvllmGroupedTopk)(
