@@ -54,7 +54,7 @@ function zx_normal_build() {
   echo "Current build job: $FUNCNAME"
   echo `pwd`
   PROJECT_GIT_URL="git@git.tencent.com:sy-zx/enflame_caps"
-  sudo python3.10 -m pip install torch==2.5.1 patch pyyaml packaging numpy==1.22.4
+  sudo python3.10 -m pip install torch==2.6.0 patch pyyaml packaging numpy==1.22.4
   rm -rf cmake_build
   mkdir -p ${BUILD_ROOT_DIR}/cmake_build/ci
   cd ${BUILD_ROOT_DIR}/cmake_build
