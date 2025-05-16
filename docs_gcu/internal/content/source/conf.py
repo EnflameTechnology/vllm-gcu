@@ -37,7 +37,7 @@ author = 'www.enflame-tech.com'
 
 # The full version, including alpha/beta/rc tags
 
-release = 'V 0.6.1.post2'  # 填写当前文档版本号
+release = 'V 0.8.0'  # 填写当前文档版本号
 doc_name = project  # 填写全称
 # last_update_date = '2024年03月15日'  # 填写文档更新日期，格式为YYYY年M月D日
 last_update_date = datetime.datetime.now().strftime('%Y-%m-%d') # 填写文档更新日期，格式为YYYY年M月D日

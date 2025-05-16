@@ -61,9 +61,9 @@ python3 -m vllm_utils.benchmark_test --perf \
 python3 -m pip install opencv-python==4.9.0.80
 python3 -m pip install huggingface-hub==0.25.2
 # for x86_64
-python3 -m pip install torchvision==0.18.0+cpu -i https://download.pytorch.org/whl/cpu
+python3 -m pip install torchvision==0.21.0+cpu -i https://download.pytorch.org/whl/cpu
 # for aarch64
-python3 -m pip install torchvision==0.18.0
+python3 -m pip install torchvision==0.21.0
 # for x86_64 and python_version>=3.10
 python3 -m pip install importlib-metadata==8.5.0
 # for aarch64 and python_version>=3.10

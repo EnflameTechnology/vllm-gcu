@@ -4,7 +4,7 @@
 
 ## 环境配置
 
-请安装opencompass 0.3.1和vLLM-gcu 0.6.1.post2版本，调整依赖项版本，确保两者正常工作。
+请安装opencompass 0.3.1和vLLM-gcu 0.8.0版本，调整依赖项版本，确保两者正常工作。
 
 注：opencompass 0.3.1版本需要使用python 3.10或以上版本运行
 
