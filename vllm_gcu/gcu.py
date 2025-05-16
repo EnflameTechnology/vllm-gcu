@@ -233,8 +233,8 @@ class GCUPlatform(Platform):
                 compilation_config.backend = "topsgraph"
 
             if compilation_config.level == 3:
-                os.environ["VLLM_DISABLE_COMPILE_CACHE"] = "1"
-                envs.VLLM_DISABLE_COMPILE_CACHE = True
+                # os.environ["VLLM_DISABLE_COMPILE_CACHE"] = "1"
+                # envs.VLLM_DISABLE_COMPILE_CACHE = True
                 # TODO: WA for bug in vllm, to be removed after 0.8.2
                 if not compilation_config.cache_dir:
                     factors = []

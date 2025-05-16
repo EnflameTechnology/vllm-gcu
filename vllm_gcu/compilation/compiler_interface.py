@@ -9,6 +9,7 @@ from unittest.mock import patch
 import torch
 import torch.fx as fx
 import torch_gcu
+import vllm.envs as envs
 from torch._inductor.codegen.common import device_codegens, get_scheduling_for_device
 from torch._inductor.codegen.triton import TritonScheduling
 from vllm.compilation.compiler_interface import (
@@ -16,7 +17,6 @@ from vllm.compilation.compiler_interface import (
     EagerAdaptor,
     InductorAdaptor,
 )
-import vllm.envs as envs
 
 from vllm_gcu.compilation.fx_fusion import get_passes
 
@@ -38,6 +38,50 @@ def version():
         torch.version.cuda = None
 
 
+@contextmanager
+def lowering():
+    import torch._inductor.lowering as til
+
+    BLACK_LIST = ["name"]
+    origin_lowerings = {}
+    skip_lowerings = []
+
+    for name in dir(torch.ops.aten):
+        if not name.startswith("_") and name not in BLACK_LIST:
+            op = getattr(torch.ops.aten, name)
+
+            if isinstance(op, torch._ops.OpOverloadPacket):
+                for ol in op.overloads():
+                    op_overload = til.get_overloads(getattr(op, ol))
+                    if op_overload[0] in til.lowerings:
+                        origin_lowerings.update(
+                            dict.fromkeys(op_overload, til.lowerings[op_overload[0]])
+                        )
+                    else:
+                        skip_lowerings.append(op_overload[0])
+            elif isinstance(
+                op, (torch._ops.OpOverload, torch._ops.HigherOrderOperator)
+            ):
+                op_overload = til.get_overloads(op)
+                if op_overload[0] in til.lowerings:
+                    origin_lowerings.update(
+                        dict.fromkeys(op_overload, til.lowerings[op_overload[0]])
+                    )
+                else:
+                    skip_lowerings.append(op_overload[0])
+
+            til.make_fallback(op, warn=False, override_decomp=True)
+
+    yield
+
+    for op_overload, _ in origin_lowerings.items():
+        til.register_lowering(op_overload, type_promotion_kind=None)(
+            origin_lowerings[op_overload]
+        )
+    for op_overload in skip_lowerings:
+        til.lowerings.pop(op_overload)
+
+
 class CustomInductorAdaptor(InductorAdaptor):
     def compile(
         self,
@@ -55,7 +99,7 @@ class CustomInductorAdaptor(InductorAdaptor):
         #     graph = _pass(graph)
 
         # disable remote cache
-        current_config["force_disable_caches"] = True
+        # current_config["force_disable_caches"] = True
         current_config["fx_graph_cache"] = True
         current_config["fx_graph_remote_cache"] = False
 
@@ -63,10 +107,13 @@ class CustomInductorAdaptor(InductorAdaptor):
             current_config.update(compiler_config)
 
         from vllm_gcu.compilation.fusion import GCUFusionPass
+
         PASS_KEY = "post_grad_custom_post_pass"
         assert PASS_KEY in current_config
         post_grad_pass_manager = current_config[PASS_KEY]
-        post_grad_pass_manager.add(GCUFusionPass.instance(post_grad_pass_manager.pass_config))
+        post_grad_pass_manager.add(
+            GCUFusionPass.instance(post_grad_pass_manager.pass_config)
+        )
 
         if isinstance(runtime_shape, int):
             # for a specific batchsize, tuning triton kernel parameters
@@ -110,15 +157,18 @@ class CustomInductorAdaptor(InductorAdaptor):
                 return inductor_compiled_graph
 
             def hijacked_compile_fx_inner(*args, **kwargs):
-                _ = torch._inductor.compile_fx.compile_fx_inner(*args, **kwargs)
-                return args[0]
+                with lowering():
+                    output = torch._inductor.compile_fx.compile_fx_inner(
+                        *args, **kwargs
+                    )
+                return output
 
         elif torch.__version__ >= "2.6":
             # function renamed in 2.6
             original_load_name = None
 
             def hijacked_compile_fx_inner(*args, **kwargs):
-                with version():
+                with version(), lowering():
                     output = torch._inductor.compile_fx.compile_fx_inner(
                         *args, **kwargs
                     )
@@ -130,7 +180,7 @@ class CustomInductorAdaptor(InductorAdaptor):
                             inductor_compiled_graph.current_callable.__code__.co_filename
                         )  # noqa
                         hash_str = inductor_compiled_graph._fx_graph_cache_key
-                    return args[0]
+                    return output
 
         def hijack_compiled_fx_graph_hash(*args, **kwargs):
             with version():
