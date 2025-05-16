@@ -769,6 +769,7 @@ ECCL_ALLTOALLV_MAXSIZE=29491200 \
 TORCH_ECCL_AVOID_RECORD_STREAMS=1 \
 GLOO_SOCKET_IFNAME=[interface name] \
 TOPS_VISIBLE_DEVICES=['0,1,2,3', '4,5,6,7'] \
+TOPS_STREAM_SCHEDULE_CREDIT=4 \
 VLLM_GCU_ENABLE_SEQUENCE_PARALLEL=1 \
 VLLM_USE_V1=0 \
 VLLM_DP_MASTER_IP=[master node ip] \
@@ -789,6 +790,7 @@ python3 -m vllm.entrypoints.openai.api_server \
  --block-size=64 \
  --enable-expert-parallel \
  --num-scheduler-steps 8 \
+ --compilation-config "{\"cudagraph_capture_sizes\": [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]}" \
  --scheduling-policy priority
 ```
 
@@ -918,6 +920,7 @@ ECCL_ALLTOALLV_MAXSIZE=29491200 \
 TORCH_ECCL_AVOID_RECORD_STREAMS=1 \
 GLOO_SOCKET_IFNAME=[interface name] \
 TOPS_VISIBLE_DEVICES=['0,1,2,3', '4,5,6,7'] \
+TOPS_STREAM_SCHEDULE_CREDIT=4 \
 VLLM_GCU_ENABLE_SEQUENCE_PARALLEL=1 \
 VLLM_USE_V1=0 \
 VLLM_DP_MASTER_IP=[master node ip] \
@@ -938,6 +941,7 @@ python3 -m vllm.entrypoints.openai.api_server \
  --block-size=64 \
  --enable-expert-parallel \
  --num-scheduler-steps 8 \
+ --compilation-config "{\"cudagraph_capture_sizes\": [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]}" \
  --scheduling-policy priority
 ```
 
