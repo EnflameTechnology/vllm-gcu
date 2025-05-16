@@ -1,5 +1,5 @@
 ## serving mode
-vLLM-gcu的serving mode测试可以参考[vLLM官方手册](https://docs.vllm.ai/en/v0.6.1.post2/dev/profiling/profiling_index.html)的Serving章节内容。另外，vLLM-gcu对vLLM官方的[benchmark_serving](https://github.com/vllm-project/vllm/blob/v0.6.1.post2/benchmarks/benchmark_serving.py)测试做了一些修改，以满足不同场景下的serving mode性能测试。
+vLLM-gcu的serving mode测试可以参考[vLLM官方手册](https://docs.vllm.ai/en/v0.8.0/)的Inference and Serving章节内容。另外，vLLM-gcu对vLLM官方的[benchmark_serving](https://github.com/vllm-project/vllm/blob/v0.8.0/benchmarks/benchmark_serving.py)测试做了一些修改，以满足不同场景下的serving mode性能测试。
 
 
 ### 修改内容

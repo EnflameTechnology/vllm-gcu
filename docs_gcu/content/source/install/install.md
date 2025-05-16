@@ -1,7 +1,7 @@
 # 安装
 ## 软硬件需求
 * OS：ubuntu 20.04 & 22.04
-* Python：3.8 - 3.10
+* Python：3.9 - 3.12
 * 加速卡：燧原S60
 
 ## 安装内容
@@ -14,6 +14,7 @@
 
 首先通过如下命令检查vllm及相关依赖是否已经安装：
 ```shell
+python3 -m pip list | grep vllm_gcu
 python3 -m pip list | grep vllm
 python3 -m pip list | grep xformers
 python3 -m pip list | grep tops-extension
@@ -23,12 +24,13 @@ python3 -m pip list | grep torchvision
 ```
 如果已经正常安装，在`x86_64`架构下可以显示如下内容：
 ```
-vllm                              <version>+gcu
+vllm_gcu                          0.8.0+<version>
+vllm                              0.8.0
 xformers                          <version>
 tops-extension                    <version>
-torch-gcu                         2.5.1+<version>
-torch                             2.5.1+cpu
-torchvision                       0.20.1+cpu
+torch-gcu                         2.6.0+<version>
+torch                             2.6.0+cpu
+torchvision                       0.21.0+cpu
 ```
 如果未安装，可以通过以下两种安装方式完成vllm安装：
 * 通过TopsRider安装：
@@ -37,13 +39,14 @@ torchvision                       0.20.1+cpu
 ```
 * 通过whl包安装：
 ```shell
-# 安装vllm的依赖库
-python3 -m pip install torch==2.5.1+cpu -i https://download.pytorch.org/whl/cpu
-python3 -m pip install torchvision==0.20.1 -i https://download.pytorch.org/whl/cpu
-python3 -m pip install torch_gcu-2.5.1+<version>*.whl
+# 安装vllm_gcu的依赖库
+python3 -m pip install vllm==0.8.0
+python3 -m pip install torch==2.6.0+cpu -i https://download.pytorch.org/whl/cpu
+python3 -m pip install torchvision==0.21.0 -i https://download.pytorch.org/whl/cpu
+python3 -m pip install torch_gcu-2.6.0+<version>*.whl
 python3 -m pip install tops_extension-<version>*.whl
 python3 -m pip install xformers-<version>*.whl
 
-# 安装vllm库
-python3 -m pip install vllm-0.6.1.post2+<version>*.whl
+# 安装vllm_gcu库
+python3 -m pip install vllm_gcu-0.8.0+<version>*.whl
 ```

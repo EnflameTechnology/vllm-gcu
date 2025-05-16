@@ -9,7 +9,7 @@ vLLM-gcu是适配于燧原S60 gcu的vLLM，用于支持在Enflame gcu上运行�
 vLLM-gcu维持vLLM中的模型推理、request调度策略，只是在Enflame gcu设备端完成相关算子地高效计算。
 
 ## 版本信息与使用注意事项
-当前vLLM-gcu是与Enflame gcu适配的vLLM 0.6.1.post2版本，其使用方式与vLLM 0.6.1.post2版本基本一致，但具备如下特性：
+当前vLLM-gcu是与Enflame gcu适配的vLLM 0.8.0版本，其使用方式与vLLM 0.8.0版本基本一致，但具备如下特性：
 
 - 推理时，需设置`--device=gcu`；
 - attention计算，仅支持xformers backend；
