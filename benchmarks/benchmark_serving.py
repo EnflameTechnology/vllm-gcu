@@ -603,6 +603,7 @@ async def benchmark(
     goodput_config_dict: dict[str, float],
     max_concurrency: Optional[int],
     lora_modules: Optional[list[str]],
+    include_stop_str_in_output: bool = False,
     skip_special_tokens: bool = False,
     extra_body: Optional[dict] = None
 ):
@@ -614,9 +615,15 @@ async def benchmark(
     extra_body = set_default_params(extra_body)
 
     if extra_body:
-        extra_body.update({"skip_special_tokens": skip_special_tokens})
+        extra_body.update({
+            "skip_special_tokens": skip_special_tokens,
+            "include_stop_str_in_output": include_stop_str_in_output,
+        })
     else:
-        extra_body = {"skip_special_tokens": skip_special_tokens} 
+        extra_body = {
+            "skip_special_tokens": skip_special_tokens,
+            "include_stop_str_in_output": include_stop_str_in_output,
+        } 
 
     print("Starting initial single prompt test run...")
     test_prompt, test_prompt_len, test_output_len, test_mm_content = (
@@ -1008,6 +1015,7 @@ def main(args: argparse.Namespace):
                 float(p) for p in args.metric_percentiles.split(",")
             ],
             ignore_eos=args.ignore_eos,
+            include_stop_str_in_output=args.include_stop_str_in_output,
             goodput_config_dict=goodput_config_dict,
             max_concurrency=args.max_concurrency,
             lora_modules=args.lora_modules,
@@ -1344,6 +1352,12 @@ if __name__ == "__main__":
                         help="A subset of LoRA module names passed in when "
                         "launching the server. For each request, the "
                         "script chooses a LoRA module at random.")
+    parser.add_argument(
+        "--include-stop-str-in-output",
+        action="store_true",
+        help="Whether to include the stop strings in "
+        "output text. Defaults to False. only support for vllm backend"
+    )
     parser.add_argument(
         "--keep-special-tokens",
         action="store_true",
