@@ -35,3 +35,28 @@ class GCUCommunicator(CudaCommunicator):
             ),
         )
         self.ca_comm = None
+
+    def all_reduce(self, input_):
+        # always try custom allreduce first,
+        # and then pynccl.
+        ca_comm = self.ca_comm
+        if ca_comm is not None and not ca_comm.disabled and \
+            ca_comm.should_custom_ar(input_):
+            out = ca_comm.custom_all_reduce(input_)
+            assert out is not None
+            return out
+        pynccl_comm = self.pynccl_comm
+        assert pynccl_comm is not None
+        out = pynccl_comm.all_reduce(input_)
+        if out is None:
+            # fall back to the default all-reduce using PyTorch.
+            # this usually happens during testing.
+            # when we run the model, allreduce only happens for the TP
+            # group, where we always have either custom allreduce or pynccl.
+            if hasattr(torch_gcu.distributed, "all_reduce_outplace"):
+                out = torch.empty_like(input_)
+                torch_gcu.distributed.all_reduce_outplace(out, input_, group=self.device_group)
+            else:
+                out = input_.clone()
+                torch.distributed.all_reduce(out, group=self.device_group)
+        return out
