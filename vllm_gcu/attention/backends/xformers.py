@@ -365,8 +365,8 @@ class GCUXFormersImpl(XFormersImpl):
         (num_prefill_query_tokens, num_prefill_kv_tokens, num_decode_query_tokens) = (
             get_num_prefill_decode_query_kv_tokens(attn_metadata, attn_type)
         )
-
-        output = torch.empty_like(query)
+        if num_prefill_query_tokens and num_decode_query_tokens:
+            output = torch.empty_like(query)
         decode_query = query[num_prefill_query_tokens:]
         query = query[:num_prefill_query_tokens]
         if key is not None and value is not None:
@@ -382,8 +382,6 @@ class GCUXFormersImpl(XFormersImpl):
                 out = self._run_memory_efficient_xformers_forward(
                     query, key, value, prefill_meta, attn_type=attn_type
                 )
-                assert out.shape == output[:num_prefill_query_tokens].shape
-                output[:num_prefill_query_tokens] = out
             else:
                 assert (
                     attn_type != AttentionType.ENCODER_ONLY
@@ -408,8 +406,12 @@ class GCUXFormersImpl(XFormersImpl):
                     layer._k_scale,
                     layer._v_scale,
                 )
+
+            if num_decode_query_tokens:
                 assert output[:num_prefill_query_tokens].shape == out.shape
                 output[:num_prefill_query_tokens] = out
+            else:
+                output = out
 
         if decode_meta := attn_metadata.decode_metadata:
             assert (
@@ -422,7 +424,7 @@ class GCUXFormersImpl(XFormersImpl):
                 block_tables_arg,
             ) = get_seq_len_block_table_args(decode_meta, False, attn_type)
 
-            output[num_prefill_query_tokens:] = PagedAttention.forward_decode(
+            decode_output = PagedAttention.forward_decode(
                 decode_query,
                 key_cache,
                 value_cache,
@@ -439,6 +441,11 @@ class GCUXFormersImpl(XFormersImpl):
                 v_zero_float=v_zero_float,
                 out_scales=layer.out_scales if hasattr(layer, "out_scales") else None,
             )
+
+            if num_prefill_query_tokens:
+                output[num_prefill_query_tokens:] = decode_output
+            else:
+                output = decode_output
 
         # Reshape the output tensor.
         return output.view(-1, self.num_heads * self.head_size)
