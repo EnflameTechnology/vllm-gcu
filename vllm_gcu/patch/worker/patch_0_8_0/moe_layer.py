@@ -14,6 +14,7 @@ from vllm.model_executor.layers.fused_moe.layer import (FusedMoE,
                                                         UnquantizedFusedMoEMethod,
                                                         determine_expert_map)
 from unittest.mock import patch
+from vllm.model_executor.utils import set_weight_attrs
 
 def get_expert_map(
     ep_size: int, ep_rank: int, global_num_experts: int,
@@ -82,7 +83,9 @@ class PatchedFusedMoE(FusedMoE):
         scoring_func: str = "softmax",
         e_score_correction_bias: Optional[torch.Tensor] = None,
         activation: str = "silu",
-        layer_prior_expert_map=None
+        layer_prior_expert_map=None,
+        with_b1: Optional[bool] = False,
+        with_b2: Optional[bool] = False,
     ):
         torch.nn.Module.__init__(self)
 
@@ -115,6 +118,24 @@ class PatchedFusedMoE(FusedMoE):
             raise ValueError("Duplicate layer name: {}".format(prefix))
         compilation_config.static_forward_context[prefix] = self
         self.layer_name = prefix
+
+        if with_b1:
+            intermediate_size_per_partition = intermediate_size // self.tp_size
+            self.w13_bias = torch.nn.Parameter(
+                torch.empty(num_experts, intermediate_size_per_partition * 2, dtype=params_dtype),
+                requires_grad=False)
+            # use shard_id to judge tp instead of output_dim
+            set_weight_attrs(self.w13_bias, {
+                "weight_loader": self._load_bias,
+            })
+        if with_b2:
+            self.w2_bias = torch.nn.Parameter(
+                torch.empty(num_experts, hidden_size, dtype=params_dtype),
+                requires_grad=False)
+            # use shard_id to judge tp instead of output_dim
+            set_weight_attrs(self.w2_bias, {
+                "weight_loader": self._load_bias,
+            })
 
         if use_ep:
             # Set TP size to 1 to adjust for EP and adjust EP size and rank
@@ -189,9 +210,32 @@ class PatchedFusedMoE(FusedMoE):
             # ep impl is not for dpa
             self.dp_size = 1
 
+    def _load_bias(self, param: torch.nn.Parameter,
+                      loaded_weight: torch.Tensor, weight_name: str,
+                      shard_id: str, expert_id: int) -> None:
+        tp_rank = get_tensor_model_parallel_rank()
+        if shard_id ==  "w1":
+            shard_size = param.shape[1] // 2
+            expert_data = param[expert_id].narrow(0, 0, shard_size)
+            loaded_weight = loaded_weight.narrow(0, shard_size * tp_rank,
+                                                 shard_size)
+        elif shard_id == "w2":
+            expert_data = param[expert_id]
+        elif shard_id ==  "w3":
+            shard_size = param.shape[1] // 2
+            expert_data = param[expert_id].narrow(0, shard_size, shard_size)
+            loaded_weight = loaded_weight.narrow(0, shard_size * tp_rank,
+                                                 shard_size)
+        else:
+            raise ValueError(f"shard_id must be ['w1','w2','w3'] but "
+                             f"got {shard_id}.")
+        expert_data.copy_(loaded_weight)
+
 patcher1 = patch("vllm.model_executor.layers.fused_moe.layer.FusedMoE", PatchedFusedMoE)
 patcher1.start()
 patcher2 = patch("vllm.model_executor.layers.fused_moe.FusedMoE", PatchedFusedMoE)
 patcher2.start()
 patcher3 = patch("vllm_gcu.models.deepseek_v3.deepseek_v3.FusedMoE", PatchedFusedMoE)
 patcher3.start()
+pather4 = patch("vllm_gcu.models.hunyuan.hunyuan.FusedMoE", PatchedFusedMoE)
+pather4.start()

@@ -12,15 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Inference-only Hunyuan model."""
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
 import torch
 from torch import nn
 from transformers import PretrainedConfig
 
 from vllm.attention import Attention, AttentionMetadata
-from vllm.config import CacheConfig, LoRAConfig
+from vllm.config import CacheConfig, ModelConfig, set_current_vllm_config, VllmConfig
 from vllm.distributed import (
+    get_pp_group,
     get_tensor_model_parallel_rank,
     get_tensor_model_parallel_world_size,
     tensor_model_parallel_all_reduce,
@@ -39,6 +40,7 @@ from vllm.model_executor.layers.logits_processor import LogitsProcessor
 from vllm.model_executor.layers.quantization.base_config import QuantizationConfig
 from vllm.model_executor.layers.rotary_embedding import get_rope
 from vllm.model_executor.layers.sampler import Sampler, SamplerOutput
+from vllm.model_executor.models.interfaces import SupportsLoRA, SupportsPP
 from vllm.model_executor.layers.vocab_parallel_embedding import (
     DEFAULT_VOCAB_PADDING_SIZE,
     ParallelLMHead,
@@ -47,6 +49,9 @@ from vllm.model_executor.layers.vocab_parallel_embedding import (
 from vllm.model_executor.model_loader.weight_utils import default_weight_loader
 from vllm.model_executor.sampling_metadata import SamplingMetadata
 from vllm.sequence import IntermediateTensors
+from vllm.model_executor.models.utils import (
+    make_layers,maybe_prefix
+)
 
 
 class HunyuanMLP(nn.Module):
@@ -58,10 +63,11 @@ class HunyuanMLP(nn.Module):
         hidden_act: str,
         quant_config: Optional[QuantizationConfig] = None,
         reduce_results: bool = True,
+        prefix: str = ""
     ) -> None:
         super().__init__()
         self.gate_up_proj = MergedColumnParallelLinear(
-            hidden_size, [intermediate_size] * 2, bias=True, quant_config=quant_config
+            hidden_size, [intermediate_size] * 2, bias=True, quant_config=quant_config, prefix=f"{prefix}.gate_up_proj"
         )
         self.down_proj = RowParallelLinear(
             intermediate_size,
@@ -69,6 +75,7 @@ class HunyuanMLP(nn.Module):
             bias=False,
             quant_config=quant_config,
             reduce_results=reduce_results,
+            prefix=f"{prefix}.down_proj"
         )
         if hidden_act != "silu":
             raise ValueError(
@@ -90,6 +97,7 @@ class HunyuanMoE(nn.Module):
         self,
         config: PretrainedConfig,
         quant_config: Optional[QuantizationConfig] = None,
+        prefix: str = ""
     ):
         super().__init__()
         self.config = config
@@ -113,12 +121,12 @@ class HunyuanMoE(nn.Module):
             renormalize=self.config.norm_topk_prob,
             quant_config=quant_config,
             tp_size=self.tp_size,
-            prefix="",
+            prefix=f"{prefix}.experts",
             with_b1=True,
         )
 
         self.gate = ReplicatedLinear(
-            config.hidden_size, self.n_routed_experts, bias=False, quant_config=None
+            config.hidden_size, self.n_routed_experts, bias=False, quant_config=None, prefix=f"{prefix}.gate"
         )
 
         if config.n_shared_experts is not None:
@@ -129,6 +137,7 @@ class HunyuanMoE(nn.Module):
                 hidden_act=config.hidden_act,
                 quant_config=quant_config,
                 reduce_results=False,
+                prefix=f"{prefix}.shared_experts"
             )
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
@@ -157,6 +166,7 @@ class HunyuanAttention(nn.Module):
         max_position_embeddings: int = 8192,
         cache_config: Optional[CacheConfig] = None,
         quant_config: Optional[QuantizationConfig] = None,
+        prefix: str = ""
     ) -> None:
         super().__init__()
         self.hidden_size = hidden_size
@@ -192,6 +202,7 @@ class HunyuanAttention(nn.Module):
             self.total_num_kv_heads,
             bias=False,
             quant_config=quant_config,
+            prefix=f"{prefix}.qkv_proj"
         )
 
         self.o_proj = RowParallelLinear(
@@ -199,6 +210,7 @@ class HunyuanAttention(nn.Module):
             hidden_size,
             bias=False,
             quant_config=quant_config,
+            prefix=f"{prefix}.o_proj"
         )
 
         self.rotary_emb = get_rope(
@@ -215,53 +227,39 @@ class HunyuanAttention(nn.Module):
             num_kv_heads=self.num_kv_heads,
             cache_config=cache_config,
             quant_config=quant_config,
+            prefix=f"{prefix}.attn"
         )
+
+        self.prefix = prefix
+        self.debug_layer_idx = int(self.prefix.split(".")[-2])
 
     def forward(
         self,
         positions: torch.Tensor,
         hidden_states: torch.Tensor,
-        kv_cache: torch.Tensor,
-        attn_metadata: AttentionMetadata,
     ) -> torch.Tensor:
         qkv, _ = self.qkv_proj(hidden_states)
         q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
-
         q, k = self.rotary_emb(positions, q, k)
-        if self.use_qk_norm:
-            q = q.contiguous()
-            k = k.contiguous()
-            v = v.contiguous()
-            q_new_shape = q.shape[:-1] + (self.num_heads, self.head_dim)
-            query_new = q.view(q_new_shape)
-            query_new = self.q_norm(query_new)
-
-            k_new_shape = k.shape[:-1] + (self.num_kv_heads, self.head_dim)
-            key_new = k.view(k_new_shape)
-            key_new = self.k_norm(key_new)
-
-            q = query_new.view(q.shape)
-            k = key_new.view(k.shape)
-
-        attn_output = self.attn(q, k, v, kv_cache, attn_metadata)
+        attn_output = self.attn(q, k, v)
         output, _ = self.o_proj(attn_output)
         return output
-
 
 class HunyuanDecoderLayer(nn.Module):
 
     def __init__(
         self,
         config: PretrainedConfig,
-        layer_idx: int,
         cache_config: Optional[CacheConfig] = None,
         quant_config: Optional[QuantizationConfig] = None,
+        prefix: str = ""
     ) -> None:
         super().__init__()
         self.hidden_size = config.hidden_size
         rope_theta = getattr(config, "rope_theta", 10000)
         rope_scaling = getattr(config, "rope_scaling", None)
         max_position_embeddings = getattr(config, "max_position_embeddings", 8192)
+        self.layer_idx = int(prefix.split(sep=".")[-1])
         self.self_attn = HunyuanAttention(
             config=config,
             hidden_size=self.hidden_size,
@@ -272,19 +270,21 @@ class HunyuanDecoderLayer(nn.Module):
             max_position_embeddings=max_position_embeddings,
             cache_config=cache_config,
             quant_config=quant_config,
+            prefix=f"{prefix}.self_attn"
         )
         if (
             config.n_routed_experts is not None
-            and layer_idx >= config.first_k_dense_replace
-            and layer_idx % config.moe_layer_freq == 0
+            and self.layer_idx  >= config.first_k_dense_replace
+            and self.layer_idx  % config.moe_layer_freq == 0
         ):
-            self.mlp = HunyuanMoE(config=config, quant_config=quant_config)
+            self.mlp = HunyuanMoE(config=config, quant_config=quant_config,prefix=f"{prefix}.mlp")
         else:
             self.mlp = HunyuanMLP(
                 hidden_size=config.hidden_size,
                 intermediate_size=config.intermediate_size,
                 hidden_act=config.hidden_act,
                 quant_config=quant_config,
+                prefix=f"{prefix}.mlp"
             )
         self.input_layernorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = RMSNorm(
@@ -295,8 +295,6 @@ class HunyuanDecoderLayer(nn.Module):
         self,
         positions: torch.Tensor,
         hidden_states: torch.Tensor,
-        kv_cache: torch.Tensor,
-        attn_metadata: AttentionMetadata,
         residual: Optional[torch.Tensor],
     ) -> torch.Tensor:
         # Self Attention
@@ -304,30 +302,30 @@ class HunyuanDecoderLayer(nn.Module):
             residual = hidden_states
             hidden_states = self.input_layernorm(hidden_states)
         else:
-            hidden_states, residual = self.input_layernorm(hidden_states, residual)
+            hidden_states, residual = self.input_layernorm(
+                hidden_states, residual)
         hidden_states = self.self_attn(
             positions=positions,
             hidden_states=hidden_states,
-            kv_cache=kv_cache,
-            attn_metadata=attn_metadata,
         )
 
         # Fully Connected
-        hidden_states, residual = self.post_attention_layernorm(hidden_states, residual)
+        hidden_states, residual = self.post_attention_layernorm(
+            hidden_states, residual)
         hidden_states = self.mlp(hidden_states)
         return hidden_states, residual
 
-
 class HunyuanModel(nn.Module):
 
-    def __init__(
-        self,
-        config: PretrainedConfig,
-        cache_config: Optional[CacheConfig] = None,
-        quant_config: Optional[QuantizationConfig] = None,
-        lora_config: Optional[LoRAConfig] = None,
-    ) -> None:
+    def __init__(self, *, vllm_config: VllmConfig, prefix: str = "") -> None:
         super().__init__()
+        
+        config = vllm_config.model_config.hf_config
+        model_config = vllm_config.model_config
+        cache_config = vllm_config.cache_config
+        quant_config = vllm_config.quant_config
+        lora_config = vllm_config.lora_config
+
         self.padding_idx = config.pad_token_id
         lora_vocab = (
             (lora_config.lora_extra_vocab_size * (lora_config.max_loras or 1))
@@ -342,67 +340,71 @@ class HunyuanModel(nn.Module):
             config.hidden_size,
             org_num_embeddings=config.vocab_size,
         )
-        self.layers = nn.ModuleList(
-            [
-                HunyuanDecoderLayer(
-                    config,
-                    layer_idx,
-                    cache_config=cache_config,
-                    quant_config=quant_config,
-                )
-                for layer_idx in range(config.num_hidden_layers)
-            ]
-        )
+        self.start_layer, self.end_layer, self.layers = make_layers(
+            config.num_hidden_layers,
+            lambda prefix: HunyuanDecoderLayer(
+                config, cache_config, quant_config=quant_config, prefix=prefix
+            ),
+            prefix=f"{prefix}.layers")
         self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-
+    
+    def get_input_embeddings(self, input_ids: torch.Tensor) -> torch.Tensor:
+        return self.embed_tokens(input_ids)
+    
     def forward(
         self,
         input_ids: torch.Tensor,
         positions: torch.Tensor,
-        kv_caches: List[torch.Tensor],
-        attn_metadata: AttentionMetadata,
-    ) -> torch.Tensor:
-        hidden_states = self.embed_tokens(input_ids)
-        residual = None
-        for i in range(len(self.layers)):
-            layer = self.layers[i]
-            hidden_states, residual = layer(
-                positions, hidden_states, kv_caches[i], attn_metadata, residual
-            )
+        intermediate_tensors: Optional[IntermediateTensors],
+        inputs_embeds: Optional[torch.Tensor] = None,
+    ) -> Union[torch.Tensor, IntermediateTensors]:
+        if get_pp_group().is_first_rank:
+            if inputs_embeds is not None:
+                hidden_states = inputs_embeds
+            else:
+                hidden_states = self.get_input_embeddings(input_ids)
+            residual = None
+        else:
+            hidden_states = intermediate_tensors["hidden_states"]
+            residual = intermediate_tensors["residual"]
+        for layer in self.layers[self.start_layer:self.end_layer]:
+            hidden_states, residual = layer(positions, hidden_states, residual)
+        if not get_pp_group().is_last_rank:
+            return IntermediateTensors({
+                "hidden_states": hidden_states,
+                "residual": residual
+            })
         hidden_states, _ = self.norm(hidden_states, residual)
         return hidden_states
 
+class HunyuanForCausalLM(nn.Module, SupportsLoRA, SupportsPP):
 
-class HunyuanForCausalLM(nn.Module):
-
-    def __init__(
-        self,
-        config: PretrainedConfig,
-        cache_config: Optional[CacheConfig] = None,
-        quant_config: Optional[QuantizationConfig] = None,
-        lora_config: Optional[LoRAConfig] = None,
-    ) -> None:
+    def __init__(self, *, vllm_config: VllmConfig, prefix: str = "") -> None:
         super().__init__()
-        self.config = config
-        self.model = HunyuanModel(config, cache_config, quant_config, lora_config)
-        self.unpadded_vocab_size = config.vocab_size
-        if lora_config:
-            self.unpadded_vocab_size += lora_config.lora_extra_vocab_size
+        self.config = vllm_config.model_config.hf_config
+        self.quant_config = vllm_config.quant_config
+        self.lora_config = vllm_config.lora_config
+        self.cache_config = vllm_config.cache_config
+        self.model = HunyuanModel(vllm_config=vllm_config, prefix=maybe_prefix(prefix, "model"))
+        self.unpadded_vocab_size = self.config.vocab_size
+
+        if self.lora_config:
+            self.unpadded_vocab_size += self.lora_config.lora_extra_vocab_size
         self.lm_head = ParallelLMHead(
             self.unpadded_vocab_size,
-            config.hidden_size,
-            org_num_embeddings=config.vocab_size,
+            self.config.hidden_size,
+            org_num_embeddings=self.config.vocab_size,
             padding_size=(
                 DEFAULT_VOCAB_PADDING_SIZE
                 # We need bigger padding if using lora for kernel
                 # compatibility
-                if not lora_config
-                else lora_config.lora_vocab_padding_size
+                if not self.lora_config
+                else self.lora_config.lora_vocab_padding_size
             ),
         )
         # self.sampler = Sampler(config.vocab_size)
         self.logits_processor = LogitsProcessor(
-            self.unpadded_vocab_size, config.vocab_size
+            self.unpadded_vocab_size, self.config.vocab_size
         )
         self.sampler = Sampler()
 
@@ -410,11 +412,11 @@ class HunyuanForCausalLM(nn.Module):
         self,
         input_ids: torch.Tensor,
         positions: torch.Tensor,
-        kv_caches: List[torch.Tensor],
-        attn_metadata: AttentionMetadata,
         intermediate_tensors: Optional[IntermediateTensors] = None,
+        inputs_embeds: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        hidden_states = self.model(input_ids, positions, kv_caches, attn_metadata)
+        hidden_states = self.model(input_ids, positions, intermediate_tensors,
+                                   inputs_embeds)
         return hidden_states
 
     def compute_logits(
