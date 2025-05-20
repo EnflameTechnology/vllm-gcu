@@ -260,6 +260,9 @@ async def run_vllm_async(
     disable_frontend_multiprocessing: bool = False,
     *,
     temperature: float = 0.0,
+    top_p: float = 1.0,
+    top_k: int = -1,
+    repetition_penalty: float = 1.0,
     num_iters: int = 1,
     ignore_eos=True,
     profile=False,
@@ -279,7 +282,9 @@ async def run_vllm_async(
                 SamplingParams(
                     n=n,
                     temperature=temperature,
-                    top_p=1.0,
+                    top_p=top_p,
+                    top_k=top_k,
+                    repetition_penalty=repetition_penalty,
                     ignore_eos=ignore_eos,
                     max_tokens=output_len,
                 )
@@ -307,6 +312,9 @@ def run_vllm(
     engine_args: AsyncEngineArgs,
     *,
     temperature: float = 0.0,
+    top_p: float = 1.0,
+    top_k: int = -1,
+    repetition_penalty: float = 1.0,
     num_iters: int = 1,
     ignore_eos=True,
     profile=False,
@@ -317,7 +325,9 @@ def run_vllm(
     engine = LLMEngine.from_engine_args(engine_args)
 
     dummy_sampling_params = SamplingParams(
-        n=n, temperature=temperature, top_p=1.0, ignore_eos=ignore_eos, max_tokens=1
+        n=n, temperature=temperature, top_p=top_p, top_k=top_k,
+        repetition_penalty=repetition_penalty,
+        ignore_eos=ignore_eos, max_tokens=1
     )
 
     engine.add_request('0', prompt=requests[0][0], params=dummy_sampling_params)
@@ -335,7 +345,9 @@ def run_vllm(
             sampling_params = SamplingParams(
                 n=n,
                 temperature=temperature,
-                top_p=1.0,
+                top_p=top_p,
+                top_k=top_k,
+                repetition_penalty=repetition_penalty,
                 ignore_eos=ignore_eos,
                 max_tokens=output_len,
             )
@@ -651,9 +663,13 @@ def main(args: argparse.Namespace):
         )
         if args.output_len == 1:
             num_iters = 10
+
     if args.backend == "vllm":
         run_kwargs = {
             "temperature": args.temperature,
+            "top_p": args.top_p,
+            "top_k": args.top_k,
+            "repetition_penalty": args.repetition_penalty,
             "num_iters": num_iters,
             "ignore_eos": not args.acc and args.demo is None,
             "profile": args.profile,
@@ -782,6 +798,20 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--temperature", type=float, default=0.0, help="Temperature for sampling."
+    )
+    parser.add_argument(
+        "--top-p", type=float, default=1.0, help="Float that controls the cumulative probability of the top tokens to consider. \
+            Must be in (0, 1]. Set to 1 to consider all tokens."
+    )
+    parser.add_argument(
+        "--top-k", type=int, default=-1, help="Integer that controls the number of top tokens to consider. \
+            Set to -1 to consider all tokens."
+    )
+    parser.add_argument(
+        "--repetition-penalty", type=float, default=1.0, help="Float that penalizes new tokens based on whether \
+            they appear in the prompt and the generated text so far. Values > 1 \
+            encourage the model to use new tokens, while values < 1 encourage \
+            the model to repeat tokens."
     )
     parser.add_argument(
         "--demo", type=str, default=None, choices=TASK_MAP.keys(), help=f"{TASK_MAP}"
