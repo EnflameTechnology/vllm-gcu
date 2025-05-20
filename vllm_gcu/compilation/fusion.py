@@ -120,10 +120,10 @@ FUSED_RMS_OPS = {
     FusedRMSQuantKey(
         kFp8DynamicTokenSym, True
     ): torch.ops._C.rms_norm_dynamic_per_token_quant.default,
-    FusedRMSQuantKey(kInt8StaticTensorSym, False): torch.ops._C.rms_norm_quant.default,
+    FusedRMSQuantKey(kInt8StaticTensorSym, False): torch.ops._C.rms_norm_static_int8_quant.default,
     FusedRMSQuantKey(
         kInt8StaticTensorSym, True
-    ): torch.ops._C.fused_add_rms_norm_quant.default,
+    ): torch.ops._C.fused_add_rms_norm_static_int8_quant.default,
 }
 
 FUSED_ACT_OPS = {
@@ -133,23 +133,23 @@ FUSED_ACT_OPS = {
     FusedActQuantKey(
         kFp8DynamicTokenGroupSym, ActFn.silu_mul_pad
     ): torch.ops._C.silu_mul_per_token_group_quant_with_size.default,
-    FusedActQuantKey(kInt8StaticTensorSym, ActFn.gelu): torch.ops._C.gelu_quant.default,
+    FusedActQuantKey(kInt8StaticTensorSym, ActFn.gelu): torch.ops._C.gelu_static_int8_quant.default,
     FusedActQuantKey(
         kInt8StaticTensorSym, ActFn.gelu_new
-    ): torch.ops._C.gelu_new_quant.default,
+    ): torch.ops._C.gelu_fast_static_int8_quant.default,
     FusedActQuantKey(
         kInt8StaticTensorSym, ActFn.gelu_fast
-    ): torch.ops._C.gelu_fast_quant.default,
+    ): torch.ops._C.gelu_fast_static_int8_quant.default,
     FusedActQuantKey(
         kInt8StaticTensorSym, ActFn.gelu_tanh
-    ): torch.ops._C.gelu_tanh_quant.default,
+    ): torch.ops._C.gelu_tanh_static_int8_quant.default,
     FusedActQuantKey(
         kInt8StaticTensorSym, ActFn.gelu_mul
     ): torch.ops._C.gelu_mul_quant.default,
-    FusedActQuantKey(kInt8StaticTensorSym, ActFn.silu): torch.ops._C.silu_quant.default,
+    FusedActQuantKey(kInt8StaticTensorSym, ActFn.silu): torch.ops._C.silu_static_int8_quant.default,
     FusedActQuantKey(
         kInt8StaticTensorSym, ActFn.silu_mul
-    ): torch.ops._C.silu_mul_quant.default,
+    ): torch.ops._C.silu_mul_static_int8_quant.default,
     FusedActQuantKey(
         kInt8StaticTensorASym, ActFn.gelu
     ): torch.ops._C.gelu_asym_quant.default,
@@ -1066,6 +1066,75 @@ class FusedAddRMSNormPerTokenGroupQuantPattern(FusedQuantPattern):
                     group_size=quant_node.kwargs["group_size"],
                     **kwargs,
                 )
+
+class SiluMulStaticQuantPattern(FusedQuantPattern):
+    def __init__(self, quant_dtype: torch.dtype, symmetric=True):
+        key = FusedActQuantKey(
+            act=ActFn.silu_mul,
+            quant=QuantKey(
+                dtype=quant_dtype,
+                static=True,
+                grain=Grain.per_tensor,
+                symmetric=symmetric,
+            ),
+        )
+        super().__init__(key)
+
+    def register(self, pm_pass: PatternMatcherPass):
+        # 定义要匹配的模式
+        def pattern(
+            result: torch.Tensor,
+            result_silu_mul: torch.Tensor,
+            input: torch.Tensor,
+            scale: torch.Tensor,
+        ):
+            # SiLU + MUL 操作
+            at = auto_functionalized(
+                SILU_MUL_OP,
+                out=result_silu_mul,
+                input=input,
+            )
+            # 量化操作
+            if self.quant_dtype == torch.int8:
+                at1 = auto_functionalized(
+                    self.QUANT_OP, result=result, input=at[1], scale=scale, azp=None
+                )
+            else:
+                at1 = auto_functionalized(
+                    self.QUANT_OP, result=result, input=at[1], scale=scale
+                )
+
+            # 返回结果
+            return at1[1]
+
+        # 定义替换后的模式
+        def replacement(
+            result: torch.Tensor,
+            result_silu_mul: torch.Tensor,
+            input: torch.Tensor,
+            scale: torch.Tensor,
+        ):
+            # 使用融合算子
+            at = auto_functionalized(
+                self.FUSED_OP,
+                result=result,
+                input=input,
+                scale=scale,
+            )
+
+            # 返回结果
+            return at[1]
+
+        # 设置输入张量示例
+        inputs = [
+            torch.empty(5, 256, device="gcu", dtype=self.quant_dtype),  # result
+            empty_bf16(5, 256),  # result_silu_mul
+            empty_bf16(5, 512),  # input
+            empty_fp32(1),  # scale
+        ]
+
+        # 注册替换规则
+        pm.register_replacement(pattern, replacement, inputs, pm.fwd_only, pm_pass)
 
 
 def dump(x: torch.Tensor, name: str) -> torch.Tensor:
