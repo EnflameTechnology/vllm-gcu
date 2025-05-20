@@ -121,6 +121,7 @@ def invoke_fused_moe_kernel(
     use_int8_w8a8: bool,
     block_shape: Optional[List[int]] = None,
     real_token_num=None,
+    bias=None
 ) -> None:
     assert topk_weights.stride(1) == 1
     assert sorted_token_ids.stride(0) == 1
@@ -199,7 +200,7 @@ def invoke_fused_moe_kernel(
             mul_routed_weight,
             top_k,
             block_size,
-            None,
+            bias,
         )
 
 
@@ -317,6 +318,8 @@ def fused_experts_impl(
     a1_scale: Optional[torch.Tensor] = None,
     a2_scale: Optional[torch.Tensor] = None,
     block_shape: Optional[List[int]] = None,
+    b1=None,
+    b2=None
 ):
     from vllm.distributed import get_world_group
 
@@ -651,6 +654,7 @@ def fused_experts_impl(
             use_int8_w8a8=use_int8_w8a8,
             block_shape=block_shape,
             real_token_num=valid_in_chunk,
+            bias=b1
         )
 
         if use_fp8_w8a8:
@@ -697,6 +701,7 @@ def fused_experts_impl(
             use_int8_w8a8=use_int8_w8a8,
             block_shape=block_shape,
             real_token_num=valid_in_chunk,
+            bias=b2
         )
         # TODO: replace with moe_sum
         torch.ops._moe_C.moe_sum_pad(
