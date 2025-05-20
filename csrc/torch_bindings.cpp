@@ -1,7 +1,6 @@
 #include <torch/library.h>
 
 #include "registration.h"
-#include "src/reshape_and_cache_flash.h"
 #include "src/advance_step_flashattn.h"
 #include "src/advance_step_xformers.h"
 #include "src/awq_dequantize.h"
@@ -10,21 +9,21 @@
 #include "src/cache_ops.h"
 #include "src/concat_and_cache_mla.h"
 #include "src/context_attention_forward.h"
+#include "src/cutlass_scaled_mm.h"
 #include "src/dispatch_bgmv.h"
 #include "src/dispatch_bgmv_low_level.h"
 #include "src/dot_bias_quant.h"
 #include "src/dynamic_per_token_group_fp8_quant.h"
 #include "src/dynamic_per_token_scaled_fp8_quant.h"
 #include "src/dynamic_scaled_fp8_quant.h"
-#include "src/cutlass_scaled_mm.h"
 #include "src/dynamic_scaled_int8_quant.h"
 #include "src/dynamic_split.h"
 #include "src/ets_moe_align_block_size.h"
 #include "src/fatrelu_and_mul.h"
 #include "src/fused_add_rms_norm.h"
 #include "src/fused_add_rms_norm_per_token_group_quant_fp8.h"
-#include "src/fused_add_rms_norm_quant.h"
 #include "src/fused_add_rms_norm_static_fp8_quant.h"
+#include "src/fused_add_rms_norm_static_int8_quant.h"
 #include "src/fused_dispatch_decode.h"
 #include "src/fused_grouped_topk.h"
 #include "src/fused_moe_kernel.h"
@@ -35,21 +34,21 @@
 #include "src/gelu_asym_quant.h"
 #include "src/gelu_fast.h"
 #include "src/gelu_fast_asym_quant.h"
-#include "src/gelu_fast_quant.h"
+#include "src/gelu_fast_static_int8_quant.h"
 #include "src/gelu_mul_quant.h"
 #include "src/gelu_new.h"
 #include "src/gelu_new_asym_quant.h"
-#include "src/gelu_new_quant.h"
-#include "src/gelu_quant.h"
+#include "src/gelu_new_static_int8_quant.h"
+#include "src/gelu_static_int8_quant.h"
 #include "src/gelu_quick.h"
 #include "src/gelu_tanh_and_mul.h"
 #include "src/gelu_tanh_asym_quant.h"
 #include "src/gelu_tanh_mul_quant.h"
-#include "src/gelu_tanh_quant.h"
+#include "src/gelu_tanh_static_int8_quant.h"
 #include "src/get_ep_indices.h"
 #include "src/gptq_gemm_gcu.h"
 #include "src/gptq_shuffle.h"
-#include "src/layer_norm_quant.h"
+#include "src/layer_norm_static_int8_quant.h"
 #include "src/linear_quant.h"
 #include "src/memory_efficient_attention_alibi.h"
 #include "src/moe_align_block_size.h"
@@ -58,10 +57,11 @@
 #include "src/mul_and_silu.h"
 #include "src/paged_attention_v1.h"
 #include "src/paged_attention_v2.h"
+#include "src/reshape_and_cache_flash.h"
 #include "src/rms_norm.h"
 #include "src/rms_norm_per_token_group_quant_fp8.h"
-#include "src/rms_norm_quant.h"
 #include "src/rms_norm_static_fp8_quant.h"
+#include "src/rms_norm_static_int8_quant.h"
 #include "src/rotary_embedding.h"
 #include "src/rotary_embedding_with_kv_cache.h"
 #include "src/sgl_moe_align_block_size.h"
@@ -70,8 +70,8 @@
 #include "src/silu_asym_quant.h"
 #include "src/silu_mul_per_token_group_quant.h"
 #include "src/silu_mul_per_token_group_quant_with_size.h"
-#include "src/silu_mul_quant.h"
-#include "src/silu_quant.h"
+#include "src/silu_mul_static_int8_quant.h"
+#include "src/silu_static_int8_quant.h"
 #include "src/static_scaled_fp8_quant.h"
 #include "src/static_scaled_int8_asym_dequant.h"
 #include "src/static_scaled_int8_asym_quant.h"
@@ -176,10 +176,10 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
            &advance_step_xformers);
 
   ops.def(
-        "advance_step_flashattn(int num_seqs, int num_queries, int block_size, "
-        "Tensor! input_tokens, Tensor sampled_token_ids, "
-        "Tensor! input_positions, Tensor! seq_lens, Tensor! slot_mapping, "
-        "Tensor block_tables) -> ()");
+      "advance_step_flashattn(int num_seqs, int num_queries, int block_size, "
+      "Tensor! input_tokens, Tensor sampled_token_ids, "
+      "Tensor! input_positions, Tensor! seq_lens, Tensor! slot_mapping, "
+      "Tensor block_tables) -> ()");
   ops.impl("advance_step_flashattn", torch::kPrivateUse1,
            &advance_step_flashattn);
 
@@ -565,27 +565,42 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
   ops.def("weight_only_quant", &weight_only_quant);
   ops.impl("weight_only_quant", c10::kPrivateUse1, &weight_only_quant);
 
-  ops.def("rms_norm_quant", &rms_norm_quant);
-  ops.impl("rms_norm_quant", c10::kPrivateUse1, &rms_norm_quant);
+  ops.def(
+      "rms_norm_static_int8_quant(Tensor(a!) result, Tensor input, Tensor "
+      "weight, Tensor "
+      "scale, float epsilon) -> ()");
+  ops.impl("rms_norm_static_int8_quant", c10::kPrivateUse1,
+           &rms_norm_static_int8_quant);
 
-  ops.def("fused_add_rms_norm_quant", &fused_add_rms_norm_quant);
-  ops.impl("fused_add_rms_norm_quant", c10::kPrivateUse1,
-           &fused_add_rms_norm_quant);
+  ops.def(
+      "fused_add_rms_norm_static_int8_quant(Tensor(a!) result, Tensor input, "
+      "Tensor(a!) "
+      "residual, Tensor weight, float epsilon, Tensor scale) -> ()");
+  ops.impl("fused_add_rms_norm_static_int8_quant",
+           c10::kPrivateUse1,
+           &fused_add_rms_norm_static_int8_quant);
 
-  ops.def("gelu_tanh_quant", &gelu_tanh_quant);
-  ops.impl("gelu_tanh_quant", c10::kPrivateUse1, &gelu_tanh_quant);
+  ops.def("gelu_tanh_static_int8_quant", &gelu_tanh_static_int8_quant);
+  ops.impl("gelu_tanh_static_int8_quant", c10::kPrivateUse1,
+            &gelu_tanh_static_int8_quant);
 
-  ops.def("gelu_quant", &gelu_quant);
-  ops.impl("gelu_quant", c10::kPrivateUse1, &gelu_quant);
+  ops.def("gelu_static_int8_quant", &gelu_static_int8_quant);
+  ops.impl("gelu_static_int8_quant",
+            c10::kPrivateUse1,
+            &gelu_static_int8_quant);
 
-  ops.def("gelu_new_quant", &gelu_new_quant);
-  ops.impl("gelu_new_quant", c10::kPrivateUse1, &gelu_new_quant);
+  ops.def("gelu_new_static_int8_quant", &gelu_new_static_int8_quant);
+  ops.impl("gelu_new_static_int8_quant",
+            c10::kPrivateUse1,
+            &gelu_new_static_int8_quant);
 
-  ops.def("silu_quant", &silu_quant);
-  ops.impl("silu_quant", c10::kPrivateUse1, &silu_quant);
+  ops.def("silu_static_int8_quant", &silu_static_int8_quant);
+  ops.impl("silu_static_int8_quant", c10::kPrivateUse1,
+            &silu_static_int8_quant);
 
-  ops.def("gelu_fast_quant", &gelu_fast_quant);
-  ops.impl("gelu_fast_quant", c10::kPrivateUse1, &gelu_fast_quant);
+  ops.def("gelu_fast_static_int8_quant", &gelu_fast_static_int8_quant);
+  ops.impl("gelu_fast_static_int8_quant", c10::kPrivateUse1,
+            &gelu_fast_static_int8_quant);
 
   ops.def("gelu_tanh_asym_quant", &gelu_tanh_asym_quant);
   ops.impl("gelu_tanh_asym_quant", c10::kPrivateUse1, &gelu_tanh_asym_quant);
@@ -614,8 +629,10 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
   ops.impl("static_scaled_int8_asym_dequant", c10::kPrivateUse1,
            &static_scaled_int8_asym_dequant);
 
-  ops.def("silu_mul_quant", &silu_mul_quant);
-  ops.impl("silu_mul_quant", c10::kPrivateUse1, &silu_mul_quant);
+  ops.def("silu_mul_static_int8_quant(Tensor(a!) result, "
+            "Tensor input, Tensor scale) -> ()");
+  ops.impl("silu_mul_static_int8_quant", c10::kPrivateUse1,
+            &silu_mul_static_int8_quant);
 
   ops.def("gelu_mul_quant", &gelu_mul_quant);
   ops.impl("gelu_mul_quant", c10::kPrivateUse1, &gelu_mul_quant);
@@ -623,8 +640,9 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
   ops.def("gelu_tanh_mul_quant", &gelu_tanh_mul_quant);
   ops.impl("gelu_tanh_mul_quant", c10::kPrivateUse1, &gelu_tanh_mul_quant);
 
-  ops.def("layer_norm_quant", &layer_norm_quant);
-  ops.impl("layer_norm_quant", c10::kPrivateUse1, &layer_norm_quant);
+  ops.def("layer_norm_static_int8_quant", &layer_norm_static_int8_quant);
+  ops.impl("layer_norm_static_int8_quant", c10::kPrivateUse1,
+            &layer_norm_static_int8_quant);
 
   ops.def("dot_bias_quant", &dot_bias_quant);
   ops.impl("dot_bias_quant", c10::kPrivateUse1, &dot_bias_quant);
@@ -766,7 +784,7 @@ TORCH_LIBRARY_EXPAND(CONCAT(TORCH_EXTENSION_NAME, _cache_ops), cache_ops) {
       "Tensor! k_scale,"
       "Tensor! v_scale) -> ()");
   cache_ops.impl("reshape_and_cache_flash", torch::kPrivateUse1,
-        &reshape_and_cache_flash);
+                 &reshape_and_cache_flash);
 
   // Concat kv_c and k_pe and cache them.
   cache_ops.def(
