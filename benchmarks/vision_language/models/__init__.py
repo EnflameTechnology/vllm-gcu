@@ -15,6 +15,7 @@ VLM_MODELS = {
     "Phi3VForCausalLMImage": ("phi3v_input", "Phi3VImageInput"),
     "Phi3VForCausalLMVideo": ("phi3v_input", "Phi3VVideoInput"),
     "Qwen2VLForConditionalGenerationImage": ("qwen2_vl_input", "Qwen2VLImageInput"),
+    "Qwen2VLForConditionalGenerationQvQImage": ("qwen2_vl_input", "Qwen2VLQvQImageInput"),
     "Qwen2VLForConditionalGenerationVideo": ("qwen2_vl_input", "Qwen2VLVideoInput"),
     "Qwen2_5_VLForConditionalGenerationImage": ("qwen2_vl_input", "Qwen2VLImageInput"),
     "Qwen2_5_VLForConditionalGenerationVideo": ("qwen2_vl_input", "Qwen2VLVideoInput"),

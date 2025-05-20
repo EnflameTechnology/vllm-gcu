@@ -356,3 +356,81 @@ python3 -m vllm_utils.benchmark_vision_language \
 注：
 * 默认为graph mode推理，若想使用eager mode，请添加`--enforce-eager`；
 * 本模型支持的`max-model-len`为128000；
+
+### QVQ-72B-Preview
+
+#### 模型下载
+* url: [QVQ-72B-Preview](https://www.modelscope.cn/models/Qwen/QVQ-72B-Preview/files)
+* branch: master
+* commit id: be7cda0c
+
+- 将上述url设定的路径下的内容全部下载到`QVQ-72B-Preview`文件夹中。
+
+注：需要安装以下依赖：
+
+```shell
+python3 -m pip install git+https://github.com/huggingface/transformers.git@1931a351408dbd1d0e2c4d6d7ee0eb5e8807d7bf
+```
+
+#### 批量离线推理
+##### 图像推理
+```shell
+python3 -m vllm_utils.benchmark_vision_language \
+ --backend vllm \
+ --demo \
+ --model=[path of QVQ-72B-Preview] \
+ --model-arch-suffix Image \
+ --prompt=[your prompt] \
+ --input-vision-file=[path of your test image] \
+ --dtype=bfloat16 \
+ --max-output-len=128 \
+ --device=gcu \
+ --tensor-parallel-size 1 \
+ --max-model-len 32768 \
+ --trust-remote-code \
+ --block-size=64
+```
+##### 视频推理
+```shell
+python3 -m vllm_utils.benchmark_vision_language \
+ --backend vllm \
+ --demo \
+ --model=[path of QVQ-72B-Preview] \
+ --model-arch-suffix Video \
+ --prompt=[your prompt] \
+ --input-vision-file=[path of your test video] \
+ --num-frames 12 \
+ --dtype=bfloat16 \
+ --max-output-len=8196 \
+ --device=gcu \
+ --tensor-parallel-size 8 \
+ --max-model-len 32768 \
+ --trust-remote-code \
+ --block-size=64
+```
+注：
+* 默认为graph mode推理，若想使用eager mode，请添加`--enforce-eager`；
+
+#### 性能测试
+```shell
+python3 -m vllm_utils.benchmark_vision_language \
+ --backend vllm \
+ --perf \
+ --model=[path of QVQ-72B-Preview] \
+ --model-arch-suffix Image \
+ --dtype=bfloat16 \
+ --batch-size=1 \
+ --input-len=1200 \
+ --input-vision-shape="1280,720" \
+ --max-output-len=8196 \
+ --device=gcu \
+ --tensor-parallel-size 8 \
+ --max-model-len 32768 \
+ --trust-remote-code \
+ --block-size=64 \
+ --gpu-memory-utilization 0.9
+```
+注：
+* 默认为graph mode推理，若想使用eager mode，请添加`--enforce-eager`；
+* 本模型支持的`max-model-len`为128000；
+

@@ -166,6 +166,23 @@ class Qwen2VLImageInput(VLMInput):
                 )
         return prompt
 
+class Qwen2VLQvQImageInput(Qwen2VLImageInput):
+    def dataset_pred_post_process(self,
+                                  dataset_name: str,
+                                  pred: str):
+        if dataset_name == "MMMU":
+            def extract_letter(s):
+                import re
+                match = re.search(r'oxed\{([a-zA-Z]+)\}', s)
+                if match:
+                    return match.group(1).upper()
+                else:
+                    print(f'[warning] The model do not output complete answer.\
+                     you may need to adjust the max output len of the model,\
+                     eg. set --max-output-len=8192 or other larger value.')
+                    return "None"
+            pred = extract_letter(pred)
+        return pred
 
 class Qwen2VLVideoInput(VLMInput):
     def __init__(self, model: str, tokenizer: Optional[str]):
@@ -270,7 +287,7 @@ class Qwen2VLVideoInput(VLMInput):
         mm_data_per_video = np.repeat([np_frame], kwargs["num_frames"], axis=0)
         mm_data = {self.modality: mm_data_per_video}
         return mm_data
-    
+
     def dataset_pre_process(self,
                             dataset_name: str,
                             question: Union[str, List],
