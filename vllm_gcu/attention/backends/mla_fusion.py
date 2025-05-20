@@ -162,13 +162,11 @@ class GCUMLAFusionImpl(GCUMLAImpl):
         # Convert from (B, N, V) to (B, N * V)
         return out.view(-1, self.num_heads * self.v_head_dim)
 
-    def _k_up_proj(self, q_nope):
+    def _k_up_proj(self, out, q_nope):
         B, N, P = q_nope.shape
         q_nope = q_nope
         # Multiply (B, N, P) x (N, P, L) -> (B, N, L)
-        ql_nope = torch.empty((B, N, self.W_UK_T.shape[-1]), device=q_nope.device, dtype=q_nope.dtype)
-        torch.bmm(q_nope.transpose(0, 1), self.W_UK_T, out=ql_nope.transpose(0, 1))
-        return ql_nope
+        torch.bmm(q_nope.transpose(0, 1), self.W_UK_T, out=out.transpose(0, 1))
 
     def forward(
         self,
@@ -239,9 +237,14 @@ class GCUMLAFusionImpl(GCUMLAImpl):
         if has_decode:
             decode_q_nope, decode_q_pe = decode_q.split(
                 [self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1)
-            decode_ql_nope = self._k_up_proj(decode_q_nope)
+            decode_q_concat = torch.empty(
+                (decode_q.shape[0], self.num_heads, self.kv_lora_rank+self.qk_rope_head_dim),
+                dtype=decode_q.dtype,
+                device=decode_q.device,
+            )
+            decode_ql_nope = self._k_up_proj(decode_q_concat[...,:self.kv_lora_rank],decode_q_nope)
             self.rope_with_kvcache(
-                decode_q_pe,
+                decode_q_concat[...,self.kv_lora_rank:],
                 None,
                 decode_q_pe,
                 kv_c_and_k_pe,
@@ -264,14 +267,13 @@ class GCUMLAFusionImpl(GCUMLAImpl):
 
         if has_decode:
             output[num_prefill_tokens:] = self._forward_decode(
-                decode_ql_nope, decode_q_pe, kv_cache, attn_metadata)
+                decode_q_concat, kv_cache, attn_metadata)
 
         return output
 
     def _forward_decode(
         self,
-        q_nope: torch.Tensor,
-        q_pe: torch.Tensor,
+        decode_q_concat: torch.Tensor,
         kv_c_and_k_pe_cache: torch.Tensor,
         attn_metadata: MLACommonMetadata,
     ) -> torch.Tensor:
@@ -281,9 +283,9 @@ class GCUMLAFusionImpl(GCUMLAImpl):
 
         decode_meta = attn_metadata.decode_metadata
         assert decode_meta is not None
-        B = q_nope.shape[0]
+        B = decode_q_concat.shape[0]
 
-        q = torch.cat([q_nope, q_pe], dim=-1)
+        q = decode_q_concat
         o = torch.zeros(
             B, self.num_heads, self.kv_lora_rank, dtype=q.dtype, device=q.device
         )
