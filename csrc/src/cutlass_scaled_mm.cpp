@@ -21,17 +21,13 @@ void cutlass_scaled_mm(at::Tensor& out, const at::Tensor& x,
     bias_tensor = bias.value();
   }
 
-  // 创建新的张量来存储修改后的结果
   at::Tensor x_scale_modified = x_scale;
-  at::Tensor w_scale_modified = w_scale;
-
-  // x_scale dim == 0 unsqueeze
-  // dim == 2 pass
   if (x_scale.dim() == 0) {
     x_scale_modified = x_scale.unsqueeze(0);
   }
+
   // w_scale squeeze here
-  w_scale_modified = w_scale.squeeze(-1);
+  at::Tensor w_scale_modified = w_scale.squeeze(-1);
 
   ATEN_ATENOP_CHECK(ATEN_ATENOP_CALL(topsaten::topsatenDotBiasQuant)(
       out, x, weight, x_scale_modified, w_scale_modified, bias_tensor, stream));
