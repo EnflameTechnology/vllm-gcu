@@ -136,6 +136,9 @@
 - func: dispatch_bgmv_low_level(Tensor(a!) y, Tensor x, Tensor w, Tensor indicies, int layer_idx, float scale, int h_in, int h_out, int y_offset) -> ()
   variants: function
 
+- func: advance_step_flashattn(int num_seqs, int num_queries, int block_size, Tensor(a!) input_tokens, Tensor(a!) sampled_token_ids, Tensor(a!) input_positions, Tensor(a!) seq_lens, Tensor(a!) slot_mapping, Tensor(a!) block_tables) -> ()
+  variants: function
+
 - func: advance_step_xformers(int num_seqs, int num_queries, int block_size, Tensor(a!) input_tokens, Tensor(a!) sampled_token_ids, Tensor(a!) input_positions, Tensor(a!) seq_lens, Tensor(a!) slot_mapping, Tensor(a!) block_tables) -> ()
   variants: function
 

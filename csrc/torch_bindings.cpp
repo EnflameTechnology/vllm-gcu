@@ -2,6 +2,7 @@
 
 #include "registration.h"
 #include "src/reshape_and_cache_flash.h"
+#include "src/advance_step_flashattn.h"
 #include "src/advance_step_xformers.h"
 #include "src/awq_dequantize.h"
 #include "src/awq_gemm_gcu.h"
@@ -180,7 +181,7 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
         "Tensor! input_positions, Tensor! seq_lens, Tensor! slot_mapping, "
         "Tensor block_tables) -> ()");
   ops.impl("advance_step_flashattn", torch::kPrivateUse1,
-           &advance_step_xformers);
+           &advance_step_flashattn);
 
   // Layernorm
   // Apply Root Mean Square (RMS) Normalization to the input tensor.
