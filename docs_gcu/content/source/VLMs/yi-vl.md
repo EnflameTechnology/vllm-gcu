@@ -22,7 +22,7 @@ python3 -m vllm_utils.benchmark_vision_language \
  --dtype=bfloat16 \
  --device gcu \
  --block-size=64 \
- --gpu-memory-utilization 0.945 \
+ --gpu-memory-utilization 0.9 \
  --trust-remote-code
 ```
 注：
@@ -45,7 +45,7 @@ python3 -m vllm_utils.benchmark_vision_language \
  --num-prompts 4 \
  --batch-size 4 \
  --block-size=64 \
- --gpu-memory-utilization 0.945 \
+ --gpu-memory-utilization 0.9 \
  --trust-remote-code
 ```
 注：

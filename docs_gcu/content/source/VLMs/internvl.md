@@ -112,7 +112,7 @@ python3 -m vllm_utils.benchmark_vision_language \
  --block-size 64 \
  --tensor-parallel-size 1 \
  --max-model-len 32768  \
- --gpu-memory-utilization 0.945 \
+ --gpu-memory-utilization 0.9 \
  --device gcu
 ```
 ##### 多图性能测试
@@ -129,7 +129,7 @@ python3 -m vllm_utils.benchmark_vision_language \
  --block-size 64 \
  --tensor-parallel-size 1 \
  --max-model-len 32768 \
- --gpu-memory-utilization 0.945 \
+ --gpu-memory-utilization 0.9 \
  --device gcu
 ```
 注：
@@ -199,7 +199,7 @@ python3 -m vllm_utils.benchmark_vision_language \
  --block-size 64 \
  --tensor-parallel-size 1 \
  --max-model-len 32768 \
- --gpu-memory-utilization 0.945
+ --gpu-memory-utilization 0.9
 ```
 ##### 多图性能测试
 ```shell
@@ -216,7 +216,7 @@ python3 -m vllm_utils.benchmark_vision_language \
  --block-size 64  \
  --tensor-parallel-size 1 \
  --max-model-len 32768  \
- --gpu-memory-utilization 0.945
+ --gpu-memory-utilization 0.9
 ```
 注：
 * 默认为graph mode推理，若想使用eager mode，请添加`--enforce-eager`；
@@ -287,7 +287,7 @@ python3 -m vllm_utils.benchmark_vision_language \
  --block-size 64 \
  --tensor-parallel-size 8 \
  --max-model-len 32768 \
- --gpu-memory-utilization 0.945
+ --gpu-memory-utilization 0.9
 ```
 ##### 多图性能测试
 ```shell
@@ -304,7 +304,7 @@ python3 -m vllm_utils.benchmark_vision_language \
  --block-size 64 \
  --tensor-parallel-size 8 \
  --max-model-len 32768 \
- --gpu-memory-utilization 0.945
+ --gpu-memory-utilization 0.9
 ```
 注：
 * 默认为graph mode推理，若想使用eager mode，请添加`--enforce-eager`；

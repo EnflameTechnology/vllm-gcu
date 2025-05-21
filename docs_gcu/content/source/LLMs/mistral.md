@@ -277,7 +277,7 @@ python3 -m vllm_utils.benchmark_test \
  --quantization gptq \
  --block-size=64 \
  --num-prompts=1 \
- --gpu-memory-utilization=0.945
+ --gpu-memory-utilization=0.9
 ```
 
 #### 性能测试
@@ -294,7 +294,7 @@ python3 -m vllm_utils.benchmark_test --perf \
  --block-size=64 \
  --dtype=float16 \
  --quantization gptq \
- --gpu-memory-utilization=0.945
+ --gpu-memory-utilization=0.9
 ```
 注：
 *  本模型支持的`max-model-len`为8192；
@@ -324,7 +324,7 @@ python3 -m vllm_utils.benchmark_test \
  --dtype=bfloat16 \
  --device=gcu \
  --max-model-len=32768 \
- --gpu-memory-utilization 0.945 \
+ --gpu-memory-utilization 0.9 \
  --trust-remote-code
 ```
 
@@ -342,7 +342,7 @@ python3 -m vllm_utils.benchmark_test --perf \
  --dtype=bfloat16 \
  --tensor-parallel-size=8 \
  --block-size=64 \
- --gpu-memory-utilization 0.945 \
+ --gpu-memory-utilization 0.9 \
  --trust-remote-code
 ```
 注：

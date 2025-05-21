@@ -18,7 +18,7 @@ python3 -m vllm_utils.benchmark_vision_language --demo \
  --input-vision-file=[path of your test image] \
  --max-model-len=32768 \
  --dtype=bfloat16 \
- --gpu-memory-utilization=0.945 \
+ --gpu-memory-utilization=0.9 \
  --max-output-len=256 \
  --trust-remote-code \
  --device=gcu
@@ -36,7 +36,7 @@ python3 -m vllm_utils.benchmark_vision_language --perf \
  --max-model-len=32768 \
  --dtype=bfloat16 \
  --input-vision-shape="1024,1024" \
- --gpu-memory-utilization=0.945 \
+ --gpu-memory-utilization=0.9 \
  --block-size=64 \
  --input-len=8192 \
  --max-output-len=1024 \
