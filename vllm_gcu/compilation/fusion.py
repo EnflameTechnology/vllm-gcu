@@ -1,3 +1,4 @@
+import operator
 from enum import Enum
 from typing import Callable, List, NamedTuple
 
@@ -21,6 +22,9 @@ from vllm.compilation.vllm_inductor_pass import VllmInductorPass
 from vllm.config import CompilationConfig
 from vllm.logger import init_logger
 from vllm.platforms import current_platform
+from vllm.utils import direct_register_custom_op
+
+import vllm_gcu.envs as gcu_envs
 
 
 logger = init_logger(__name__)
@@ -1064,6 +1068,48 @@ class FusedAddRMSNormPerTokenGroupQuantPattern(FusedQuantPattern):
                 )
 
 
+def dump(x: torch.Tensor, name: str) -> torch.Tensor:
+    print(f"name: {name}, shape: {x.shape}, value: {x}")
+    return x
+
+
+def dump_fake(x: torch.Tensor, name: str) -> torch.Tensor:
+    return x
+
+
+direct_register_custom_op(
+    op_name="dump",
+    op_func=dump,
+    mutates_args=[],
+    fake_impl=dump_fake,
+    dispatch_key=current_platform.dispatch_key,
+)
+
+
+def add_debug_dump(graph):
+    # add print op for debugging Tensor value
+    #   1. need eager
+    #   2. maybe very slow
+    #   3. only dump getitem node
+    for node in graph.nodes:
+        if node.op != "call_function":
+            continue
+
+        if node.target == torch.ops.vllm.dump.default:
+            continue
+
+        if node.target != operator.getitem:
+            continue
+
+        with graph.inserting_after(node):
+            new_node = graph.call_function(
+                torch.ops.vllm.dump.default,
+                args=(node, node.name),
+            )
+            node.replace_all_uses_with(new_node)
+            new_node.args = (node,) + new_node.args[1:]
+
+
 class GCUFusionPass(FusionPass):
     @classmethod
     def instance(cls, config: CompilationConfig.PassConfig):
@@ -1101,10 +1147,14 @@ class GCUFusionPass(FusionPass):
                 )
 
                 # Fuse rms_norm + dynamic per-token fp8 quant
-                RMSNormDynamicQuantPattern(epsilon, FP8_DTYPE).register(self.patterns, self.record_match)
+                RMSNormDynamicQuantPattern(epsilon, FP8_DTYPE).register(
+                    self.patterns, self.record_match
+                )
 
                 # Fuse fused_add_rms_norm + dynamic per-token fp8 quant
-                FusedAddRMSNormDynamicQuantPattern(epsilon, FP8_DTYPE).register(self.patterns, self.record_match)
+                FusedAddRMSNormDynamicQuantPattern(epsilon, FP8_DTYPE).register(
+                    self.patterns, self.record_match
+                )
 
                 RMSNormPerTokenGroupQuantPattern(epsilon, 128, FP8_DTYPE).register(
                     self.patterns
@@ -1135,15 +1185,21 @@ class GCUFusionPass(FusionPass):
         self.dump_graph(graph, "before_fusion")
 
         count = self.pre_patterns.apply(graph)
-        logger.debug("Replaced %s patterns", count)
-        self.dump_graph(graph, "after_pattern_match")
+        logger.debug(f"Pre-processed {count} patterns")
+        self.dump_graph(graph, "after_pre_pattern_apply")
 
         count = self.patterns.apply(graph)
 
         self.process_matches(graph)
-        logger.debug("Post-processed %s matches", count)
+        logger.debug(f"Post-processed {count} matches")
         graph.eliminate_dead_code()
         self.dump_graph(graph, "after_fusion")
+
+        if gcu_envs.VLLM_GCU_ENABLE_COMPILE_DUMP:
+            logger.debug("Add dump node")
+            add_debug_dump(graph)
+            graph.eliminate_dead_code()
+            self.dump_graph(graph, "after_dump")
 
         self.matches.clear()
         self.end_and_log()
