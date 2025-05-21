@@ -115,7 +115,7 @@ python3 -m vllm_utils.benchmark_test \
  --max-model-len=4096 \
  --output-len=128 \
  --device gcu \
- --gpu-memory-utilization 0.945 \
+ --gpu-memory-utilization 0.9 \
  --trust-remote-code \
  --quantization gptq \
  --dtype=float16
@@ -131,7 +131,7 @@ python3 -m vllm_utils.benchmark_test --perf \
  --output-len=128 \
  --num-prompts=64 \
  --block-size=64 \
- --gpu-memory-utilization 0.945 \
+ --gpu-memory-utilization 0.9 \
  --quantization gptq \
  --dtype=float16 \
  --trust-remote-code
@@ -284,7 +284,7 @@ python3 -m vllm_utils.benchmark_test \
   --device=gcu \
   --dtype=float16 \
   --quantization=w8a8 \
-  --gpu-memory-utilization=0.945 \
+  --gpu-memory-utilization=0.9 \
   --tensor-parallel-size=1
 ```
 
@@ -303,7 +303,7 @@ python3 -m vllm_utils.benchmark_test --perf \
  --dtype=float16 \
  --kv-cache-dtype int8 \
  --device gcu \
- --gpu-memory-utilization 0.945
+ --gpu-memory-utilization 0.9
 ```
 注：
 *  本模型支持的`max-model-len`为4096；
@@ -333,7 +333,7 @@ python3 -m vllm_utils.benchmark_test \
  --demo=te \
  --dtype=bfloat16 \
  --device gcu \
- --gpu-memory-utilization 0.945 \
+ --gpu-memory-utilization 0.9 \
  --trust-remote-code
 ```
 
@@ -346,7 +346,7 @@ python3 -m vllm.entrypoints.openai.api_server  \
  --tensor-parallel-size 1 \
  --max-model-len 32768 \
  --disable-log-requests \
- --gpu-memory-utilization 0.945 \
+ --gpu-memory-utilization 0.9 \
  --block-size=64 \
  --dtype=bfloat16 \
  --device gcu
@@ -391,7 +391,7 @@ python3 -m vllm_utils.benchmark_test \
  --demo=te \
  --dtype=bfloat16 \
  --device gcu \
- --gpu-memory-utilization 0.945 \
+ --gpu-memory-utilization 0.9 \
  --trust-remote-code
 ```
 
@@ -404,7 +404,7 @@ python3 -m vllm.entrypoints.openai.api_server  \
  --tensor-parallel-size 1 \
  --max-model-len 32768 \
  --disable-log-requests \
- --gpu-memory-utilization 0.945 \
+ --gpu-memory-utilization 0.9 \
  --block-size=64 \
  --dtype=bfloat16 \
  --device gcu
@@ -449,7 +449,7 @@ python3 -m vllm_utils.benchmark_test \
  --demo=te \
  --dtype=bfloat16 \
  --device gcu \
- --gpu-memory-utilization 0.945 \
+ --gpu-memory-utilization 0.9 \
  --trust-remote-code
 ```
 
@@ -462,7 +462,7 @@ python3 -m vllm.entrypoints.openai.api_server  \
  --tensor-parallel-size 1 \
  --max-model-len 32768 \
  --disable-log-requests \
- --gpu-memory-utilization 0.945 \
+ --gpu-memory-utilization 0.9 \
  --block-size=64 \
  --dtype=bfloat16 \
  --device gcu
@@ -507,7 +507,7 @@ python3 -m vllm_utils.benchmark_test \
  --demo=te \
  --dtype=bfloat16 \
  --device gcu \
- --gpu-memory-utilization 0.945 \
+ --gpu-memory-utilization 0.9 \
  --trust-remote-code
 ```
 
@@ -520,7 +520,7 @@ python3 -m vllm.entrypoints.openai.api_server  \
  --tensor-parallel-size 4 \
  --max-model-len 32768 \
  --disable-log-requests \
- --gpu-memory-utilization 0.945 \
+ --gpu-memory-utilization 0.9 \
  --block-size=64 \
  --dtype=bfloat16 \
  --device gcu
@@ -565,7 +565,7 @@ python3 -m vllm_utils.benchmark_test \
  --demo=te \
  --dtype=bfloat16 \
  --device gcu \
- --gpu-memory-utilization 0.945 \
+ --gpu-memory-utilization 0.9 \
  --trust-remote-code
 ```
 
@@ -578,7 +578,7 @@ python3 -m vllm.entrypoints.openai.api_server  \
  --tensor-parallel-size 1 \
  --max-model-len 32768 \
  --disable-log-requests \
- --gpu-memory-utilization 0.945 \
+ --gpu-memory-utilization 0.9 \
  --block-size=64 \
  --dtype=bfloat16 \
  --device gcu
@@ -623,7 +623,7 @@ python3 -m vllm_utils.benchmark_test \
  --demo=te \
  --dtype=bfloat16 \
  --device gcu \
- --gpu-memory-utilization 0.945 \
+ --gpu-memory-utilization 0.9 \
  --trust-remote-code
 ```
 
@@ -636,7 +636,7 @@ python3 -m vllm.entrypoints.openai.api_server  \
  --tensor-parallel-size 8 \
  --max-model-len 32768 \
  --disable-log-requests \
- --gpu-memory-utilization 0.945 \
+ --gpu-memory-utilization 0.9 \
  --block-size=64 \
  --dtype=bfloat16 \
  --device gcu

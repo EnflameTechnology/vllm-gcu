@@ -93,7 +93,7 @@ python3 -m vllm.entrypoints.openai.api_server \
  --tensor-parallel-size=2 \
  --max-model-len=4096 \
  --disable-log-requests \
- --gpu-memory-utilization=0.945 \
+ --gpu-memory-utilization=0.9 \
  --block-size=64 \
  --dtype=float16 \
  --quantization gptq \

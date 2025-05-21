@@ -18,7 +18,7 @@ python3 -m vllm_utils.benchmark_test \
  --demo=te \
  --dtype=float16 \
  --output-len=256 \
- --gpu-memory-utilization=0.945
+ --gpu-memory-utilization=0.9
 ```
 
 #### 性能测试
@@ -33,7 +33,7 @@ python3 -m vllm_utils.benchmark_test --perf \
  --num-prompts=128 \
  --block-size=64 \
  --dtype=float16 \
- --gpu-memory-utilization=0.945
+ --gpu-memory-utilization=0.9
 ```
 注：
 *  本模型支持的`max-model-len`为4096；
@@ -173,7 +173,7 @@ python3 -m vllm_utils.benchmark_test \
  --demo=te \
  --dtype=float16 \
  --output-len=256 \
- --gpu-memory-utilization=0.945
+ --gpu-memory-utilization=0.9
 ```
 
 #### 性能测试
@@ -188,7 +188,7 @@ python3 -m vllm_utils.benchmark_test --perf \
  --output-len=3968 \
  --num-prompts=1 \
  --block-size=64 \
- --gpu-memory-utilization=0.945 \
+ --gpu-memory-utilization=0.9 \
  --dtype=float16
 ```
 注：
@@ -597,7 +597,7 @@ python3 -m vllm_utils.benchmark_test \
  --output-len=256 \
  --quantization gptq \
  --tensor-parallel-size=2 \
- --gpu-memory-utilization=0.945 \
+ --gpu-memory-utilization=0.9 \
  --max-model-len=4096
 ```
 
@@ -615,7 +615,7 @@ python3 -m vllm_utils.benchmark_test --perf \
  --block-size=64 \
  --dtype=float16 \
  --quantization gptq \
- --gpu-memory-utilization=0.945
+ --gpu-memory-utilization=0.9
 ```
 注：
 *  本模型支持的`max-model-len`为8192；
@@ -654,7 +654,7 @@ python3 -m vllm_utils.benchmark_test \
  --device=gcu \
  --max-model-len=32768 \
  --tensor-parallel-size 1 \
- --gpu-memory-utilization 0.945
+ --gpu-memory-utilization 0.8
 ```
 
 #### 性能测试
@@ -671,7 +671,7 @@ python3 -m vllm_utils.benchmark_test --perf \
  --dtype=bfloat16 \
  --device gcu \
  --tensor-parallel-size 1 \
- --gpu-memory-utilization 0.945
+ --gpu-memory-utilization 0.8
 ```
 注：
 *  本模型支持的`max-model-len`为131072, 单张卡可跑32768；
@@ -704,7 +704,7 @@ python3 -m vllm_utils.benchmark_test \
     --device=gcu \
     --dtype=float16 \
     --quantization=gptq \
-    --gpu-memory-utilization=0.945 \
+    --gpu-memory-utilization=0.9 \
     --tensor-parallel-size=1
 ```
 
@@ -723,7 +723,7 @@ python3 -m vllm_utils.benchmark_test \
     --num-prompts 1 \
     --block-size=64 \
     --quantization=gptq \
-    --gpu-memory-utilization=0.945
+    --gpu-memory-utilization=0.9
 ```
 注:
 * 本模型支持的`max-model-len`为2048；
@@ -761,7 +761,7 @@ python3 -m vllm_utils.benchmark_test \
  --dtype=bfloat16 \
  --device=gcu \
  --output-len=256 \
- --gpu-memory-utilization 0.945
+ --gpu-memory-utilization 0.8
 ```
 
 #### 性能测试
@@ -778,7 +778,7 @@ python3 -m vllm_utils.benchmark_test --perf \
  --block-size=64 \
  --device=gcu \
  --dtype=bfloat16 \
- --gpu-memory-utilization 0.945
+ --gpu-memory-utilization 0.8
 ```
 注：
 *  本模型支持的`max-model-len`为131072, 需8张卡跑32768；
@@ -979,7 +979,7 @@ python3 -m vllm_utils.benchmark_test \
     --device=gcu \
     --dtype=float16 \
     --quantization=gptq \
-    --gpu-memory-utilization=0.945 \
+    --gpu-memory-utilization=0.9 \
     --tensor-parallel-size=1
 ```
 
@@ -998,7 +998,7 @@ python3 -m vllm_utils.benchmark_test \
     --num-prompts 16 \
     --block-size=64 \
     --quantization=gptq \
-    --gpu-memory-utilization=0.945
+    --gpu-memory-utilization=0.9
 ```
 注:
 * 本模型支持的`max-model-len`为4096；
@@ -1043,7 +1043,7 @@ python3 -m vllm_utils.benchmark_test \
  --output-len=128 \
  --device gcu \
  --kv-cache-dtype int8 \
- --gpu-memory-utilization 0.945
+ --gpu-memory-utilization 0.9
 ```
 
 #### 性能测试
@@ -1061,7 +1061,7 @@ python3 -m vllm_utils.benchmark_test --perf \
  --dtype=float16 \
  --kv-cache-dtype int8 \
  --device gcu \
- --gpu-memory-utilization 0.945
+ --gpu-memory-utilization 0.9
 ```
 注：
 *  本模型支持的`max-model-len`为4096；
@@ -1109,7 +1109,7 @@ python3 -m vllm_utils.benchmark_test \
  --device=gcu \
  --output-len=256 \
  --demo=te \
- --gpu-memory-utilization=0.945 \
+ --gpu-memory-utilization=0.8 \
  --quantization=awq
 ```
 
@@ -1127,7 +1127,7 @@ python3 -m vllm_utils.benchmark_test --perf \
  --output-len=1024 \
  --num-prompts=1 \
  --block-size=64 \
- --gpu-memory-utilization=0.945 \
+ --gpu-memory-utilization=0.8 \
  --quantization=awq
 ```
 注:
@@ -1175,7 +1175,7 @@ python3 -m vllm_utils.benchmark_test \
  --output-len=128 \
  --device gcu \
  --kv-cache-dtype int8 \
- --gpu-memory-utilization 0.945
+ --gpu-memory-utilization 0.9
 ```
 
 #### 性能测试
@@ -1193,7 +1193,7 @@ python3 -m vllm_utils.benchmark_test --perf \
  --dtype=float16 \
  --kv-cache-dtype int8 \
  --device gcu \
- --gpu-memory-utilization 0.945
+ --gpu-memory-utilization 0.9
 ```
 注：
 *  本模型支持的`max-model-len`为4096；
@@ -1238,7 +1238,7 @@ python3 -m vllm_utils.benchmark_test \
  --dtype=float16 \
  --output-len=128 \
  --device gcu \
- --gpu-memory-utilization 0.945
+ --gpu-memory-utilization 0.8
 ```
 
 #### 性能测试
@@ -1256,7 +1256,7 @@ python3 -m vllm_utils.benchmark_test --perf \
  --block-size=64 \
  --dtype=float16 \
  --device gcu \
- --gpu-memory-utilization 0.945
+ --gpu-memory-utilization 0.8
 ```
 注：
 *  本模型支持的`max-model-len`为4096；
@@ -1288,7 +1288,7 @@ python3 -m vllm_utils.benchmark_test \
  --tensor-parallel-size=8 \
  --output-len=256 \
  --demo=te \
- --gpu-memory-utilization=0.945 \
+ --gpu-memory-utilization=0.9 \
  --device=gcu
 ```
 
@@ -1303,7 +1303,7 @@ python3 -m vllm.entrypoints.openai.api_server \
  --max-model-len=32768 \
  --tensor-parallel-size=8 \
  --block-size=64 \
- --gpu-memory-utilization=0.945 \
+ --gpu-memory-utilization=0.9 \
  --disable-log-stats \
  --device=gcu
 

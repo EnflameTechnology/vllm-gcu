@@ -18,7 +18,7 @@ python3 -m vllm_utils.benchmark_test \
  --demo=tc \
  --output-len=20 \
  --dtype=float16 \
- --gpu-memory-utilization=0.945
+ --gpu-memory-utilization=0.9
 ```
 
 #### 性能测试
@@ -32,7 +32,7 @@ python3 -m vllm_utils.benchmark_test --perf \
  --num-prompts=64 \
  --block-size=64 \
  --dtype=float16 \
- --gpu-memory-utilization=0.945 \
+ --gpu-memory-utilization=0.9 \
  --enforce-eager
 ```
 

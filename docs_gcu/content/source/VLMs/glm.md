@@ -22,7 +22,7 @@ python3 -m vllm_utils.benchmark_vision_language \
  --dtype=bfloat16 \
  --device=gcu \
  --block-size=64 \
- --gpu-memory-utilization 0.945 \
+ --gpu-memory-utilization 0.9 \
  --trust-remote-code
 ```
 注：
@@ -46,7 +46,7 @@ python3 -m vllm_utils.benchmark_vision_language \
  --batch-size=1 \
  --block-size=64 \
  --trust-remote-code \
- --gpu-memory-utilization 0.945
+ --gpu-memory-utilization 0.9
 ```
 注：
 * 默认为graph mode推理，若想使用eager mode，请添加`--enforce-eager`；

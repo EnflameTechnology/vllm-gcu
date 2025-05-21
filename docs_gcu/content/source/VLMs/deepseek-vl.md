@@ -80,7 +80,7 @@ python3 -m vllm.entrypoints.openai.api_server \
  --block-size 64 \
  --hf-overrides='{"architectures": ["DeepseekVLV2ForCausalLM"]}' \
  --dtype=bfloat16 \
- --gpu-memory-utilization 0.945 \
+ --gpu-memory-utilization 0.9 \
  --trust-remote-code \
  --seed 0 \
  --tensor-parallel-size 2 \
@@ -132,7 +132,7 @@ python3 -m vllm_utils.benchmark_vision_language --perf \
  --tensor-parallel-size=2 \
  --dtype=bfloat16 \
  --input-vision-shape="1024,1024" \
- --gpu-memory-utilization=0.945 \
+ --gpu-memory-utilization=0.9 \
  --block-size=64 \
  --input-len=2048 \
  --max-output-len=2048 \

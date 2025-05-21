@@ -60,7 +60,7 @@ python3 -m vllm_utils.benchmark_vision_language \
  --device=gcu \
  --tensor-parallel-size=4 \
  --max-model-len=16384 \
- --gpu-memory-utilization=0.945 \
+ --gpu-memory-utilization=0.9 \
  --max-output-len=2048
 ```
 ##### 视频推理
@@ -74,7 +74,7 @@ python3 -m vllm_utils.benchmark_vision_language \
  --device=gcu \
  --tensor-parallel-size=4 \
  --max-model-len=16384 \
- --gpu-memory-utilization=0.945 \
+ --gpu-memory-utilization=0.9 \
  --max-output-len=2048
 ```
 注：
@@ -96,7 +96,7 @@ python3 -m vllm_utils.benchmark_vision_language \
  --tensor-parallel-size=4 \
  --max-model-len=16384 \
  --block-size=64 \
- --gpu-memory-utilization=0.945
+ --gpu-memory-utilization=0.9
 ```
 
 ##### 视频性能测试
@@ -112,7 +112,7 @@ python3 -m vllm_utils.benchmark_vision_language \
  --tensor-parallel-size=4 \
  --max-model-len=16384 \
  --block-size=64 \
- --gpu-memory-utilization=0.945
+ --gpu-memory-utilization=0.9
 ```
 注：
 * 默认为graph mode推理，若想使用eager mode，请添加`--enforce-eager`；

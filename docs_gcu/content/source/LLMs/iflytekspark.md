@@ -330,7 +330,7 @@ python3 -m vllm_utils.benchmark_test --perf \
 --num-prompts=8 \
 --block-size=64 \
 --dtype=float16 \
---gpu-memory-utilization=0.945 \
+--gpu-memory-utilization=0.9 \
 --tensor-parallel-size=2
 ```
 注：
