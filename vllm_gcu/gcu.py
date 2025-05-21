@@ -17,6 +17,7 @@ from vllm.platforms.interface import (
     Platform,
     PlatformEnum,
 )
+
 import vllm_gcu.envs as gcu_envs
 
 
@@ -263,10 +264,17 @@ class GCUPlatform(Platform):
 
                 # TODO: remove after rmsnorm pattern fix in official.
                 compilation_config.pass_config.enable_fusion = False
-                compilation_config.pass_config.dump_graph_stages.extend(
-                    ["before_fusion", "after_pattern_match", "after_fusion"]
-                )
                 compilation_config.custom_ops = ["all"]
+
+                if gcu_envs.VLLM_GCU_ENABLE_COMPILE_DUMP:
+                    compilation_config.pass_config.dump_graph_stages.extend(
+                        [
+                            "before_fusion",
+                            "after_pre_pattern_apply",
+                            "after_fusion",
+                            "after_dump",
+                        ]
+                    )
 
         if model_config:
             model_config.enable_sleep_mode = False
