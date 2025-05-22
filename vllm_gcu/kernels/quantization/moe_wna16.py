@@ -556,8 +556,6 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
     ) -> torch.Tensor:
         from vllm.model_executor.layers.fused_moe import fused_experts
 
-        assert activation == "silu", "Only SiLU activation is supported."
-
         topk_weights, topk_ids = FusedMoE.select_experts(
             hidden_states=x,
             router_logits=router_logits,
@@ -592,5 +590,6 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
             w1_zp=layer.w13_qzeros if has_zp else None,
             w2_zp=layer.w2_qzeros if has_zp else None,
             block_shape=[0, layer.group_size],
+            activation=activation,
         )
         return x
