@@ -107,17 +107,15 @@ class DeepseekFusedQKVProj(MergedReplicatedLinear):
         if self.quant_config is None:
             assert "DeepseekFusedQKVProj unsupported quant method"
         elif self.quant_config.get_name() in ['awq_gcu', 'moe_wna16_gcu']:
+            outs = tuple(torch.empty(x.shape[:-1]+(i,),
+                                     dtype=x.dtype, device=x.device)
+                         for i in self.output_sizes)
             if x.numel() == 0:
-                return torch.empty(
-                    [0, self.qweight.shape[-1]], dtype=x.dtype, device=x.device
-                )
+                return outs
 
             qweight = self.qweight
             scales = self.scales
             qzeros = self.qzeros
-            outs = tuple(torch.empty(x.shape[:-1]+(i,),
-                                     dtype=x.dtype, device=x.device)
-                         for i in self.output_sizes)
             torch.ops._C.fused_qkv_gemm_quant(outs[0], outs[1], x, qweight, scales,
                                               qzeros, self.quant_config.group_size)
             return outs
@@ -126,6 +124,8 @@ class DeepseekFusedQKVProj(MergedReplicatedLinear):
             outs = tuple(torch.empty(x.shape[:-1]+(i,),
                                      dtype=x.dtype, device=x.device)
                          for i in self.output_sizes)
+            if x.numel() == 0:
+                return outs
             assert self.quant_config.weight_block_size[0] == self.quant_config.weight_block_size[1]
             assert self.input_scale is None
 
