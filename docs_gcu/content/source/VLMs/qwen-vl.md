@@ -285,14 +285,14 @@ python3 -m vllm_utils.benchmark_vision_language \
 #### 模型下载
 * url: [Qwen2.5-VL-3B-Instruct](https://www.modelscope.cn/models/Qwen/Qwen2.5-VL-3B-Instruct/files)
 * branch: master
-* commit id: fa6acb8d
+* commit id: 1b5a7674
 
 - 将上述url设定的路径下的内容全部下载到`Qwen2.5-VL-3B-Instruct`文件夹中。
 
 注：需要安装以下依赖：
 
 ```shell
-python3 -m pip install git+https://github.com/huggingface/transformers.git@1931a351408dbd1d0e2c4d6d7ee0eb5e8807d7bf
+python3 -m pip install transformers>=4.50.1
 ```
 
 #### 批量离线推理
