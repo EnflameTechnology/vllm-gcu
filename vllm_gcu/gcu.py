@@ -79,7 +79,10 @@ class GCUPlatform(Platform):
         elif selected_backend == _Backend.XFORMERS:
             return "vllm_gcu.attention.backends.xformers.GCUXFormersBackend"
         elif selected_backend == _Backend.FLASH_ATTN:
-            return "vllm_gcu.attention.backends.flash_attn.FlashAttentionBackend"
+            if cls.get_device_capability() == 130:
+                return "vllm_gcu.attention.backends.flash_attn.FlashAttentionBackend"
+            return "vllm.attention.backends.flash_attn.FlashAttentionBackend"
+            # return "vllm_gcu.attention.backends.flash_attn.FlashAttentionBackend"
         elif selected_backend:
             raise NotImplementedError(f"{selected_backend}")
         return "vllm_gcu.attention.backends.xformers.GCUXFormersBackend"
