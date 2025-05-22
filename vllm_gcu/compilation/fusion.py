@@ -245,7 +245,7 @@ class RMSNormStaticQuantPattern(FusedQuantPattern):
             empty_bf16(5, 4),  # result_rms
             empty_bf16(5, 4),  # input
             empty_bf16(4),  # weight
-            empty_fp32(1),  # scale
+            empty_fp32([]),  # scale
         ]
 
         pm.register_replacement(pattern, replacement, inputs, pm.fwd_only, pm_pass)
@@ -330,7 +330,7 @@ class FusedAddRMSNormStaticQuantPattern(FusedQuantPattern):
             empty_bf16(5, 4),  # input
             empty_bf16(5, 4),  # residual
             empty_bf16(4),  # weight
-            empty_fp32(1),  # scale
+            empty_fp32([]),  # scale
         ]
 
         pm.register_replacement(
