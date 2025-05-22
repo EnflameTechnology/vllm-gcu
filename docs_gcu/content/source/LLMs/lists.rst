@@ -18,6 +18,7 @@
    DeepSeek-MoE        Y            .          Y            .             .         .           Y           .
    DeepSeek-Coder      Y            .          .            .             .         .           .           .
    DeepSeek-V2-Lite    .            Y          .            .             .         .           .           .
+   DeepSeek-Prover-V2  .            Y          .            .             .         .           .           .
    Gemma               Y            .          .            .             .         .           .           .
    codegemma           Y            .          .            .             .         .           .           .
    iFlytekSpark        Y            .          .            .             .         .           .           .
