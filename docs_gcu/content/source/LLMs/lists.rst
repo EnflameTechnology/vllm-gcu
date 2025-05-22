@@ -32,7 +32,7 @@
    Qwen2               Y            Y          Y            Y             Y         .           Y           Y
    Qwen2.5             .            .          .            Y             .         .           .           .
    Qwen3               .            .          .            .             Y         .           .           .
-   Qwen3-MoE           .            Y          .            .             .         .           .           .
+   Qwen3-MoE           .            Y          .            .             Y         .           .           .
    StarCoder2          Y            .          .            Y             .         .           .           .
    SUS-Chat            .            .          .            Y             .         .           .           .
    WizardCoder         Y            .          .            .             .         .           .           .
