@@ -35,7 +35,7 @@ torchvision                       0.21.0+cpu
 如果未安装，可以通过以下两种安装方式完成vllm安装：
 * 通过TopsRider安装：
 ```shell
-./Topsrider_xxx.run -y -C vllm
+./Topsrider_xxx.run -y -C vllm-gcu
 ```
 * 通过whl包安装：
 ```shell
