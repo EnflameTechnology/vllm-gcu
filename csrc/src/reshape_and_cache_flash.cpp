@@ -15,7 +15,10 @@ void reshape_and_cache_flash(const at::Tensor& key,
                             const at::Tensor& value,
                             at::Tensor& key_cache,
                             at::Tensor& value_cache,
-                           const at::Tensor& slot_mapping) {
+                            const at::Tensor& slot_mapping,
+                            c10::string_view kv_cache_dtype,
+                            const at::Tensor& k_scale,
+                            const at::Tensor& v_scale) {
   const torch_gcu::OptionalGCUGuard device_guard(device_of(key_cache));
   const topsStream_t stream = torch_gcu::getCurrentGCUStream();
 
@@ -26,3 +29,4 @@ void reshape_and_cache_flash(const at::Tensor& key,
 
 } // namespace llm_ops
 } // namespace vllm_gcu
+
