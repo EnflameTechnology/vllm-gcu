@@ -24,9 +24,10 @@ from vllm.model_executor.layers.fused_moe.layer import (
 from vllm.platforms import current_platform
 from vllm.utils import vllm_lib
 
+import vllm_gcu.envs as gcu_envs
+
 from vllm_gcu.distributed.parallel_state import all_to_all_v2
 from vllm_gcu.kernels import _custom_ops as ops
-import vllm_gcu.envs as gcu_envs
 
 
 def moe_align_block_size(
@@ -121,7 +122,7 @@ def invoke_fused_moe_kernel(
     use_int8_w8a8: bool,
     block_shape: Optional[List[int]] = None,
     real_token_num=None,
-    bias=None
+    bias=None,
 ) -> None:
     assert topk_weights.stride(1) == 1
     assert sorted_token_ids.stride(0) == 1
@@ -319,7 +320,7 @@ def fused_experts_impl(
     a2_scale: Optional[torch.Tensor] = None,
     block_shape: Optional[List[int]] = None,
     b1=None,
-    b2=None
+    b2=None,
 ):
     from vllm.distributed import get_world_group
 
@@ -329,16 +330,12 @@ def fused_experts_impl(
     forward_context: ForwardContext = get_forward_context()
     layer = forward_context.no_compile_layers[layer_name]
 
+    parallel_config = get_current_vllm_config().parallel_config
+    scheduler_config = get_current_vllm_config().scheduler_config
+
     shared_experts = getattr(layer, "shared_experts", None)
     routed_scaling_factor = getattr(layer, "routed_scaling_factor", None)
     log2phy = getattr(layer, "log2phy", None)
-
-    parallel_config = get_current_vllm_config().parallel_config
-    scheduler_config = get_current_vllm_config().scheduler_config
-    if shared_experts is not None:
-        assert parallel_config.enable_expert_parallel
-        assert routed_scaling_factor is not None
-
     if log2phy is not None:
         assert parallel_config.enable_expert_parallel
 
@@ -519,6 +516,9 @@ def fused_experts_impl(
             )
         topk_ids = topk_ids_.view(topk_ids.dtype)
         topk_weights = topk_weights_.view(topk_weights.dtype)
+    else:
+        if shared_experts is not None:
+            shared_output = shared_experts(hidden_states)
 
     # Check constraints.
     if use_int4_w4a16:
@@ -654,7 +654,7 @@ def fused_experts_impl(
             use_int8_w8a8=use_int8_w8a8,
             block_shape=block_shape,
             real_token_num=valid_in_chunk,
-            bias=b1
+            bias=b1,
         )
 
         if use_fp8_w8a8:
@@ -701,7 +701,7 @@ def fused_experts_impl(
             use_int8_w8a8=use_int8_w8a8,
             block_shape=block_shape,
             real_token_num=valid_in_chunk,
-            bias=b2
+            bias=b2,
         )
         # TODO: replace with moe_sum
         torch.ops._moe_C.moe_sum_pad(
@@ -758,6 +758,10 @@ def fused_experts_impl(
             )
         return output
     else:
+        if shared_output is not None and routed_scaling_factor is not None:
+            out_hidden_states = (
+                out_hidden_states * routed_scaling_factor + shared_experts
+            )
         return out_hidden_states
 
 
