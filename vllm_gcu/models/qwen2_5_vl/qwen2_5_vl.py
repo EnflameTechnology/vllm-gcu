@@ -70,6 +70,9 @@ from vllm.model_executor.models.utils import (AutoWeightsLoader, WeightsMapper,
                     merge_multimodal_embeddings)
 from vllm.model_executor.models.vision import get_vit_attn_backend
 
+from xformers import ops as xops
+from xformers.ops.fmha.attn_bias import BlockDiagonalMask
+
 logger = init_logger(__name__)
 
 # === Vision Inputs === #
@@ -235,7 +238,7 @@ class Qwen2_5_VisionAttention(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        cu_seqlens: torch.Tensor,
+        attn_bias: torch.Tensor,
         rotary_pos_emb: torch.Tensor,
     ) -> torch.Tensor:
         # [s, b, c] --> [s, b, head * 3 * head_dim]
@@ -258,12 +261,7 @@ class Qwen2_5_VisionAttention(nn.Module):
             q = apply_rotary_pos_emb_vision(q, rotary_pos_emb)
             k = apply_rotary_pos_emb_vision(k, rotary_pos_emb)
 
-        from xformers import ops as xops
-        from xformers.ops.fmha.attn_bias import BlockDiagonalMask
-
-        seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).tolist()
-        attn_bias = BlockDiagonalMask.from_seqlens(q_seqlen=seqlens,
-                                                    kv_seqlen=None)
+        
 
         context_layer = xops.memory_efficient_attention_forward(
             q, k, v, attn_bias=attn_bias, p=0, scale=None)
@@ -323,10 +321,10 @@ class Qwen2_5_VisionBlock(nn.Module):
                                      quant_config=quant_config,
                                      prefix=f"{prefix}.mlp")
 
-    def forward(self, x: torch.Tensor, cu_seqlens: torch.Tensor,
+    def forward(self, x: torch.Tensor, attn_bias: torch.Tensor,
                 rotary_pos_emb: torch.Tensor) -> torch.Tensor:
         x = x + self.attn(self.norm1(x),
-                          cu_seqlens=cu_seqlens,
+                          attn_bias=attn_bias,
                           rotary_pos_emb=rotary_pos_emb)
         x = x + self.mlp(self.norm2(x))
         return x
@@ -593,13 +591,18 @@ class Qwen2_5_VisionTransformer(nn.Module):
 
         # transformers
         hidden_states = hidden_states.unsqueeze(1)
+        
+        cu_seqlens_attn_bias = BlockDiagonalMask.from_seqlens(q_seqlen=(cu_seqlens[1:] - cu_seqlens[:-1]).tolist(),
+                                                              kv_seqlen=None)
+        cu__window_seqlens_attn_bias = BlockDiagonalMask.from_seqlens(q_seqlen=(cu_window_seqlens[1:] - cu_window_seqlens[:-1]).tolist(),
+                                                              kv_seqlen=None)
         for layer_num, blk in enumerate(self.blocks):
             if layer_num in self.fullatt_block_indexes:
-                cu_seqlens_now = cu_seqlens
+                cu_attn_bias_now = cu_seqlens_attn_bias
             else:
-                cu_seqlens_now = cu_window_seqlens
+                cu_attn_bias_now = cu__window_seqlens_attn_bias
             hidden_states = blk(hidden_states,
-                                cu_seqlens=cu_seqlens_now,
+                                attn_bias=cu_attn_bias_now,
                                 rotary_pos_emb=rotary_pos_emb)
 
         # adapter
