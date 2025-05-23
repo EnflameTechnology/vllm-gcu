@@ -9,6 +9,14 @@
 
 - 将上述url设定的路径下的内容全部下载到`MiniCPM-V-2_6`文件夹中。
 
+
+#### requirements
+
+```shell
+python3 -m pip install decord==0.6.0
+```
+
+
 #### 批量离线推理
 ##### 图像推理
 ```shell
@@ -88,3 +96,81 @@ python3.10 -m vllm_utils.benchmark_vision_language \
 注：
 * 需将[Video-MME](https://huggingface.co/datasets/lmms-lab/Video-MME)文件下载到本地，并设置`--dataset-file`指向其存储路径；
 * 默认为graph mode推理，若想使用eager mode，请添加`--enforce-eager`；
+
+
+### MiniCPM-o-2_6
+
+#### 模型下载
+* url: [MiniCPM-V-2_6](https://modelscope.cn/models/OpenBMB/MiniCPM-o-2_6)
+* branch: main
+* commit id: 0ba1da4ad01a8366797a839d176fce854b905436
+
+- 将上述url设定的路径下的内容全部下载到`MiniCPM-o-2_6`文件夹中。
+
+#### requirements
+
+```shell
+python3 -m pip install decord==0.6.0
+```
+
+#### 批量离线推理
+##### 图像推理
+```shell
+python3.10 -m vllm_utils.benchmark_vision_language \
+ --backend vllm \
+ --demo \
+ --model=[path of MiniCPM-o-2_6] \
+ --model-arch-suffix Image \
+ --dtype=bfloat16 \
+ --prompt=[your prompt] \
+ --input-vision-file=[path of your test image] \
+ --max-output-len 100 \
+ --device gcu \
+ --max-model-len 16384 \
+ --trust-remote-code \
+ --block-size 64
+
+
+```
+##### 视频推理
+```shell
+python3.10 -m vllm_utils.benchmark_vision_language \
+--backend vllm \
+ --demo \
+ --model=[path of MiniCPM-o-2_6] \
+ --model-arch-suffix Video \
+ --prompt=[your prompt] \
+ --input-vision-file=[path of your test video] \
+ --max-output-len 128 \
+ --device gcu \
+ --trust-remote-code \
+ --max-model-len 16384 \
+ --num-frames 16 \
+ --dtype=bfloat16
+```
+
+注：
+* 默认为graph mode推理，若想使用eager mode，请添加`--enforce-eager`；
+* `--max-output-len`可按需调整；
+
+#### 性能测试
+
+```shell
+python3 -m vllm_utils.benchmark_vision_language \
+ --backend vllm \
+ --perf \
+ --model=[path of MiniCPM-o-2_6] \
+ --model-arch-suffix Image \
+ --dtype=bfloat16 \
+ --batch-size 1 \
+ --input-len 2048 \
+ --input-vision-shape "448,448" \
+ --max-output-len 2048 \
+ --device gcu \
+ --trust-remote-code \
+ --max-model-len 16384 \
+ --block-size=64
+```
+注：
+* 默认为graph mode推理，若想使用eager mode，请添加`--enforce-eager`；
+* 本模型支持的`max-model-len`为16384;
