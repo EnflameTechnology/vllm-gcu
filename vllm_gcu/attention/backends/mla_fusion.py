@@ -78,6 +78,7 @@ class GCUMLACommonMetadataBuilder(MLACommonMetadataBuilder):
 
 @CustomOp.register("rope_with_kvcache")
 class RopeWithKVCache(CustomOp):
+    cos_sin_cache = None
     def __init__(self, rotary_emb, kv_a_layernorm, kv_lora_rank, qk_rope_head_dim, kv_cache_dtype):
         super().__init__()
         self.rotary_emb = rotary_emb
@@ -85,6 +86,11 @@ class RopeWithKVCache(CustomOp):
         self.kv_lora_rank = kv_lora_rank
         self.qk_rope_head_dim = qk_rope_head_dim
         self.kv_cache_dtype = kv_cache_dtype
+        if RopeWithKVCache.cos_sin_cache is None:
+            RopeWithKVCache.cos_sin_cache = self.rotary_emb.cos_sin_cache.to(
+                current_platform.device_type,
+                dtype=torch.float32,
+            )
 
     def forward(self,
                 q_pe_out,
@@ -154,13 +160,9 @@ class RopeWithKVCache(CustomOp):
                     input_positions,
                     kv_scale,
                     ):
-        if self.rotary_emb.cos_sin_cache.device != q_pe.device or \
-                self.rotary_emb.cos_sin_cache.dtype != torch.float32:
-            self.rotary_emb.cos_sin_cache = \
-                self.rotary_emb.cos_sin_cache.to(q_pe.device, dtype=torch.float32)
         torch.ops._C.rotary_embedding_with_kv_cache(
             q_pe_out, kv_cache, q_pe, kv_c_and_k_pe, input_positions,
-            self.rotary_emb.cos_sin_cache, self.kv_a_layernorm.weight.data,
+            RopeWithKVCache.cos_sin_cache, self.kv_a_layernorm.weight.data,
             slot_mapping, kv_scale, self.kv_a_layernorm.variance_epsilon,
             [self.kv_lora_rank, self.qk_rope_head_dim], self.kv_cache_dtype
         )
