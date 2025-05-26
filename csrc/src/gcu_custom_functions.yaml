@@ -223,3 +223,9 @@
 
 - func: fused_qkv_gemm_quant(Tensor(a!) q, Tensor(a!) kv, Tensor x, Tensor weight, Tensor scale, Tensor zeros, int group_size) -> ()
   variants: function
+  
+- func: merge_attn_states(Tensor(a!) output, Tensor(a!) output_lse, Tensor prefix_output, Tensor prefix_lse, Tensor suffix_output, Tensor suffix_lse) -> ()
+  variants: function
+  
+- func: gather_cache(Tensor src_cache, Tensor dst, Tensor block_table, Tensor cu_seq_lens, int batch_size, Tensor seq_starts) -> ()
+  variants: function
