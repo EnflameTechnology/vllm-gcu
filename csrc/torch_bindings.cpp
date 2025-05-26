@@ -1,5 +1,4 @@
 #include <torch/library.h>
-
 #include "registration.h"
 #include "src/advance_step_flashattn.h"
 #include "src/advance_step_xformers.h"
@@ -51,6 +50,8 @@
 #include "src/layer_norm_static_int8_quant.h"
 #include "src/linear_quant.h"
 #include "src/memory_efficient_attention_alibi.h"
+#include "src/merge_attn_states.h"
+#include "src/gather_cache.h"
 #include "src/moe_align_block_size.h"
 #include "src/moe_align_block_size_pad.h"
 #include "src/moe_sum.h"
@@ -733,6 +734,18 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
       "Tensor expert_map, int num_experts, int block_size) -> ()");
   ops.impl("ets_moe_align_block_size", torch::kPrivateUse1,
            &ets_moe_align_block_size);
+
+  ops.def(
+      "merge_attn_states(Tensor(a!) output, Tensor(a!) output_lse, "
+      "Tensor prefix_output, Tensor prefix_lse, "
+      "Tensor suffix_output, Tensor suffix_lse) -> ()");
+  ops.impl("merge_attn_states", torch::kPrivateUse1, &merge_attn_states);
+
+  ops.def(
+      "gather_cache(Tensor(a!) src_cache, Tensor(a!) dst, "
+      "Tensor(a!) block_table, Tensor(a!) cu_seq_lens, "
+      "int batch_size, Tensor(a!) seq_starts) -> ()");
+  ops.impl("gather_cache", torch::kPrivateUse1, &gather_cache);
 
   // 添加 fused_qkv_proj 算子
   ops.def(
