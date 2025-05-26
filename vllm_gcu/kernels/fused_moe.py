@@ -760,7 +760,7 @@ def fused_experts_impl(
     else:
         if shared_output is not None and routed_scaling_factor is not None:
             out_hidden_states = (
-                out_hidden_states * routed_scaling_factor + shared_experts
+                out_hidden_states * routed_scaling_factor + shared_output
             )
         return out_hidden_states
 
