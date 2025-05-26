@@ -9,6 +9,7 @@ from typing import List, Optional, Tuple, Union
 
 import numpy as np
 import torch
+import vllm.envs as envs
 from vllm.config import SupportsHash
 from vllm.platforms.interface import (
     _Backend,
@@ -140,19 +141,20 @@ class GCUPlatform(Platform):
         import vllm_gcu.kernels  # noqa: F401
 
         if parser:
-            key = "--disable-async-output-proc"
-            if key in parser._option_string_actions:
-                # set disable_async_output_proc default True
-                parser._option_string_actions[key].default = True
-
             key = "--device"
             if key in parser._option_string_actions:
                 # set "gcu" to device
                 parser._option_string_actions[key].choices += ["gcu"]
+                parser._option_string_actions[key].default = "gcu"
+
+            if not envs.VLLM_USE_V1:
+                key = "--disable-async-output-proc"
+                if key in parser._option_string_actions:
+                    # set disable_async_output_proc default True
+                    parser._option_string_actions[key].default = True
 
     @classmethod
     def check_and_update_config(cls, vllm_config) -> None:
-        import vllm.envs as envs
 
         parallel_config = vllm_config.parallel_config
         scheduler_config = vllm_config.scheduler_config
