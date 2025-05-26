@@ -113,9 +113,7 @@ class DeepseekFusedQKVProj(MergedReplicatedLinear):
     ) -> tuple[torch.Tensor]:
         bias = self.bias if not self.skip_bias_add else None
         assert self.quant_method is not None
-        if self.quant_config is None:
-            assert "DeepseekFusedQKVProj unsupported quant method"
-        elif self.quant_config.get_name() in ['awq_gcu', 'moe_wna16_gcu']:
+        if self.quant_config.get_name() in ['awq_gcu', 'moe_wna16_gcu']:
             outs = tuple(torch.empty(x.shape[:-1]+(i,),
                                      dtype=x.dtype, device=x.device)
                          for i in self.output_sizes)
@@ -150,7 +148,8 @@ class DeepseekFusedQKVProj(MergedReplicatedLinear):
 
             return outs
         else:
-            assert "DeepseekFusedQKVProj unsupported quant method"
+            out = super().forward(x)[0]
+            return tuple(i.contiguous() for i in out.split(self.output_sizes, dim=-1))
 
 
 class DeepseekV2MLAAttentionFusion(nn.Module):
@@ -262,9 +261,9 @@ class DeepseekV2MLAAttentionFusion(nn.Module):
             mscale = yarn_get_mscale(scaling_factor, float(mscale_all_dim))
             self.scaling = self.scaling * mscale * mscale
 
-        self.q_proj_outside = (
-            True if quant_config.get_name().startswith("fp8") else False
-        )
+        self.q_proj_outside = False
+        if quant_config and quant_config.get_name().startswith("fp8"):
+            self.q_proj_outside = True
 
         if self.q_proj_outside:
             q_proj = nn.Identity()
