@@ -385,7 +385,7 @@ python3 -m vllm_utils.benchmark_vision_language \
  --dtype=bfloat16 \
  --max-output-len=128 \
  --device=gcu \
- --tensor-parallel-size 1 \
+ --tensor-parallel-size 8 \
  --max-model-len 32768 \
  --trust-remote-code \
  --block-size=64
