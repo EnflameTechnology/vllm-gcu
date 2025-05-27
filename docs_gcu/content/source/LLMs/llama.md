@@ -640,7 +640,7 @@ python3 -m vllm_utils.benchmark_test --perf \
 #### requirements
 
 ```shell
-python3 -m pip install transformers==4.44.2 
+python3 -m pip install transformers==4.48.2 
 ```
 
 #### 批量离线推理
@@ -747,7 +747,7 @@ python3 -m vllm_utils.benchmark_test \
 #### requirements
 
 ```shell
-python3 -m pip install transformers==4.44.2 
+python3 -m pip install transformers==4.48.2 
 ```
 
 #### 批量离线推理
@@ -1096,7 +1096,7 @@ Meta-Llama-3.1-70B-Instruct_W4A16_AWQ/
 #### requirements
 
 ```shell
-python3 -m pip install transformers==4.44.2 
+python3 -m pip install transformers==4.48.2 
 ```
 
 #### 批量离线推理
