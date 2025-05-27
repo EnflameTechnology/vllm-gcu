@@ -5,6 +5,7 @@ import torch
 import torch_gcu
 
 from vllm.logger import init_logger
+from vllm.distributed.communication_op import broadcast_tensor_dict
 from vllm.config import ParallelConfig, SpeculativeConfig, VllmConfig
 from vllm.sequence import (VLLM_INVALID_TOKEN_ID,
                            CompletionSequenceGroupOutput, ExecuteModelRequest,
@@ -247,6 +248,146 @@ class SpecDecodeGCUWorker(SpecDecodeWorker):
             enable_lm_head_weight_load=enable_lm_head_weight_load,
             num_spec_prefill_steps=num_spec_prefill_steps
         )
+
+    @torch.inference_mode()
+    def execute_model(
+        self,
+        execute_model_req: Optional[ExecuteModelRequest] = None
+    ) -> List[SamplerOutput]:
+        """Perform speculative decoding on the input batch.
+        """
+        if self.rank != self._driver_rank:
+            self._run_non_driver_rank()
+            return []
+
+        if execute_model_req is None:
+            # This signals that there's no more requests to process for now.
+            # All workers are running infinite loop with broadcast_tensor_dict,
+            # and it stops the loop when the driver broadcasts an empty input.
+            # Send an empty input to notify all other workers to stop their
+            # execution loop.
+            broadcast_tensor_dict({}, src=0)
+            return []
+
+        self._track_finished_requests(execute_model_req)
+        disable_all_speculation = self._should_disable_all_speculation(
+            execute_model_req)
+        num_lookahead_slots = execute_model_req.num_lookahead_slots
+        all_prompt = True
+        atleast_one_prompt = False
+        all_zero_spec_tokens = True
+        for sgm in execute_model_req.seq_group_metadata_list:
+            all_prompt = all_prompt and sgm.is_prompt
+            atleast_one_prompt = atleast_one_prompt or sgm.is_prompt
+            all_zero_spec_tokens = all_zero_spec_tokens and (
+                sgm.num_speculative_tokens == 0)
+
+        if all_prompt and execute_model_req.seq_group_metadata_list:
+            assert num_lookahead_slots == 0, (
+                "Prompt only runs should have num_lookahead_slots equal to 0. "
+                "This should never happen, please file a bug at "
+                "https://github.com/vllm-project/vllm/issues")
+        # Speculative decoding is disabled in the following cases:
+        # 1. Prefill phase: Speculative decoding is not
+        #    used during the prefill phase.
+        # 2. Auto-disable enabled: The running queue size exceeds
+        #    the specified threshold.
+        # 3. No request: There are no requests in the batch, or
+        #    none of the requests in the batch have spec decoding enabled.
+        # In any of these cases, the proposer and scorer workers
+        # are called normally.
+        # We expect `num_speculative_tokens` to be None for prefills.
+        no_spec = (num_lookahead_slots == 0 or disable_all_speculation
+                   or all_zero_spec_tokens)
+
+        all_idle = True
+        for seq_group_metadata in execute_model_req.seq_group_metadata_list:
+            if not (
+                seq_group_metadata.sampling_params.extra_args
+                and seq_group_metadata.sampling_params.extra_args.get("is_idle", None)
+            ):
+                all_idle = False
+
+
+        # Broadcast how many lookahead slots are scheduled for this step, and
+        # whether all speculation is disabled, to all non-driver workers.
+
+        # This is required as if the number of draft model runs changes
+        # dynamically, the non-driver workers won't know unless we perform a
+        # communication to inform them.
+
+        # no_spec is used to signal non-driver worker about prefill vs decode
+        # stage. This is needed to ensure that order of execution of proposer
+        # and scorer is same in both driver and non-driver workers (i.e.,
+        # scorer -> proposer for prefill and proposer -> scorer in decode). This
+        # order is needed to support models like EAGLE that take scorer states
+        # as inputs.
+        broadcast_dict = dict(
+            num_lookahead_slots=num_lookahead_slots,
+            no_spec=no_spec,
+            disable_all_speculation=disable_all_speculation,
+            all_idle=all_idle,
+            # When both chunked prefill and speculative decoding are enabled
+            # it is possible that the same batch contains both prefill
+            # and decodes. If that happens in the scorer we run the batch
+            # as one single forward pass. However, in the proposer we
+            # run them as 2 different batches - one for prefill and
+            # the other for decodes. The variable indicates to the non-driver
+            # worker that there are prefills as part of the speculative batch
+            # and hence it needs to run an extra prefill forward pass.
+            run_spec_proposer_for_prefill=atleast_one_prompt,
+        )
+        broadcast_tensor_dict(broadcast_dict, src=self._driver_rank)
+
+        assert execute_model_req.seq_group_metadata_list is not None, (
+            "speculative decoding requires non-None seq_group_metadata_list")
+
+        self._maybe_disable_speculative_tokens(
+            disable_all_speculation, execute_model_req.seq_group_metadata_list)
+
+        if no_spec:
+            return self._run_no_spec(execute_model_req,
+                                     skip_proposer=disable_all_speculation)
+        return self._run_speculative_decoding_step(execute_model_req,
+                                                   num_lookahead_slots)
+
+    def _run_non_driver_rank(self) -> bool:
+        """Run proposer and verifier model in non-driver workers. This is used
+        for both speculation cases (num_lookahead_slots>0) and non-speculation
+        cases (e.g. prefill).
+
+        Returns True if there are remaining sequences to process.
+        """
+        assert self.rank != self._driver_rank
+
+        data = broadcast_tensor_dict(src=self._driver_rank)
+        if not data:
+            return False
+        num_lookahead_slots = data["num_lookahead_slots"]
+
+        # In case of prefill, scorer_worker has to be run before proposer so
+        # that the hidden states can be propagated to proposer when needed.
+        if data["no_spec"]:
+            self.scorer_worker.execute_model()
+
+        if not data["disable_all_speculation"]:
+            # Even if num_lookahead_slots is zero, we want to run the
+            # proposer model as it may have KV.
+            #
+            # We run the proposer once per lookahead slot. In the future we
+            # should delegate how many times it runs to the proposer.
+            if data["no_spec"] and data["all_idle"]:
+                return True
+
+            for _ in range(max(num_lookahead_slots, 1)):
+                self.proposer_worker.execute_model()
+
+        if not data["no_spec"]:
+            self.scorer_worker.execute_model()
+            if data["run_spec_proposer_for_prefill"]:
+                self.proposer_worker.execute_model()
+
+        return True
 
     @nvtx_range("spec_decode_worker._run_no_spec")
     def _run_no_spec(self, execute_model_req: ExecuteModelRequest,
