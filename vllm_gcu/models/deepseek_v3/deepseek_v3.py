@@ -687,6 +687,7 @@ class DeepseekV2DecoderLayer(nn.Module):
             config.hidden_size, eps=config.rms_norm_eps
         )
         self.model_config = model_config
+        self.config = config
 
     def forward(
         self,
@@ -707,7 +708,8 @@ class DeepseekV2DecoderLayer(nn.Module):
         pad_size = align_up(actual_seqlen, tp_group.size()) - actual_seqlen
 
         if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
-            if self.layer_idx == 0:
+            # add mtp layer
+            if self.layer_idx % self.config.num_hidden_layers == 0:
                 residual = torch.nn.functional.pad(
                     residual,
                     (0, 0, 0, pad_size),

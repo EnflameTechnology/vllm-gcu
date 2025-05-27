@@ -5,7 +5,8 @@ import torch
 import torch.nn as nn
 from transformers import PretrainedConfig
 
-from vllm.config import CacheConfig, ModelConfig, set_current_vllm_config, VllmConfig
+from vllm.compilation.decorators import support_torch_compile
+from vllm.config import CacheConfig, ModelConfig, set_current_vllm_config, get_current_vllm_config, VllmConfig
 from vllm.model_executor.layers.fused_moe import FusedMoE
 from vllm.model_executor.layers.layernorm import RMSNorm
 from vllm.model_executor.layers.logits_processor import LogitsProcessor
@@ -20,6 +21,9 @@ from vllm.sequence import IntermediateTensors
 
 from vllm.model_executor.models.deepseek_v2 import get_spec_layer_idx_from_weight_name
 from vllm.model_executor.models.utils import maybe_prefix
+from vllm.distributed import get_tp_group
+
+import vllm_gcu.envs as gcu_envs
 from vllm_gcu.models.deepseek_v3.deepseek_v3 import DeepseekV2DecoderLayer
 
 
@@ -40,32 +44,31 @@ class SharedHead(nn.Module):
         return self.norm(hidden_states)
 
 
+@support_torch_compile
 class DeepSeekMultiTokenPredictorLayer(nn.Module):
 
     def __init__(
         self,
-        config: PretrainedConfig,
+        *,
+        vllm_config: VllmConfig,
         prefix: str,
-        model_config: ModelConfig,
-        cache_config: Optional[CacheConfig] = None,
-        quant_config: Optional[QuantizationConfig] = None,
     ) -> None:
         super().__init__()
+        config = vllm_config.model_config.hf_config
         self.embed_tokens = VocabParallelEmbedding(
             config.vocab_size,
             config.hidden_size,
         )
-
+        model_config = vllm_config.model_config
+        cache_config = vllm_config.cache_config
+        quant_config = vllm_config.quant_config
         self.enorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.hnorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.eh_proj = nn.Linear(config.hidden_size * 2,
-                                 config.hidden_size,
-                                 bias=False)
         self.eh_proj = ReplicatedLinear(
             config.hidden_size * 2,
             config.hidden_size,
             bias=False,
-            quant_config=quant_config,
+            quant_config=None,
             prefix=f"{prefix}.eh_proj"
         )
         self.shared_head = SharedHead(config=config, quant_config=quant_config)
@@ -80,7 +83,6 @@ class DeepSeekMultiTokenPredictorLayer(nn.Module):
         inputs_embeds: Optional[torch.Tensor] = None,
         spec_step_index: int = 0,
     ) -> torch.Tensor:
-        actual_seqlen = len(input_ids)
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
         assert inputs_embeds is not None
@@ -92,11 +94,21 @@ class DeepSeekMultiTokenPredictorLayer(nn.Module):
         hidden_states = self.eh_proj(
             torch.cat([inputs_embeds, previous_hidden_states], dim=-1))[0]
 
+        actual_seqlen = hidden_states.shape[0]
+
         hidden_states, residual = self.mtp_block(positions=positions,
                                                  hidden_states=hidden_states,
                                                  residual=None,
                                                  actual_seqlen=actual_seqlen)
         hidden_states = residual + hidden_states
+
+        if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
+            vllm_config = get_current_vllm_config().parallel_config
+            if vllm_config.tensor_parallel_size > 1:
+                hidden_states = get_tp_group().all_gather(hidden_states, dim=0)[
+                    :actual_seqlen
+                ]
+
         return hidden_states
 
 
@@ -111,11 +123,8 @@ class DeepSeekMultiTokenPredictor(nn.Module):
         self.layers = torch.nn.ModuleDict({
             str(idx):
             DeepSeekMultiTokenPredictorLayer(
-                config,
-                f"{prefix}.layers.{idx}",
-                model_config=vllm_config.model_config,
-                cache_config=vllm_config.cache_config,
-                quant_config=vllm_config.quant_config,
+                vllm_config=vllm_config,
+                prefix=f"{prefix}.layers.{idx}",
             )
             for idx in range(self.mtp_start_layer_idx,
                              self.mtp_start_layer_idx + self.num_mtp_layers)
@@ -222,6 +231,11 @@ class DeepSeekMTP(nn.Module):
             if spec_layer is None:
                 continue
             name = self._rewrite_spec_layer_name(spec_layer, name)
+            if "mlp.shared_experts" in name and name not in params_dict:
+                # shared_experts was setattr to self.experts when not in params_dict
+                name = name.replace(
+                    "mlp.shared_experts", "mlp.experts.shared_experts._orig_mod"
+                )
             for (param_name, weight_name, shard_id) in stacked_params_mapping:
                 # Skip non-stacked layers and experts (experts handled below).
                 if weight_name not in name:
@@ -232,7 +246,11 @@ class DeepSeekMTP(nn.Module):
                 # name will be updated to mlp.experts[0].gate_up_proj, which
                 # will then be updated below in expert_params_mapping
                 # for mlp.experts[0].gate_gate_up_proj, which breaks load.
-                if (("mlp.experts." in name) and name not in params_dict):
+                if (
+                    ("mlp.experts." in name)
+                    and ("shared_experts." not in name)
+                    and name not in params_dict
+                ):
                     continue
                 name = name.replace(weight_name, param_name)
                 # Skip loading extra bias for GPTQ models.

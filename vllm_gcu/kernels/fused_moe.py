@@ -14,8 +14,7 @@ from vllm.distributed.parallel_state import get_tp_group
 from vllm.forward_context import ForwardContext, get_forward_context
 
 from vllm.model_executor.layers.fused_moe.fused_moe import (
-    fused_experts,
-    get_default_config,
+    fused_experts
 )
 from vllm.model_executor.layers.fused_moe.layer import (
     FusedMoE,
@@ -28,6 +27,27 @@ import vllm_gcu.envs as gcu_envs
 
 from vllm_gcu.distributed.parallel_state import all_to_all_v2
 from vllm_gcu.kernels import _custom_ops as ops
+
+
+def get_default_config(
+    M: int,
+    E: int,
+    N: int,
+    K: int,
+    topk: int,
+    dtype: Optional[str],
+    is_marlin: bool,
+    block_shape: Optional[List[int]] = None,
+) -> Dict[str, int]:
+
+    # for gcu, block_size=64 can get large bandwidth
+    config = {
+        "BLOCK_SIZE_M": 64,
+        "BLOCK_SIZE_N": 64,
+        "BLOCK_SIZE_K": 32,
+        "GROUP_SIZE_M": 8,
+    }
+    return config
 
 
 def moe_align_block_size(
@@ -586,6 +606,7 @@ def ep_fused_experts_impl(
 
     parallel_config = get_current_vllm_config().parallel_config
     scheduler_config = get_current_vllm_config().scheduler_config
+    spec_config = get_current_vllm_config().speculative_config
 
     assert parallel_config.enable_expert_parallel
 
@@ -709,7 +730,9 @@ def ep_fused_experts_impl(
         )
         all_to_all_with_scales = (use_fp8_w8a8 and not input_static_quant)
         if all_dp_in_decode:
-            padded_recv_len = scheduler_config.max_num_seqs
+            padded_recv_len = scheduler_config.max_num_seqs \
+                if spec_config is None \
+                else scheduler_config.max_num_seqs * (spec_config.num_speculative_tokens + 1)
             if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
                 sp_size = get_tp_group().world_size
                 padded_recv_len = (padded_recv_len + sp_size - 1) // sp_size * sp_size
