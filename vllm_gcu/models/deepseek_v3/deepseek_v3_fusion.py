@@ -92,7 +92,16 @@ def yarn_get_mscale(scale: float = 1, mscale: float = 1) -> float:
 
 
 class DeepseekFusedQKVProj(MergedReplicatedLinear):
-    def __init__(self, input_size: int, output_sizes: list[int], bias: bool = True, skip_bias_add: bool = False, params_dtype: torch.dtype | None = None, quant_config: QuantizationConfig | None = None, prefix: str = ""):
+    def __init__(
+        self,
+        input_size: int,
+        output_sizes: list[int],
+        bias: bool = True,
+        skip_bias_add: bool = False,
+        params_dtype: Optional[torch.dtype] = None,
+        quant_config: Optional[QuantizationConfig] = None,
+        prefix: str = "",
+    ):
 
         super().__init__(input_size, output_sizes, bias, skip_bias_add, params_dtype, quant_config, prefix)
         self.quant_config = quant_config
