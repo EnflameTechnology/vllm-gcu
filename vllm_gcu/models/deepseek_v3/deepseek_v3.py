@@ -214,31 +214,38 @@ class DeepseekV2MoE(nn.Module):
                 prefix=f"{prefix}.shared_experts",
             )
 
-            def custom_pass(graph: torch.fx.Graph) -> torch.fx.Graph:
-                from vllm_gcu.compilation.fusion import GCUFusionPass
+            if quant_config is not None:
 
-                vllm_config = get_current_vllm_config()
-                GCUFusionPass.instance(vllm_config.compilation_config).patterns.apply(
-                    graph
-                )
-                graph.eliminate_dead_code()
-                return graph
+                def custom_pass(graph: torch.fx.Graph) -> torch.fx.Graph:
+                    from vllm_gcu.compilation.fusion import GCUFusionPass
 
-            def custom_backend(
-                graph: torch.fx.GraphModule, example_inputs: List[torch.Tensor]
-            ):
-                from torch._inductor import config
-                from torch._inductor.compile_fx import compile_fx
+                    vllm_config = get_current_vllm_config()
+                    GCUFusionPass.instance(
+                        vllm_config.compilation_config
+                    ).patterns.apply(graph)
+                    graph.eliminate_dead_code()
+                    return graph
 
-                current_config = config.get_config_copy()
-                current_config["post_grad_custom_post_pass"] = custom_pass
-                current_config["enable_auto_functionalized_v2"] = False
+                def custom_backend(
+                    graph: torch.fx.GraphModule, example_inputs: List[torch.Tensor]
+                ):
+                    from torch._inductor import config
+                    from torch._inductor.compile_fx import compile_fx
 
-                return compile_fx(graph, example_inputs, config_patches=current_config)
+                    current_config = config.get_config_copy()
+                    current_config["post_grad_custom_post_pass"] = custom_pass
+                    current_config["enable_auto_functionalized_v2"] = False
 
-            self.experts.shared_experts = torch.compile(
-                backend=custom_backend, dynamic=True
-            )(self.shared_experts)
+                    return compile_fx(
+                        graph, example_inputs, config_patches=current_config
+                    )
+
+                self.experts.shared_experts = torch.compile(
+                    backend=custom_backend, dynamic=True
+                )(self.shared_experts)
+            else:
+                self.experts.shared_experts = self.shared_experts
+
             self.experts.routed_scaling_factor = self.routed_scaling_factor
             self.experts.log2phy = self.layer_log2phy
 
@@ -992,10 +999,15 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP):
                 continue
 
             if "mlp.shared_experts" in name and name not in params_dict:
-                # shared_experts was setattr to self.experts when not in params_dict
-                name = name.replace(
-                    "mlp.shared_experts", "mlp.experts.shared_experts._orig_mod"
-                )
+                if self.quant_config is not None:
+                    # shared_experts was setattr to self.experts when not in params_dict
+                    name = name.replace(
+                        "mlp.shared_experts", "mlp.experts.shared_experts._orig_mod"
+                    )
+                else:
+                    name = name.replace(
+                        "mlp.shared_experts", "mlp.experts.shared_experts"
+                    )
 
             # TODO(simon): support nextn predict layers
             if (
@@ -1019,7 +1031,7 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP):
                 # for mlp.experts[0].gate_gate_up_proj, which breaks load.
                 if (
                     ("mlp.experts." in name)
-                    and ("shared_experts." not in name)
+                    and ("mlp.experts.shared_experts." not in name)
                     and name not in params_dict
                 ):
                     continue
