@@ -1031,7 +1031,7 @@ python3 -m vllm_utils.benchmark_serving \
  --trust-remote-code \
  --ignore_eos \
  --strict-in-out-len \
- --keep-special-token
+ --keep-special-tokens
 ```
 注：
 *  本模型支持的`max-model-len`为30720；
