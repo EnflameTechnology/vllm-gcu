@@ -81,6 +81,7 @@ import vllm_gcu.envs as gcu_envs
 from vllm_gcu.kernels.fused_moe import fused_experts_impl
 from vllm_gcu.kernels.linear import MergedReplicatedLinear
 from vllm_gcu.kernels.quantization.fp8 import apply_w8a8_block_fp8_linear
+from vllm.model_executor.layers.linear import UnquantizedLinearMethod
 
 
 def yarn_get_mscale(scale: float = 1, mscale: float = 1) -> float:
@@ -197,13 +198,6 @@ class DeepseekV2MLAAttentionFusion(nn.Module):
         self.max_position_embeddings = max_position_embeddings
 
         if self.q_lora_rank is not None:
-            self.qkv_a_proj_with_mqa = DeepseekFusedQKVProj(
-                hidden_size,
-                [self.q_lora_rank, self.kv_lora_rank + self.qk_rope_head_dim],
-                bias=False,
-                quant_config=quant_config,
-                prefix=f"{prefix}.qkv_a_proj_with_mqa",
-            )
             self.q_a_layernorm = RMSNorm(self.q_lora_rank, eps=config.rms_norm_eps)
             self.q_b_proj = ColumnParallelLinear(
                 q_lora_rank,
@@ -212,6 +206,38 @@ class DeepseekV2MLAAttentionFusion(nn.Module):
                 quant_config=quant_config,
                 prefix=f"{prefix}.q_b_proj",
             )
+            self.qkv_fuse = False
+            if quant_config is not None:
+                # HACK: use q_b_proj as layer since get_quant_method only check it's type
+                q_a_method = quant_config.get_quant_method(self.q_b_proj, f"{prefix}.q_a_proj")
+                kv_a_method = quant_config.get_quant_method(self.q_b_proj, f"{prefix}.kv_a_proj_with_mqa")
+                if type(q_a_method) == type(kv_a_method) and not isinstance(q_a_method, UnquantizedLinearMethod):
+                    # UnquantizedLinearMethod: skip is not safe for merge linear
+                    self.qkv_fuse = True
+
+            if self.qkv_fuse:
+                self.qkv_a_proj_with_mqa = DeepseekFusedQKVProj(
+                    hidden_size,
+                    [self.q_lora_rank, self.kv_lora_rank + self.qk_rope_head_dim],
+                    bias=False,
+                    quant_config=quant_config,
+                    prefix=f"{prefix}.qkv_a_proj_with_mqa",
+                )
+            else:
+                self.q_a_proj = ReplicatedLinear(
+                    self.hidden_size,
+                    self.q_lora_rank,
+                    bias=False,
+                    quant_config=quant_config,
+                    prefix=f"{prefix}.q_a_proj",
+                )
+                self.kv_a_proj_with_mqa = ReplicatedLinear(
+                    self.hidden_size,
+                    self.kv_lora_rank + self.qk_rope_head_dim,
+                    bias=False,
+                    quant_config=quant_config,
+                    prefix=f"{prefix}.kv_a_proj_with_mqa",
+                )
         else:
             self.q_proj = ColumnParallelLinear(
                 self.hidden_size,
@@ -302,7 +328,11 @@ class DeepseekV2MLAAttentionFusion(nn.Module):
         hidden_states: torch.Tensor,
     ) -> torch.Tensor:
         if self.q_lora_rank is not None:
-            ckq, kv_c_and_k_pe = self.qkv_a_proj_with_mqa(hidden_states)
+            if self.qkv_fuse:
+                ckq, kv_c_and_k_pe = self.qkv_a_proj_with_mqa(hidden_states)
+            else:
+                ckq = self.q_a_proj(hidden_states)[0].contiguous()
+                kv_c_and_k_pe = self.kv_a_proj_with_mqa(hidden_states)[0].contiguous()
             hidden_states_or_q_c = self.q_a_layernorm(ckq)
         else:
             hidden_states_or_q_c = hidden_states
