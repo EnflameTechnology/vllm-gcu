@@ -969,8 +969,8 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP):
             ("gate_up_proj", "gate_proj", 0),
             ("gate_up_proj", "up_proj", 1),
         ]
-        q_lora_rank = self.config.q_lora_rank if hasattr(self.config, "q_lora_rank") else None
-        if q_lora_rank is not None and gcu_envs.VLLM_GCU_DEEPSEEK_FUSION:
+        # TODO: should we check all layers?
+        if getattr(self.model.layers[0].self_attn, 'qkv_fuse', False):
             stacked_params_mapping += [
                 ("qkv_a_proj_with_mqa", "q_a_proj", 0),
                 ("qkv_a_proj_with_mqa", "kv_a_proj_with_mqa", 1),
