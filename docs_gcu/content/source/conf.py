@@ -32,14 +32,14 @@ pkg_ver = pkg_ver if pkg_ver.strip() else 'master'
 # -- Project information -----------------------------------------------------
 
 project = 'vLLM-gcu用户使用手册'
-copyright = '2024, www.enflame-tech.com'
+copyright = '2025, www.enflame-tech.com'
 author = 'www.enflame-tech.com'
 
 # The full version, including alpha/beta/rc tags
 
 release = 'V 0.8.0'  # 填写当前文档版本号
 doc_name = project  # 填写全称
-last_update_date = '2024年12月11日'  # 填写文档更新日期，格式为YYYY年M月D日
+last_update_date = '2025年05月29日'  # 填写文档更新日期，格式为YYYY年M月D日
 pdf_filename = 'vLLM-gcu用户使用手册.tex'  # 填写导出的pdf的tex文件名，格式为"XXXX.tex"，注意不可以含有空格！！！
 
 # Add any Sphinx extension module names here, as strings. They can be
@@ -190,7 +190,7 @@ latex_elements = {
     \fancyhf{}
     \fancyhead[EOLH]{\zihao{6} ''' + doc_name + r'''}
     \fancyhead[EORH]{\zihao{6} \leftmark}%leftmark,rightmark
-    \fancyfoot[EOCF]{\zihao{-6} 版权所有©2024 上海燧原科技股份有限公司保留所有权利}
+    \fancyfoot[EOCF]{\zihao{-6} 版权所有©2024-2025 上海燧原科技股份有限公司保留所有权利}
     \fancyfoot[EORF]{\zihao{-6} \thepage\ / \ \pageref{LastPage}}
     \renewcommand{\headrulewidth}{0.75pt}
     \renewcommand{\footrulewidth}{0pt}
@@ -199,7 +199,7 @@ latex_elements = {
     \fancyhf{}
     \fancyhead[EOLH]{\zihao{6} ''' + doc_name + r'''}
     \fancyhead[EORH]{\zihao{6} \leftmark}%leftmark,rightmark
-    \fancyfoot[EOCF]{\zihao{-6} 版权所有©2024 上海燧原科技股份有限公司保留所有权利}
+    \fancyfoot[EOCF]{\zihao{-6} 版权所有©2024-2025 上海燧原科技股份有限公司保留所有权利}
     \fancyfoot[EORF]{\zihao{-6} \thepage\ / \ \pageref{LastPage}}
     \renewcommand{\headrulewidth}{0.75pt}
     \renewcommand{\footrulewidth}{0pt}
