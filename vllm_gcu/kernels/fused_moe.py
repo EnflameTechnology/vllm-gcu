@@ -324,20 +324,34 @@ def fused_experts_impl(
 ):
     from vllm.distributed import get_world_group
 
-    activation, layer_name = activation.split("_")
-    assert activation == "silu", f"not support activation: {activation}"
+    activation_and_layer_name = activation.split("_", 1)
+    if len(activation_and_layer_name) > 1:
+        activation, layer_name = activation_and_layer_name
+    else:
+        activation = activation_and_layer_name
+        layer_name = None
 
-    forward_context: ForwardContext = get_forward_context()
-    layer = forward_context.no_compile_layers[layer_name]
+    assert activation == "silu", f"not support activation: {activation}"
 
     parallel_config = get_current_vllm_config().parallel_config
     scheduler_config = get_current_vllm_config().scheduler_config
 
-    shared_experts = getattr(layer, "shared_experts", None)
-    routed_scaling_factor = getattr(layer, "routed_scaling_factor", None)
-    log2phy = getattr(layer, "log2phy", None)
-    if log2phy is not None:
-        assert parallel_config.enable_expert_parallel
+    if layer_name is not None:
+        forward_context: ForwardContext = get_forward_context()
+        layer = forward_context.no_compile_layers[layer_name]
+
+        shared_experts = getattr(layer, "shared_experts", None)
+        routed_scaling_factor = getattr(layer, "routed_scaling_factor", None)
+        log2phy = getattr(layer, "log2phy", None)
+
+        if shared_experts is not None:
+            assert routed_scaling_factor is not None
+
+        if log2phy is not None:
+            assert parallel_config.enable_expert_parallel
+    else:
+        shared_experts = None
+        log2phy = None
 
     recv_token_total = None
     shared_output = None
@@ -758,7 +772,7 @@ def fused_experts_impl(
             )
         return output
     else:
-        if shared_output is not None and routed_scaling_factor is not None:
+        if shared_output is not None:
             out_hidden_states.mul_(routed_scaling_factor)
             out_hidden_states.add_(shared_output)
         return out_hidden_states
