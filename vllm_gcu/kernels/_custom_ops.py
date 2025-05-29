@@ -294,9 +294,9 @@ def scaled_int8_quant(
     output = torch.empty_like(input, dtype=torch.int8)
     if scale is not None:
         # static-per-tensor quantization.
-        assert symmetric == (
-            azp is None
-        ), "azp must only be provided for asymmetric quantization."
+        assert symmetric == (azp is None), (
+            "azp must only be provided for asymmetric quantization."
+        )
         torch.ops._C.static_scaled_int8_quant(output, input, scale, None)
         return output, scale, azp
 
@@ -586,3 +586,16 @@ def w8a8_block_fp8_matmul(
     torch.ops._C.linear_quant(C, A, B, bias, As, Bs)
 
     return C
+
+
+def merge_attn_states(
+    output: torch.Tensor,
+    prefix_output: torch.Tensor,
+    prefix_lse: torch.Tensor,
+    suffix_output: torch.Tensor,
+    suffix_lse: torch.Tensor,
+    output_lse: Optional[torch.Tensor] = None,
+):
+    torch.ops._C.merge_attn_states(
+        output, output_lse, prefix_output, prefix_lse, suffix_output, suffix_lse
+    )

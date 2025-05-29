@@ -4,6 +4,7 @@ import itertools
 from itertools import accumulate
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Type, TYPE_CHECKING
+from unittest.mock import patch
 
 import torch
 from vllm.attention.backends.abstract import AttentionType
@@ -21,14 +22,14 @@ from vllm.attention.backends.abstract import AttentionMetadata
 
 
 from vllm import envs
-from vllm.attention.ops.triton_merge_attn_states import merge_attn_states
+from vllm_gcu.kernels._custom_ops import merge_attn_states
 import vllm_gcu.kernels._custom_ops as ops
+
 if TYPE_CHECKING:
     from vllm.worker.model_runner import ModelInputForGPUWithSamplingMetadata
 
 
 class GCUMLABackend(MLACommonBackend):
-
     accept_output_buffer: bool = True
 
     @staticmethod
@@ -66,23 +67,37 @@ class GCUMLABackend(MLACommonBackend):
 
 @dataclass
 class GCUMLACommonMetadata(MLACommonMetadata):
-    def advance_step(self,
-                     model_input: "ModelInputForGPUWithSamplingMetadata",
-                     sampled_token_ids: Optional[torch.Tensor],
-                     block_size: int,
-                     num_seqs: int,
-                     num_queries: int,
-                     turn_prefills_into_decodes: bool = False):
-        super().advance_step(model_input, sampled_token_ids, block_size,
-                             num_seqs, num_queries, turn_prefills_into_decodes)
+    def advance_step(
+        self,
+        model_input: "ModelInputForGPUWithSamplingMetadata",
+        sampled_token_ids: Optional[torch.Tensor],
+        block_size: int,
+        num_seqs: int,
+        num_queries: int,
+        turn_prefills_into_decodes: bool = False,
+    ):
+        super().advance_step(
+            model_input,
+            sampled_token_ids,
+            block_size,
+            num_seqs,
+            num_queries,
+            turn_prefills_into_decodes,
+        )
         if not self.input_positions is model_input.input_positions:
             # NOTE: input positions in model_input and attn_metadata
             # are different obj in driver worker, same obj in other workers.
             self.input_positions.add_(1)
 
+
 class GCUMLACommonMetadataBuilder(MLACommonMetadataBuilder):
-    def build(self, seq_lens: List[int], query_lens: List[int],
-              cuda_graph_pad_size: int, batch_size: int):
+    def build(
+        self,
+        seq_lens: List[int],
+        query_lens: List[int],
+        cuda_graph_pad_size: int,
+        batch_size: int,
+    ):
         """Build attention metadata with on-device tensors.
 
         Args:
@@ -92,21 +107,23 @@ class GCUMLACommonMetadataBuilder(MLACommonMetadataBuilder):
                                  -1 if cuda graph is not used.
             batch_size: The maybe padded batch size.
         """
-        prefix_cache_hit = any([
-            inter_data.prefix_cache_hit
-            for inter_data in self.input_builder.inter_data_list
-        ])
+        prefix_cache_hit = any(
+            [
+                inter_data.prefix_cache_hit
+                for inter_data in self.input_builder.inter_data_list
+            ]
+        )
 
         for inter_data in self.input_builder.inter_data_list:
-            self._add_seq_group(inter_data,
-                                self.input_builder.chunked_prefill_enabled,
-                                prefix_cache_hit)
+            self._add_seq_group(
+                inter_data, self.input_builder.chunked_prefill_enabled, prefix_cache_hit
+            )
 
         device = self.runner.device
         use_captured_graph = cuda_graph_pad_size != -1
 
         max_query_len = max(query_lens)
-        decode_query_lens = query_lens[self.num_prefills:]
+        decode_query_lens = query_lens[self.num_prefills :]
         if len(decode_query_lens) > 0:
             max_decode_query_len = max(decode_query_lens)
         else:
@@ -124,7 +141,8 @@ class GCUMLACommonMetadataBuilder(MLACommonMetadataBuilder):
             self.block_tables.extend([] * cuda_graph_pad_size)
             num_decode_tokens = batch_size - self.num_prefill_tokens
             block_tables = self._get_graph_runner_block_tables(
-                num_seqs, self.block_tables)
+                num_seqs, self.block_tables
+            )
         else:
             block_tables = make_tensor_with_pad(
                 self.block_tables,
@@ -132,46 +150,54 @@ class GCUMLACommonMetadataBuilder(MLACommonMetadataBuilder):
                 dtype=torch.int,
                 device=device,
             )
-        assert max_query_len > 0, ("query_lens: {}".format(query_lens))
+        assert max_query_len > 0, "query_lens: {}".format(query_lens)
 
         assert device is not None
-        context_lens_tensor = async_tensor_h2d(self.context_lens, torch.int,
-                                               device, self.runner.pin_memory)
-        seq_lens_tensor = async_tensor_h2d(seq_lens, torch.int, device,
-                                           self.runner.pin_memory)
-        input_positions = async_tensor_h2d(self.input_positions, torch.long,
-                                           device, self.runner.pin_memory)
-        slot_mapping_tensor = async_tensor_h2d(self.slot_mapping, torch.long,
-                                               device, self.runner.pin_memory)
-        query_start_loc_tensor = async_tensor_h2d(query_start_loc, torch.int32,
-                                                  device,
-                                                  self.runner.pin_memory)
-        seq_start_loc_tensor = async_tensor_h2d(seq_start_loc, torch.int32,
-                                                device, self.runner.pin_memory)
+        context_lens_tensor = async_tensor_h2d(
+            self.context_lens, torch.int, device, self.runner.pin_memory
+        )
+        seq_lens_tensor = async_tensor_h2d(
+            seq_lens, torch.int, device, self.runner.pin_memory
+        )
+        input_positions = async_tensor_h2d(
+            self.input_positions, torch.long, device, self.runner.pin_memory
+        )
+        slot_mapping_tensor = async_tensor_h2d(
+            self.slot_mapping, torch.long, device, self.runner.pin_memory
+        )
+        query_start_loc_tensor = async_tensor_h2d(
+            query_start_loc, torch.int32, device, self.runner.pin_memory
+        )
+        seq_start_loc_tensor = async_tensor_h2d(
+            seq_start_loc, torch.int32, device, self.runner.pin_memory
+        )
 
         context_chunk_cu_seq_lens = None
         context_chunk_starts = None
         context_chunk_seq_tot = None
         context_chunk_max_seq_lens = None
 
-        if (self.chunked_prefill_enabled or self.enable_prefix_caching) \
-                and self.num_prefills > 0 \
-                and context_lens_tensor is not None \
-                and context_lens_tensor[:self.num_prefills].max() > 0:
-
+        if (
+            (self.chunked_prefill_enabled or self.enable_prefix_caching)
+            and self.num_prefills > 0
+            and context_lens_tensor is not None
+            and context_lens_tensor[: self.num_prefills].max() > 0
+        ):
             # NOTE: it is recommend you read the `Chunked Prefill` section in
             # the comment at the top of the file before trying to understand
             # the following code
 
-            num_prefills_with_context = \
-                (context_lens_tensor[:self.num_prefills] > 0).sum().item()
+            num_prefills_with_context = (
+                (context_lens_tensor[: self.num_prefills] > 0).sum().item()
+            )
 
             # currently we allocate an equal amount of workspace for each
             # prefill in the batch, we could probably use a more advanced
             # algorithm here and allocate more workspace to prefills with
             # longer context lengths
-            max_context_chunk = \
+            max_context_chunk = (
                 self.context_chunk_workspace_size // num_prefills_with_context
+            )
 
             # align max_context_chunk to page_size by rounding down,
             # currently the `gather_cache` kernel cannot handle
@@ -183,24 +209,27 @@ class GCUMLACommonMetadataBuilder(MLACommonMetadataBuilder):
             # if `max_context_chunk = 256`, `num_chunks = 3`, and
             #   `num_prefills_with_context = 4`, create a tensor that looks like
             #  [[0, 0, 0, 0], [256, 256, 256, 256], [512, 512, 512, 512]]
-            context_chunk_starts = \
-                torch.arange(num_chunks, device=device, dtype=torch.int32)\
-                .unsqueeze(1).expand(-1, self.num_prefills)\
+            context_chunk_starts = (
+                torch.arange(num_chunks, device=device, dtype=torch.int32)
+                .unsqueeze(1)
+                .expand(-1, self.num_prefills)
                 * max_context_chunk
-            chunk_ends = torch.min(context_lens_tensor[:self.num_prefills]
-                                   .unsqueeze(0), context_chunk_starts + max_context_chunk)
+            )
+            chunk_ends = torch.min(
+                context_lens_tensor[: self.num_prefills].unsqueeze(0),
+                context_chunk_starts + max_context_chunk,
+            )
             chunk_seq_lens = (chunk_ends - context_chunk_starts).clamp(min=0)
-            _context_chunk_cu_seq_lens = chunk_seq_lens.cumsum(dim=1).to(
-                torch.int32)
-            zero = torch.zeros(num_chunks, dtype=torch.int32, device=device)\
-                .unsqueeze(-1)
-            context_chunk_cu_seq_lens = \
-                torch.cat([zero, _context_chunk_cu_seq_lens], dim=1)
-            context_chunk_max_seq_lens = \
-                chunk_seq_lens.max(dim=1).values.tolist()
+            _context_chunk_cu_seq_lens = chunk_seq_lens.cumsum(dim=1).to(torch.int32)
+            zero = torch.zeros(num_chunks, dtype=torch.int32, device=device).unsqueeze(
+                -1
+            )
+            context_chunk_cu_seq_lens = torch.cat(
+                [zero, _context_chunk_cu_seq_lens], dim=1
+            )
+            context_chunk_max_seq_lens = chunk_seq_lens.max(dim=1).values.tolist()
             context_chunk_seq_tot = chunk_seq_lens.sum(dim=1).tolist()
-            assert max(context_chunk_seq_tot) <= \
-                self.context_chunk_workspace_size
+            assert max(context_chunk_seq_tot) <= self.context_chunk_workspace_size
 
         return self.runner.attn_backend.make_metadata(
             # Required by ModelRunner
@@ -236,7 +265,6 @@ class GCUMLACommonMetadataBuilder(MLACommonMetadataBuilder):
 
 
 class GCUMLAImpl(MLACommonImpl[MLACommonMetadata]):
-
     def __init__(
         self,
         num_heads: int,
@@ -251,7 +279,6 @@ class GCUMLAImpl(MLACommonImpl[MLACommonMetadata]):
         attn_type: str,
         **kwargs,
     ) -> None:
-
         super().__init__(
             num_heads,
             head_size,
@@ -283,7 +310,7 @@ class GCUMLAImpl(MLACommonImpl[MLACommonMetadata]):
                 "Encoder self-attention and encoder/decoder cross-attention are not implemented for GCUMLAImpl"
             )
 
-        self._pad_v = False # only for flash attn
+        self._pad_v = False  # only for flash attn
 
     def process_weights_after_loading(self, act_dtype: torch.dtype):
         super().process_weights_after_loading(act_dtype)
@@ -333,27 +360,35 @@ class GCUMLAImpl(MLACommonImpl[MLACommonMetadata]):
         kv_c_and_k_pe_cache: torch.Tensor,
         attn_metadata: MLACommonMetadata,
     ) -> torch.Tensor:
-        # === VLLM_GCU MODIFY START ===
-        if current_platform.get_device_capability()[0] == 13:
-            return self._forward_prefill_xformers(
-                q, kv_c_normed, k_pe, kv_c_and_k_pe_cache, attn_metadata
-            )
-        from flash_attn.vllm_flash_attn import flash_attn_varlen_func
-        self.flash_attn_varlen_func = flash_attn_varlen_func
-        is_hip = False
-        is_vllm_fa = False
-        # === VLLM_GCU MODIFY END ===
-
         prefill_metadata = attn_metadata.prefill_metadata
         assert prefill_metadata is not None
 
-        has_context = prefill_metadata.context_lens_tensor is not None \
+        has_context = (
+            prefill_metadata.context_lens_tensor is not None
             and prefill_metadata.context_lens_tensor.max() > 0
+        )
 
-        kv_nope = self.kv_b_proj(kv_c_normed)[0].view(\
-            -1, self.num_heads, self.qk_nope_head_dim + self.v_head_dim)
-        k_nope, v = kv_nope\
-            .split([self.qk_nope_head_dim, self.v_head_dim], dim=-1)
+        # === VLLM_GCU MODIFY START ===
+        if current_platform.get_device_capability()[0] == 13 and not has_context:
+            return self._forward_prefill_xformers(
+                q, kv_c_normed, k_pe, kv_c_and_k_pe_cache, attn_metadata
+            )
+
+        patch(
+            "vllm.attention.backends.mla.common.merge_attn_states",
+            ops.merge_attn_states,
+        ).start()
+
+        from flash_attn.vllm_flash_attn import flash_attn_varlen_func
+        self.flash_attn_varlen_func = flash_attn_varlen_func
+        is_hip = False
+        is_vllm_fa = True
+        # === VLLM_GCU MODIFY END ===
+
+        kv_nope = self.kv_b_proj(kv_c_normed)[0].view(
+            -1, self.num_heads, self.qk_nope_head_dim + self.v_head_dim
+        )
+        k_nope, v = kv_nope.split([self.qk_nope_head_dim, self.v_head_dim], dim=-1)
 
         k = torch.cat((k_nope, k_pe.expand((*k_nope.shape[:-1], -1))), dim=-1)
 
@@ -361,8 +396,9 @@ class GCUMLAImpl(MLACommonImpl[MLACommonMetadata]):
         # v with 0s to match the qk head dim
         # === VLLM_GCU MODIFY START ===
         if self._pad_v:
-            v_padded = torch.nn.functional.pad(v, [0, q.shape[-1] - v.shape[-1]],
-                                               value=0)
+            v_padded = torch.nn.functional.pad(
+                v, [0, q.shape[-1] - v.shape[-1]], value=0
+            )
         else:
             v_padded = v
         # === VLLM_GCU MODIFY END ===
@@ -414,8 +450,9 @@ class GCUMLAImpl(MLACommonImpl[MLACommonMetadata]):
         if has_context:
             # ROCm flash_attn_varlen_func will return 3 objects instead of 2
             suffix_output, suffix_lse, *rest = output
-            context_output, context_lse = self._compute_prefill_context( \
-                q, kv_c_and_k_pe_cache, attn_metadata)
+            context_output, context_lse = self._compute_prefill_context(
+                q, kv_c_and_k_pe_cache, attn_metadata
+            )
 
             output = torch.empty_like(suffix_output)
             merge_attn_states(
@@ -429,9 +466,9 @@ class GCUMLAImpl(MLACommonImpl[MLACommonMetadata]):
         # slice by `:v.shape[-1]` in order to remove v headdim padding
         # === VLLM_GCU MODIFY START ===
         if self._pad_v:
-            output = output\
-                .view(-1, self.num_heads, q.shape[-1])[..., :v.shape[-1]]\
-                .reshape(-1, self.num_heads * v.shape[-1])
+            output = output.view(-1, self.num_heads, q.shape[-1])[
+                ..., : v.shape[-1]
+            ].reshape(-1, self.num_heads * v.shape[-1])
         else:
             output = output.view(-1, self.num_heads * v.shape[-1])
         # === VLLM_GCU MODIFY END ===
@@ -444,8 +481,9 @@ class GCUMLAImpl(MLACommonImpl[MLACommonMetadata]):
         attn_metadata: MLACommonMetadata,
     ):
         from flash_attn.vllm_flash_attn import flash_attn_varlen_func
+
         self.flash_attn_varlen_func = flash_attn_varlen_func
-        is_vllm_fa = False
+        is_vllm_fa = True
         prefill_metadata = attn_metadata.prefill_metadata
         assert prefill_metadata is not None
         assert prefill_metadata.context_chunk_seq_tot is not None
@@ -466,7 +504,7 @@ class GCUMLAImpl(MLACommonImpl[MLACommonMetadata]):
         for i in range(iters):
             toks = prefill_metadata.context_chunk_seq_tot[i]
 
-            ops.gather_cache(
+            torch.ops._C.gather_cache(
                 src_cache=kv_c_and_k_pe_cache,
                 dst=workspace,
                 block_table=prefill_metadata.block_tables,
@@ -475,26 +513,23 @@ class GCUMLAImpl(MLACommonImpl[MLACommonMetadata]):
                 seq_starts=prefill_metadata.context_chunk_starts[i],
             )
 
-            kv_c_normed = workspace[:toks]\
-                [..., :self.kv_lora_rank]
-            k_pe = workspace[:toks]\
-                [..., self.kv_lora_rank:].unsqueeze(1)
+            kv_c_normed = workspace[:toks][..., : self.kv_lora_rank]
+            k_pe = workspace[:toks][..., self.kv_lora_rank :].unsqueeze(1)
 
-            kv_nope = self.kv_b_proj(kv_c_normed)[0].view( \
-                -1, self.num_heads, self.qk_nope_head_dim + self.v_head_dim)
-            k_nope, v = kv_nope\
-                .split([self.qk_nope_head_dim, self.v_head_dim], dim=-1)
+            kv_nope = self.kv_b_proj(kv_c_normed)[0].view(
+                -1, self.num_heads, self.qk_nope_head_dim + self.v_head_dim
+            )
+            k_nope, v = kv_nope.split([self.qk_nope_head_dim, self.v_head_dim], dim=-1)
 
-            k = torch.cat((k_nope, k_pe.expand((*k_nope.shape[:-1], -1))),
-                          dim=-1)
+            k = torch.cat((k_nope, k_pe.expand((*k_nope.shape[:-1], -1))), dim=-1)
 
             # For MLA the v head dim is smaller than qk head dim so we pad
             # out v with 0s to match the qk head dim
             # === VLLM_GCU MODIFY START ===
             if self._pad_v:
-                v_padded = torch.nn.functional.pad(v,
-                                                   [0, q.shape[-1] - v.shape[-1]],
-                                                   value=0)
+                v_padded = torch.nn.functional.pad(
+                    v, [0, q.shape[-1] - v.shape[-1]], value=0
+                )
             else:
                 v_padded = v
             # === VLLM_GCU MODIFY END ===
@@ -507,8 +542,7 @@ class GCUMLAImpl(MLACommonImpl[MLACommonMetadata]):
                     cu_seqlens_q=prefill_metadata.query_start_loc,
                     cu_seqlens_k=prefill_metadata.context_chunk_cu_seq_lens[i],
                     max_seqlen_q=prefill_metadata.max_query_len,
-                    max_seqlen_k=prefill_metadata.
-                    context_chunk_max_seq_lens[i],
+                    max_seqlen_k=prefill_metadata.context_chunk_max_seq_lens[i],
                     softmax_scale=self.scale,
                     causal=False,  # Context is unmasked
                     return_softmax_lse=True,
@@ -521,8 +555,7 @@ class GCUMLAImpl(MLACommonImpl[MLACommonMetadata]):
                     cu_seqlens_q=prefill_metadata.query_start_loc,
                     cu_seqlens_k=prefill_metadata.context_chunk_cu_seq_lens[i],
                     max_seqlen_q=prefill_metadata.max_query_len,
-                    max_seqlen_k=prefill_metadata.
-                    context_chunk_max_seq_lens[i],
+                    max_seqlen_k=prefill_metadata.context_chunk_max_seq_lens[i],
                     softmax_scale=self.scale,
                     causal=False,  # Context is unmasked
                     return_attn_probs=True,
@@ -555,7 +588,6 @@ class GCUMLAImpl(MLACommonImpl[MLACommonMetadata]):
         kv_c_and_k_pe_cache: torch.Tensor,
         attn_metadata: MLACommonMetadata,
     ) -> torch.Tensor:
-
         assert isinstance(attn_metadata, MLACommonMetadata)
 
         prefill_metadata = attn_metadata.prefill_metadata
