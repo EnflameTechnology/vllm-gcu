@@ -327,3 +327,16 @@ if( ${CMAKE_SYSTEM_PROCESSOR} STREQUAL "x86_64")
       endif()
   endforeach()
 endif()
+
+include(${PROJECT_SOURCE_DIR}/cmake/2nd/topsgraph_version.cmake)
+include(${PROJECT_SOURCE_DIR}/cmake/2nd/pcals_version.cmake)
+
+# set(PREBUILD_XNAS_SDK_BASE "http://artifact.enflame.cn/artifactory/module_package/topsfactor/13ee374/")
+set(PREBUILD_FACTOR_COMMIT a2916e9)
+set(PREBUILD_FACTOR_VERSION 3.4.20250506)
+include(factor_binary)
+
+# set(PREBUILD_XNAS_SDK_BASE "http://artifact.enflame.cn/artifactory/module_package/topsfactor/13ee374/")
+set(PREBUILD_SDK_COMMIT a2916e9)
+set(PREBUILD_SDK_VERSION 3.4.20250506)
+include(sdk_binary)
