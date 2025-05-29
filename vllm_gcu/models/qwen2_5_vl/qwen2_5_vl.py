@@ -69,6 +69,7 @@ from vllm.model_executor.models.utils import (AutoWeightsLoader, WeightsMapper,
                     init_vllm_registered_model, maybe_prefix,
                     merge_multimodal_embeddings)
 from vllm.model_executor.models.vision import get_vit_attn_backend
+from vllm.model_executor.layers.layernorm import RMSNorm
 
 from xformers import ops as xops
 from xformers.ops.fmha.attn_bias import BlockDiagonalMask
@@ -258,10 +259,30 @@ class Qwen2_5_VisionAttention(nn.Module):
         q, k, v = (rearrange(x, "s b ... -> b s ...").contiguous()
                    for x in (q, k, v))
         if rotary_pos_emb is not None:
-            q = apply_rotary_pos_emb_vision(q, rotary_pos_emb)
-            k = apply_rotary_pos_emb_vision(k, rotary_pos_emb)
+            # q = apply_rotary_pos_emb_vision(q, rotary_pos_emb)
+            # k = apply_rotary_pos_emb_vision(k, rotary_pos_emb)
 
-        
+            q_shape = q.shape
+            k_shape = k.shape
+            head_size = q_shape[-1]
+            cos = rotary_pos_emb.cos()
+            sin = rotary_pos_emb.sin()
+            cos_sin = torch.concat([cos, sin], -1).to(q.dtype)
+            q = q.reshape([rotary_pos_emb.shape[0], -1])
+            k = k.reshape([rotary_pos_emb.shape[0], -1])
+            rotary_dim = cos.shape[0]
+            positions = torch.arange(rotary_dim, device=q.device, dtype=torch.long)
+            from vllm_gcu.kernels import _custom_ops as ops
+            ops.rotary_embedding(
+                positions,
+                q,
+                k,
+                head_size,
+                cos_sin,
+                True
+            )
+            q = q.reshape(q_shape)
+            k = k.reshape(k_shape)
 
         context_layer = xops.memory_efficient_attention_forward(
             q, k, v, attn_bias=attn_bias, p=0, scale=None)
@@ -463,7 +484,7 @@ class Qwen2_5_VisionTransformer(nn.Module):
         )
 
         # NOTE: We use torch native RMSNorm here for precision purposes.
-        norm_layer = partial(Qwen2RMSNorm, eps=norm_eps)
+        norm_layer = partial(RMSNorm, eps=norm_eps)
         head_dim = self.hidden_size // self.num_heads
         self.rotary_pos_emb = Qwen2_5_VisionRotaryEmbedding(head_dim // 2)
 
