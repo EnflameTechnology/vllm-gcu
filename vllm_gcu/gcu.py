@@ -18,8 +18,12 @@ from vllm.platforms.interface import (
     Platform,
     PlatformEnum,
 )
+from vllm.logger import init_logger
 
 import vllm_gcu.envs as gcu_envs
+
+
+logger = init_logger(__name__)
 
 
 class AdditionalConfig(dict, SupportsHash):
@@ -282,10 +286,28 @@ class GCUPlatform(Platform):
             if envs.VLLM_USE_V1:
                 model_config.use_async_output_proc = True
 
-        additional_config = vllm_config.additional_config
-        if additional_config is None:
+        if vllm_config.additional_config is None:
             # make sure additional_config is not None
             vllm_config.additional_config = AdditionalConfig({})
+
+        additional_config = vllm_config.additional_config
+        enable_chunked_prefill = additional_config.get("enable_chunked_prefill", False)
+        enable_prefix_caching = additional_config.get("enable_prefix_caching", False)
+
+        if enable_chunked_prefill:
+            logger.info("Force enable chunked prefill on GCU Platform.")
+            scheduler_config.enable_chunked_prefill = True
+            scheduler_config.chunked_prefill_enabled = True
+
+            max_num_batched_tokens = additional_config.get("max_num_batched_tokens", 0)
+            if max_num_batched_tokens > 0:
+                assert max_num_batched_tokens > scheduler_config.max_num_seqs
+                scheduler_config.max_num_batched_tokens = max_num_batched_tokens
+
+        if enable_prefix_caching:
+            logger.info("Force enable prefix caching on GCU Platform.")
+            cache_config.enable_prefix_caching = True
+
         vllm_config.additional_config.update({"all_dp_in_decode": False})
 
         if "VLLM_GCU_DEEPSEEK_FUSION" not in os.environ and \

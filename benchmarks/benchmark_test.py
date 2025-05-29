@@ -933,6 +933,15 @@ if __name__ == "__main__":
     if args.backend == "vllm":
         if args.hf_max_batch_size is not None:
             raise ValueError("HF max batch size is only for HF backend.")
+
+        additional_config = args.additional_config if args.additional_config else {}
+        if args.enable_chunked_prefill:
+            additional_config.update({"enable_chunked_prefill": True})
+        if args.enable_prefix_caching:
+            additional_config.update({"enable_prefix_caching": True})
+        if args.max_num_batched_tokens:
+            additional_config.update({"max_num_batched_tokens": args.max_num_batched_tokens})
+        args.additional_config = additional_config
     elif args.backend == "hf":
         if args.hf_max_batch_size is None:
             raise ValueError("HF max batch size is required for HF backend.")

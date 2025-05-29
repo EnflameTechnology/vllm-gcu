@@ -1123,15 +1123,6 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
   }
   ops.impl("merge_attn_states", torch::kPrivateUse1, &merge_attn_states);
 
-  handle = c10::Dispatcher::singleton().findSchema({"_C::gather_cache", ""});
-  if (!handle.has_value()) {
-    ops.def(
-        "gather_cache(Tensor(a!) src_cache, Tensor(a!) dst, "
-        "Tensor(a!) block_table, Tensor(a!) cu_seq_lens, "
-        "int batch_size, Tensor(a!) seq_starts) -> ()");
-  }
-  ops.impl("gather_cache", torch::kPrivateUse1, &gather_cache);
-
   // 添加 fused_qkv_proj 算子
   handle = c10::Dispatcher::singleton().findSchema({"_C::fused_qkv_proj", ""});
   if (!handle.has_value()) {
@@ -1238,6 +1229,16 @@ TORCH_LIBRARY_FRAGMENT(CONCAT(TORCH_EXTENSION_NAME, _cache_ops),
         "str kv_cache_dtype) -> ()");
   }
   // cache_ops.impl("convert_fp8", torch::kPrivateUse1, &convert_fp8);
+
+  handle = c10::Dispatcher::singleton().findSchema(
+      {"_C_cache_ops::gather_cache", ""});
+  if (!handle.has_value()) {
+    cache_ops.def(
+        "gather_cache(Tensor(a!) src_cache, Tensor(a!) dst, "
+        "Tensor(a!) block_table, Tensor(a!) cu_seq_lens, "
+        "int batch_size, Tensor(a!) seq_starts) -> ()");
+  }
+  cache_ops.impl("gather_cache", torch::kPrivateUse1, &gather_cache);
 }
 
 TORCH_LIBRARY_FRAGMENT(CONCAT(_moe, TORCH_EXTENSION_NAME), moe_ops) {
