@@ -1,0 +1,43 @@
+
+message(STATUS "Fetch topsgraph2 deb and whl")
+
+include(binary_base)
+
+# modify the following variables to change the prebuild caps version
+set(PREBUILD_TOPSGRAPH_COMMIT 69a388c)
+set(PREBUILD_TOPSGRAPH_VERSION 3.4.20250506)
+
+# code below should not be modified for most cases
+set(PREBUILD_TOPSGRAPH_DEB_VERSION_URL_BASE ${MODULE_PACKAGE_PATH_URL_BASE_BASE}/topsgraph/${PREBUILD_TOPSGRAPH_COMMIT})
+set(PREBUILD_TOPSGRAPH_DEB_NAME ${PREBUILD_TOPSGRAPH_DEB_VERSION_URL_BASE}/topsgraph_${PREBUILD_TOPSGRAPH_VERSION}-1_${_DEB_PACKAGE_ARCHITECTURE}.deb)
+
+message(STATUS "----PREBUILD_TOPSGRAPH_DEB_NAME:${PREBUILD_TOPSGRAPH_DEB_NAME}")
+
+unset(PACKAGE_CMDS)
+unset(PACKAGE_FILES)
+
+if ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "x86_64")
+    set(PACKAGE_CMDS "mkdir -p ${CMAKE_FPKG_LIBDIR}; mv /FILE/ -t ${CMAKE_FPKG_LIBDIR}")
+    set(PACKAGE_FILES "${CMAKE_FPKG_LIBDIR}//FILE/")
+    fetchFromArtifactory(topsgraph_deb
+        FILE ${PREBUILD_TOPSGRAPH_DEB_NAME}
+        PKG_COMMAND ${PACKAGE_CMDS}
+        PKG_FILES ${PACKAGE_FILES}
+        PKG_ONLY ON
+    )
+
+    set(PACKAGE_CMDS "mkdir -p ${CMAKE_FPKG_PYTHON_PACKAGES}; mv /FILE/ -t ${CMAKE_FPKG_PYTHON_PACKAGES}")
+    set(PACKAGE_FILES "${CMAKE_FPKG_PYTHON_PACKAGES}//FILE/")
+    if ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "x86_64")
+        set(TOPSGRAPH_PY_VERS "38" "39" "310")
+    else()
+        set(TOPSGRAPH_PY_VERS )
+    endif()
+    foreach(TOPSGRAPH_PY_VER IN LISTS TOPSGRAPH_PY_VERS)
+        fetchFromArtifactory(topsgraph_${TOPSGRAPH_PY_VER}_whl
+            FILE ${PREBUILD_TOPSGRAPH_DEB_VERSION_URL_BASE}/topsgraph-${PREBUILD_TOPSGRAPH_VERSION}-cp${TOPSGRAPH_PY_VER}-cp${TOPSGRAPH_PY_VER}-linux_x86_64.whl
+            PKG_COMMAND ${PACKAGE_CMDS}
+            PKG_FILES ${PACKAGE_FILES}
+        )
+    endforeach(TOPSGRAPH_PY_VER IN LISTS TOPSGRAPH_PY_VERS)
+endif ()
