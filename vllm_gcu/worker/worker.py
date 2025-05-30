@@ -236,7 +236,10 @@ def init_worker_distributed_environment(
     rank_cpu_group = None
     for ranks in group_ranks:
         # timedelta.max overflow chrono::milliseconds
-        cpu_group = torch.distributed.new_group(ranks, backend="gloo", timeout=timedelta(days=100*365))
+        cpu_group = torch.distributed.new_group(ranks.tolist(),
+                                                backend="gloo",
+                                                timeout=timedelta(days=100*365)
+                                                )
         if group.rank in ranks:
             rank_cpu_group = cpu_group
     group.cpu_group = rank_cpu_group
