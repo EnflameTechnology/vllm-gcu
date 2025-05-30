@@ -399,7 +399,7 @@ def run_vllm(
 
         if use_tqdm:
             pbar.close()
-
+        outputs = sorted(outputs, key=lambda x: int(x.request_id))
         outputs = LLMEngine.validate_outputs(outputs, RequestOutput)
 
         if not engine_args.disable_log_stats:
@@ -561,21 +561,18 @@ def vllm_acc(
     else:
         metric = evaluate.load("rouge")
 
-    predictions = [(output.prompt, output.outputs[0].text) for output in outputs]
+    predictions = [output.outputs[0].text for output in outputs]
     references = [
-        (prompt, completion) for prompt, completion, _, _ in requests if completion is not None
+        completion for _, completion, _, _ in requests if completion is not None
     ]
-    final_references = []
-    final_predictions = []
-    for prompt, predict in predictions:
-        for req_prompt, req_res in references:
-            if prompt == req_prompt and (predict != "" or req_res != ""):
-                final_predictions.append(predict)
-                final_references.append(req_res)
+    predictions, references = zip(
+        *[(i, j) for i, j in zip(predictions, references) if i != "" or j != ""]
+    )
+    assert len(predictions) == len(references), "acc is only valid for dataset"
 
     rouges = metric.compute(
-        predictions=final_predictions,
-        references=final_references,
+        predictions=predictions,
+        references=references,
         use_stemmer=True,
         use_aggregator=False,
         tokenizer=tokenizer.tokenize,
