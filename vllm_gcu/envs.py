@@ -18,7 +18,7 @@ environment_variables: Dict[str, Callable[[], Any]] = {
         int(os.getenv("VLLM_GCU_ENABLE_PARALLEL_COMPUTE", "0"))
     ),
     "VLLM_GCU_DEEPSEEK_FUSION": lambda: bool(
-        int(os.getenv("VLLM_GCU_DEEPSEEK_FUSION", "0"))
+        int(os.getenv("VLLM_GCU_DEEPSEEK_FUSION", "1"))
     ),
     "VLLM_GCU_ENABLE_COMPILE_DUMP": lambda: bool(
         int(os.getenv("VLLM_GCU_ENABLE_COMPILE_DUMP", "0"))

@@ -287,6 +287,10 @@ class GCUPlatform(Platform):
             vllm_config.additional_config = AdditionalConfig({})
         vllm_config.additional_config.update({"all_dp_in_decode": False})
 
+        if "VLLM_GCU_DEEPSEEK_FUSION" not in os.environ and \
+                cls.get_device_capability().to_int() == 140:
+            os.environ["VLLM_GCU_DEEPSEEK_FUSION"] = "0"
+
         # Disable usage status for security
         envs.VLLM_NO_USAGE_STATS = "1"
 
