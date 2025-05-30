@@ -328,7 +328,6 @@ def fused_experts_impl(
     if len(activation_and_layer_name) > 1:
         activation, layer_name = activation_and_layer_name
     else:
-        activation = activation_and_layer_name
         layer_name = None
 
     assert activation == "silu", f"not support activation: {activation}"
