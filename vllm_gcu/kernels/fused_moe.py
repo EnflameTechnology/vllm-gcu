@@ -605,6 +605,30 @@ def ep_fused_experts_impl(
 
     recv_token_total = None
     shared_output = None
+    hidden_states_ori = hidden_states
+    if use_fp8_w8a8 and use_int8_w8a16:
+        # hack int8_w8a8 when both True
+        use_int8_w8a8 = True
+        use_fp8_w8a8 = False
+        use_int8_w8a16 = False
+    else:
+        use_int8_w8a8 = False
+    # In official vllm master branch, "per_channel_quant" parameter is used to determine dynamic or static quant
+    # TODO: when upgrade, need to refine this parameter
+    # https://github.com/vllm-project/vllm/blob/v0.9.0.1/vllm/model_executor/layers/fused_moe/fused_moe.py#L1222
+    input_static_quant = (a1_scale is not None)
+    if use_fp8_w8a8:
+        if block_shape is None:
+            # for dynamic per token
+            hidden_states, a1_scale = ops.scaled_fp8_quant(hidden_states, a1_scale, use_per_token_if_dynamic=input_static_quant)
+        else:
+            assert len(block_shape) == 2
+            block_n, block_k = block_shape[0], block_shape[1]
+            assert (
+                block_n == block_k
+            ), "FP8 only support DeepSeek V3 with same group_n and group_k"
+            if a1_scale is None:
+                hidden_states, a1_scale = ops.per_token_group_quant_fp8(hidden_states, block_k)
     if parallel_config.enable_expert_parallel:
         all_dp_in_decode = get_current_vllm_config().additional_config[
             "all_dp_in_decode"
@@ -614,7 +638,6 @@ def ep_fused_experts_impl(
         ep_size = get_world_group().world_size
         expert_per_rank = global_num_experts // ep_size
 
-        hidden_states_ori = hidden_states
         if hidden_states.numel() == 0:
             ep_split_size = torch.zeros(
                 [ep_size], dtype=torch.int32, device=topk_ids.device
@@ -656,12 +679,24 @@ def ep_fused_experts_impl(
         assert topk_weights_width % hidden_states.element_size() == 0
         topk_weights_width //= hidden_states.element_size()
 
-        send_packed = torch.cat(
-            (
+        if use_fp8_w8a8 and not input_static_quant:
+            a1_scale_width = a1_scale.shape[1] * a1_scale.element_size()
+            assert a1_scale_width % hidden_states.element_size() == 0
+            a1_scale_width //= hidden_states.element_size()
+            send_data = (
                 hidden_states,
                 topk_ids.view(hidden_states.dtype),
                 topk_weights.view(hidden_states.dtype),
-            ),
+                a1_scale.view(hidden_states.dtype),
+            )
+        else:
+            send_data = (
+                hidden_states,
+                topk_ids.view(hidden_states.dtype),
+                topk_weights.view(hidden_states.dtype),
+            )
+        send_packed = torch.cat(
+            send_data,
             dim=1,
         )
 
@@ -683,6 +718,7 @@ def ep_fused_experts_impl(
             and enable_parallel_compute
             else nullcontext()
         )
+        all_to_all_with_scales = (use_fp8_w8a8 and not input_static_quant)
         if all_dp_in_decode:
             padded_recv_len = scheduler_config.max_num_seqs
             if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
@@ -691,7 +727,10 @@ def ep_fused_experts_impl(
             recv_packed = torch.empty(
                 (
                     padded_recv_len * parallel_config.data_parallel_size,
-                    hidden_states.shape[1] + topk_ids_width + topk_weights_width,
+                    hidden_states.shape[1] + topk_ids_width + topk_weights_width
+                    if not all_to_all_with_scales
+                    else
+                    hidden_states.shape[1] + topk_ids_width + topk_weights_width + a1_scale_width
                 ),
                 dtype=hidden_states.dtype,
                 device=hidden_states.device,
@@ -728,7 +767,10 @@ def ep_fused_experts_impl(
             recv_packed = torch.empty(
                 (
                     max(cpu_recv_token_total, 1),
-                    hidden_states.shape[1] + topk_ids_width + topk_weights_width,
+                    hidden_states.shape[1] + topk_ids_width + topk_weights_width
+                    if not all_to_all_with_scales
+                    else
+                    hidden_states.shape[1] + topk_ids_width + topk_weights_width + a1_scale_width
                 ),
                 dtype=hidden_states.dtype,
                 device=hidden_states.device,
@@ -763,23 +805,41 @@ def ep_fused_experts_impl(
             dtype=hidden_states.dtype,
             device=hidden_states.device,
         )
+        if all_to_all_with_scales:
+            a1_scale_ = torch.empty(
+                (recv_packed.shape[0], a1_scale_width),
+                dtype=hidden_states.dtype,
+                device=hidden_states.device,
+            )
         if gcu_envs.VLLM_GCU_DEEPSEEK_FUSION:
             torch.ops._C.fused_dispatch_decode(
-                [hidden_states, topk_ids_, topk_weights_],
+                [hidden_states, topk_ids_, topk_weights_]
+                if not all_to_all_with_scales
+                else [hidden_states, topk_ids_, topk_weights_, a1_scale_],
                 recv_packed,
                 sp_split_size,
-                [hidden_states.shape[1], topk_ids_width, topk_weights_width],
+                [hidden_states.shape[1], topk_ids_width, topk_weights_width]
+                if not all_to_all_with_scales
+                else
+                [hidden_states.shape[1], topk_ids_width, topk_weights_width, a1_scale_width],
             )
         else:
             torch.ops._C.dynamic_split(
-                [hidden_states, topk_ids_, topk_weights_],
+                [hidden_states, topk_ids_, topk_weights_]
+                if not all_to_all_with_scales
+                else [hidden_states, topk_ids_, topk_weights_, a1_scale_],
                 recv_packed,
                 recv_token_total,
-                [hidden_states.shape[1], topk_ids_width, topk_weights_width],
+                [hidden_states.shape[1], topk_ids_width, topk_weights_width]
+                if not all_to_all_with_scales
+                else
+                [hidden_states.shape[1], topk_ids_width, topk_weights_width, a1_scale_width],
                 1,
             )
         topk_ids = topk_ids_.view(topk_ids.dtype)
         topk_weights = topk_weights_.view(topk_weights.dtype)
+        if all_to_all_with_scales:
+            a1_scale = a1_scale_.view(a1_scale.dtype)
     else:
         assert parallel_config.enable_expert_parallel
 
@@ -793,15 +853,7 @@ def ep_fused_experts_impl(
     assert hidden_states.is_contiguous(), "Hidden_states must be contiguous"
     # assert w1.is_contiguous(), "Expert weights1 must be contiguous"
     # assert w2.is_contiguous(), "Expert weights2 must be contiguous"
-    assert hidden_states.dtype in [torch.float32, torch.float16, torch.bfloat16]
-
-    if use_fp8_w8a8 and use_int8_w8a16:
-        # hack int8_w8a8 when both True
-        use_int8_w8a8 = True
-        use_fp8_w8a8 = False
-        use_int8_w8a16 = False
-    else:
-        use_int8_w8a8 = False
+    assert hidden_states.dtype in [torch.float32, torch.float16, torch.bfloat16, torch.float8_e4m3fn]
 
     num_tokens, _ = hidden_states.shape
     E, N, _ = w1.shape
@@ -829,7 +881,7 @@ def ep_fused_experts_impl(
     cache13 = torch.empty(
         M * top_k_num * max(N, w2.shape[1]),
         device=hidden_states.device,
-        dtype=hidden_states.dtype,
+        dtype=hidden_states_ori.dtype,
     )
     intermediate_cache1 = cache13[: M * top_k_num * N].view((M, topk_ids.shape[1], N))
     intermediate_cache3 = cache13[: M * top_k_num * w2.shape[1]].view(
@@ -843,10 +895,24 @@ def ep_fused_experts_impl(
         dtype=cache2_dtype,
     )
 
-    if inplace:
-        out_hidden_states = hidden_states
+    if use_fp8_w8a8:
+        orig_a1_scale = a1_scale
+        if parallel_config.enable_expert_parallel:
+            # cannot inplace: hidden_states and out have different dtype.
+            out_hidden_states = torch.empty_like(hidden_states, dtype=hidden_states_ori.dtype,
+                                                device=hidden_states_ori.device)
+        else:
+            if inplace:
+                out_hidden_states = hidden_states_ori
+            else:
+                out_hidden_states = torch.empty_like(hidden_states_ori,
+                                                dtype=hidden_states_ori.dtype,
+                                                device=hidden_states_ori.device)
     else:
-        out_hidden_states = torch.empty_like(hidden_states)
+        if inplace:
+            out_hidden_states = hidden_states
+        else:
+            out_hidden_states = torch.empty_like(hidden_states)
 
     chunk_num = math.ceil(num_tokens / CHUNK_SIZE)
     for chunk in range(chunk_num):
@@ -855,6 +921,8 @@ def ep_fused_experts_impl(
             min((chunk + 1) * CHUNK_SIZE, num_tokens),
         )
         curr_hidden_states = hidden_states[begin_chunk_idx:end_chunk_idx]
+        if use_fp8_w8a8 and orig_a1_scale is not None and not input_static_quant:
+            a1_scale = orig_a1_scale[begin_chunk_idx:end_chunk_idx]
         tokens_in_chunk, _ = curr_hidden_states.shape
         if recv_token_total is not None:
             if chunk_num > 1:
