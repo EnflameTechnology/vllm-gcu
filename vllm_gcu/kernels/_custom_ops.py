@@ -206,46 +206,6 @@ def fused_add_rms_norm(
     torch.ops._C.fused_add_rms_norm(input, residual, weight, epsilon)
 
 
-def advance_step(
-    num_seqs: int,
-    num_queries: int,
-    block_size: int,
-    input_tokens: torch.Tensor,
-    sampled_token_ids: torch.Tensor,
-    input_positions: torch.Tensor,
-    seq_lens: torch.Tensor,
-    slot_mapping: torch.Tensor,
-    block_tables: torch.Tensor,
-) -> None:
-    if current_platform.get_device_capability().to_int() == 140:
-        return torch.ops._C.advance_step_flashattn(
-            num_seqs,
-            num_queries,
-            block_size,
-            input_tokens,
-            sampled_token_ids,
-            input_positions,
-            seq_lens,
-            slot_mapping,
-            block_tables,
-        )
-
-    if current_platform.get_device_capability().to_int() != 130:
-        raise NotImplementedError
-
-    return torch.ops._C.advance_step_xformers(
-        num_seqs,
-        num_queries,
-        block_size,
-        input_tokens,
-        sampled_token_ids,
-        input_positions,
-        seq_lens,
-        slot_mapping,
-        block_tables,
-    )
-
-
 # quantization ops
 # awq
 def awq_gemm_gcu(
