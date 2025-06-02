@@ -278,7 +278,7 @@ class GCUXFormersMetadata(XFormersMetadata):
             self.seq_lens[i] += 1
         self.max_decode_seq_len = max(self.seq_lens)
 
-        ops.advance_step(
+        torch.ops._C.advance_step_flashattn(
             num_seqs=num_seqs,
             num_queries=num_queries,
             block_size=block_size,

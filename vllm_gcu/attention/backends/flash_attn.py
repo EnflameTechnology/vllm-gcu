@@ -249,8 +249,6 @@ class GCUXFormersMetadata(XFormersMetadata):
         num_queries: int,
         turn_prefills_into_decodes: bool = False,
     ):
-        from vllm_gcu.kernels import _custom_ops as ops
-
         # When using graph, the num_seqs is padded to the next captured
         # batch sized, but num_queries tracks the actual number of requests in
         # the batch. For --enforce-eager mode, num_seqs == num_queries
@@ -304,7 +302,7 @@ class GCUXFormersMetadata(XFormersMetadata):
             self.seq_lens[i] += 1
         self.max_decode_seq_len = max(self.seq_lens)
 
-        ops.advance_step(
+        torch.ops._C.advance_step_flashattn(
             num_seqs=num_seqs,
             num_queries=num_queries,
             block_size=block_size,
