@@ -383,7 +383,7 @@ python3 -m vllm_utils.benchmark_vision_language \
  --prompt=[your prompt] \
  --input-vision-file=[path of your test image] \
  --dtype=bfloat16 \
- --max-output-len=128 \
+ --max-output-len=8196 \
  --device=gcu \
  --tensor-parallel-size 8 \
  --max-model-len 32768 \
@@ -420,9 +420,9 @@ python3 -m vllm_utils.benchmark_vision_language \
  --model-arch-suffix Image \
  --dtype=bfloat16 \
  --batch-size=1 \
- --input-len=1200 \
+ --input-len=2048 \
  --input-vision-shape="1280,720" \
- --max-output-len=8196 \
+ --max-output-len=2048 \
  --device=gcu \
  --tensor-parallel-size 8 \
  --max-model-len 32768 \
