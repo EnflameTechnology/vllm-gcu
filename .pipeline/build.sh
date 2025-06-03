@@ -3,6 +3,7 @@
 #
 set -eu -o pipefail
 BUILD_ROOT_DIR=`pwd`
+export TORCH_VERSION=${torch_gcu_version:-"2.6.0"}
 
 function arm_normal_build() {
   echo "Current build job: $FUNCNAME"
@@ -16,11 +17,9 @@ function arm_normal_build() {
 }
 
 function x86_normal_build() {
-  
-  sudo python3.12 -m pip install --index-url http://artifact.enflame.cn/artifactory/api/pypi/pypi-remote/simple --trusted-host artifact.enflame.cn patch pyyaml packaging
   echo "Current build job: $FUNCNAME"
   echo `pwd`
-  sudo python3.12 -m pip install torch==2.6.0+cpu --index-url http://data-oceanus.enflame.cn/artifactory/api/pypi/pypi_virtual/simple --trusted-host data-oceanus.enflame.cn
+  sudo python3.12 -m pip install --index-url http://data-oceanus.enflame.cn/artifactory/api/pypi/pypi_virtual/simple --trusted-host data-oceanus.enflame.cn torch==$TORCH_VERSION+cpu patch pyyaml packaging
   cmake ${project_name} --preset ci_all -B cmake_build
   cd cmake_build
   ninja -j${cpu_count} install
@@ -54,7 +53,7 @@ function zx_normal_build() {
   echo "Current build job: $FUNCNAME"
   echo `pwd`
   PROJECT_GIT_URL="git@git.tencent.com:sy-zx/enflame_caps"
-  sudo python3.10 -m pip install torch==2.6.0 patch pyyaml packaging numpy==1.22.4
+  sudo python3.10 -m pip install torch==$TORCH_VERSION patch pyyaml packaging numpy==1.22.4
   rm -rf cmake_build
   mkdir -p ${BUILD_ROOT_DIR}/cmake_build/ci
   cd ${BUILD_ROOT_DIR}/cmake_build
