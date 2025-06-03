@@ -340,3 +340,24 @@ include(factor_binary)
 set(PREBUILD_SDK_COMMIT a2916e9)
 set(PREBUILD_SDK_VERSION 3.4.20250506)
 include(sdk_binary)
+
+if(INCLUDE_TOPS)
+    include(tops_daily)
+    set_tops_pkg_version(3.4.20250519)
+    fetchTopsPkg(
+        PKG_ONLY ON
+        PKG_COMMNAD
+        "rm -rf tops_pkg"
+        "mkdir -p tops_pkg"
+        "tar zxf /FILE/ -C tops_pkg"
+        "cd tops_pkg/${CMAKE_SYSTEM_PROCESSOR}-linux-rel && ./make_runnable no_fail && rm -rf ci && cd -"
+        "cd tops_pkg/${CMAKE_SYSTEM_PROCESSOR}-linux-rel/python_packages && rm -rf vllm_gcu*.whl && cd -"
+        "cp python_packages/vllm_gcu* tops_pkg/x86_64-linux-rel/python_packages/"
+        "touch vllm_tops.complete"
+        PKG_FILES
+        "/FILE/"
+        "vllm_tops.complete"
+    )
+    install_module_package()
+    create_artifact_manifest()
+endif()
