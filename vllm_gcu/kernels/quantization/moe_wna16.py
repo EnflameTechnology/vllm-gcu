@@ -197,33 +197,32 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
             layer.register_parameter("w2_scales", w2_scales)
             set_weight_attrs(w2_scales, extra_weight_attrs)
 
-            if self.quant_config.has_zp:
-                # up_proj scales
-                w13_qzeros = torch.nn.Parameter(
-                    torch.empty(
-                        num_experts,
-                        scales_size13,
-                        2
-                        * intermediate_size_per_partition
-                        // self.quant_config.pack_factor,
-                        dtype=torch.int32,
-                    ),
-                    requires_grad=False,
-                )
-                layer.register_parameter("w13_qzeros", w13_qzeros)
-                set_weight_attrs(w13_qzeros, extra_weight_attrs)
-                # down_proj scales
-                w2_qzeros = torch.nn.Parameter(
-                    torch.empty(
-                        num_experts,
-                        scales_size2,
-                        hidden_size // self.quant_config.pack_factor,
-                        dtype=torch.int32,
-                    ),
-                    requires_grad=False,
-                )
-                layer.register_parameter("w2_qzeros", w2_qzeros)
-                set_weight_attrs(w2_qzeros, extra_weight_attrs)
+            # up_proj scales
+            w13_qzeros = torch.nn.Parameter(
+                torch.empty(
+                    num_experts,
+                    scales_size13,
+                    2
+                    * intermediate_size_per_partition
+                    // self.quant_config.pack_factor,
+                    dtype=torch.int32,
+                ),
+                requires_grad=False,
+            )
+            layer.register_parameter("w13_qzeros", w13_qzeros)
+            set_weight_attrs(w13_qzeros, extra_weight_attrs)
+            # down_proj scales
+            w2_qzeros = torch.nn.Parameter(
+                torch.empty(
+                    num_experts,
+                    scales_size2,
+                    hidden_size // self.quant_config.pack_factor,
+                    dtype=torch.int32,
+                ),
+                requires_grad=False,
+            )
+            layer.register_parameter("w2_qzeros", w2_qzeros)
+            set_weight_attrs(w2_qzeros, extra_weight_attrs)
 
             w13_g_idx = torch.nn.Parameter(
                 torch.empty(
@@ -571,8 +570,6 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
 
         weight_bits = self.quant_config.weight_bits
         has_zp = self.quant_config.has_zp
-
-        assert has_zp, "Op impl has bug when sym"
 
         fused_experts(
             x,
