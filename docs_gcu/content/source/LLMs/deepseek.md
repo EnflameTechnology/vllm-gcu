@@ -708,7 +708,7 @@ python3.10 -m vllm_utils.benchmark_test \
  --dtype bfloat16 \
  --device gcu \
  --trust-remote-code \
- --quantization moe_wna16 \
+ --quantization moe_wna16_gcu \
  --distributed_executor_backend ray \
  --async-engine
 ```
@@ -719,18 +719,17 @@ python3.10 -m vllm_utils.benchmark_test \
 # 在主节点上启动服务端
 python3 -m vllm.entrypoints.openai.api_server \
  --model=[path of DeepSeek-R1-awq] \
- --dtype bfloat16 \
+ --dtype float16 \
  --trust-remote-code \
- --max-model-len=12288 \
+ --max-model-len=4096 \
  --tensor-parallel-size=8 \
  --pipeline-parallel-size=4 \
  --block-size=64 \
- --quantization moe_wna16 \
+ --quantization moe_wna16_gcu \
  --distributed_executor_backend ray \
  --max-num-batched-tokens 4096 \
  --max-num-seqs 256 \
- --gpu-memory-utilization 0.8 \
- --enable-chunked-prefill
+ --gpu-memory-utilization 0.9 \
 
 
 # 在主节点上启动客户端
@@ -738,9 +737,9 @@ python3 -m vllm_utils.benchmark_serving \
  --backend vllm \
  --dataset-name random \
  --model=[path of DeepSeek-R1-awq] \
- --num-prompts 8 \
- --random-input-len 4096 \
- --random-output-len 256 \
+ --num-prompts 64 \
+ --random-input-len 1000 \
+ --random-output-len 700 \
  --trust-remote-code \
  --ignore_eos \
  --keep-special-tokens \
@@ -783,9 +782,9 @@ python3 -m vllm.entrypoints.openai.api_server \
  --dtype bfloat16 \
  --trust-remote-code \
  --quantization moe_wna16_gcu \
- --max-model-len=4096 \
+ --max-model-len=8192 \
  --tensor-parallel-size=4 \
- --gpu-memory-utilization=0.8 \
+ --gpu-memory-utilization=0.75 \
  --block-size=64 \
  --enable-expert-parallel \
  --num-scheduler-steps 8 \
@@ -819,12 +818,13 @@ python3 -m vllm_utils.benchmark_serving \
  --backend vllm \
  --dataset-name random \
  --num-prompts 64 \
- --random-input-len 1000 \
- --random-output-len 700 \
+ --random-input-len 1024 \
+ --random-output-len 1024 \
  --trust-remote-code \
  --ignore-eos \
  --base-url http://[master node ip]:8002 \
- --extra-body '{"priority": 1}'
+ --save-result \
+ --extra-body '{"priority": 1, "temperature": 0.7, "top_k": 50, "top_p": 0.95, "repetition_penalty": 1.0}'
 ```
 注：
 *  本模型支持的`max-model-len`为163840，在32张S60上最大可支持65536；
@@ -871,7 +871,7 @@ ray start --address="[master node ip]:6379" --num-gpus=8
 # 在主节点上启动服务端
 python3 -m vllm.entrypoints.openai.api_server \
  --model=[path of DeepSeek-V3-awq] \
- --dtype bfloat16 \
+ --dtype float16 \
  --trust-remote-code \
  --max-model-len=4096 \
  --tensor-parallel-size=8 \
@@ -931,14 +931,15 @@ python3 -m vllm.entrypoints.openai.api_server \
  --port [7555, 7556] \
  --model=[path of deepseek-v3-awq] \
  --dtype bfloat16 \
+ --seed 0 \
  --trust-remote-code \
  --quantization moe_wna16_gcu \
  --max-model-len=4096 \
+ --max-num-batched-tokens=4096 \
  --tensor-parallel-size=4 \
- --gpu-memory-utilization=0.8 \
+ --gpu-memory-utilization=0.75 \
  --block-size=64 \
  --enable-expert-parallel \
- --num-scheduler-steps 8 \
  --compilation-config "{\"cudagraph_capture_sizes\": [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]}" \
  --scheduling-policy priority
 ```
@@ -974,7 +975,8 @@ python3 -m vllm_utils.benchmark_serving \
  --trust-remote-code \
  --ignore-eos \
  --base-url http://[master node ip]:8002 \
- --extra-body '{"priority": 1}'
+ --save-result \
+ --extra-body '{"priority": 1, "temperature": 0.7, "top_k": 50, "top_p": 0.95, "repetition_penalty": 1.0}'
 ```
 注：
 *  本模型支持的`max-model-len`为163840，在32张S60上最大可支持65536；
