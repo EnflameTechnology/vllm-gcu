@@ -1876,3 +1876,67 @@ python3 -m vllm_utils.benchmark_serving \
 *  本模型支持的`max-model-len`为131072；
 *  `input-len`、`output-len`和`num-prompts`可按需调整；
 *  配置 `output-len`为1时,输出内容中的`latency`即为time_to_first_token_latency;
+
+### Qwen3-235B-A22B-AWQ
+
+#### 模型下载
+*  url: [Qwen3-235B-A22B-AWQ](https://www.modelscope.cn/models/cognitivecomputations/Qwen3-235B-A22B-AWQ/)
+
+*  branch: `master`
+
+*  commit id: `56eac61f`
+
+将上述url设定的路径下的内容全部下载到`Qwen3-235B-A22B-AWQ`文件夹中。
+
+#### 批量离线推理
+```shell
+python3 -m vllm_utils.benchmark_test \
+ --model [path of Qwen3-235B-A22B-AWQ] \
+ --tensor-parallel-size 4 \
+ --max-model-len=102400 \
+ --rope-scaling '{"rope_type":"yarn","factor":4.0,"original_max_position_embeddings":32768}' \
+ --output-len=128 \
+ --demo=te \
+ --dtype=bfloat16 \
+ --device gcu \
+ --trust-remote-code \
+ --enable-chunked-prefill \
+ --block-size=64 \
+ --quantization moe_wna16_gcu
+```
+
+#### serving模式
+
+```shell
+# 启动服务端
+python3 -m vllm.entrypoints.openai.api_server \
+ --model [path of Qwen3-235B-A22B-AWQ] \
+ --tensor-parallel-size 4 \
+ --max-model-len 102400 \
+ --disable-log-requests \
+ --gpu-memory-utilization 0.9 \
+ --rope-scaling '{"rope_type":"yarn","factor":4.0,"original_max_position_embeddings":32768}' \
+ --block-size=64 \
+ --dtype=bfloat16 \
+ --device gcu \
+ --enable-chunked-prefill \
+ --quantization=moe_wna16_gcu
+
+
+# 启动客户端
+python3 -m vllm_utils.benchmark_serving \
+ --backend vllm \
+ --dataset-name random \
+ --model [path of Qwen3-235B-A22B-AWQ] \
+ --num-prompts 32 \
+ --random-input-len 1000 \
+ --random-output-len 700 \
+ --trust-remote-code \
+ --ignore_eos \
+ --strict-in-out-len \
+ --keep-special-tokens
+```
+注：
+*  本模型支持的`max-model-len`为131072；
+*  `input-len`、`output-len`和`num-prompts`可按需调整；
+*  配置 `output-len`为1时,输出内容中的`latency`即为time_to_first_token_latency;
