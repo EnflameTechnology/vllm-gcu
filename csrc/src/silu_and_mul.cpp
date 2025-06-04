@@ -19,6 +19,8 @@
 #include <ATen/ATen.h>
 #include <topsaten/topsaten_vllm.h>
 
+#include <tuple>
+
 #include "tops_extension/torch/GCUAten.h"
 #include "torch_gcu.h"
 
@@ -33,10 +35,17 @@ at::Tensor silu_and_mul_native(const at::Tensor &input) {
   return res;
 }
 
-void silu_and_mul(at::Tensor &out, const at::Tensor &input) {
+void silu_and_mul_gcu(at::Tensor &out, const at::Tensor &input) {
   const torch_gcu::OptionalGCUGuard device_guard(device_of(input));
   const topsStream_t stream = torch_gcu::getCurrentGCUStream();
 
+  at::Tensor view_out = out.view({-1, out.size(-1)});
+  at::Tensor view_input = input.view({-1, input.size(-1)});
+  ATEN_ATENOP_CHECK(ATEN_ATENOP_CALL(topsvllm::topsvllmSiluAndMul)(
+      view_out, view_input, stream));
+}
+
+void silu_and_mul(at::Tensor &out, const at::Tensor &input) {
   auto use_native = c10::utils::check_env("VLLM_GCU_NATIVE");
   auto fallback_cpu = c10::utils::check_env("VLLM_GCU_FALLBACK_CPU");
 
@@ -53,10 +62,40 @@ void silu_and_mul(at::Tensor &out, const at::Tensor &input) {
     return;
   }
 
-  at::Tensor view_out = out.view({-1, out.size(-1)});
-  at::Tensor view_input = input.view({-1, input.size(-1)});
-  ATEN_ATENOP_CHECK(ATEN_ATENOP_CALL(topsvllm::topsvllmSiluAndMul)(
-      view_out, view_input, stream));
+#ifndef NDEBUG
+  auto fallback_ops = c10::utils::get_env("VLLM_GCU_FALLBACK_CPU");
+  bool is_fallback = false;
+  at::Tensor out_cpu, input_cpu;
+
+  if (fallback_ops.has_value()) {
+    if (fallback_ops->find("silu_and_mul") != std::string::npos ||
+        (*fallback_ops) == "all") {
+      is_fallback = true;
+
+      // Convert tensors to CPU for native implementation
+      out_cpu = out.to(at::kCPU);
+      input_cpu = input.to(at::kCPU);
+
+      // Call native implementation on CPU tensors
+      vllmSiluAndMul(out_cpu, input_cpu);
+    }
+  }
+#endif
+
+  silu_and_mul_gcu(out, input);
+
+#ifndef NDEBUG
+  if (is_fallback) {
+    const topsStream_t stream = torch_gcu::getCurrentGCUStream();
+    topsStreamSynchronize(stream);
+
+    auto cpu_output = std::make_tuple(out_cpu);
+    auto device_outputs = std::make_tuple(out.to(at::kCPU));
+    EXPECT_TRUE(vllmSiluAndMulCheck(cpu_output, device_outputs),
+                "silu_and_mul");
+    out.copy_(out_cpu);
+  }
+#endif
 }
 
 }  // namespace vllm_gcu::llm_ops
