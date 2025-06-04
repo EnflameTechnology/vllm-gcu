@@ -85,8 +85,8 @@ TOPSCC_FLAGS = [
     "-D__GCU_ARCH__=300",
     "-D__KRT_ARCH__=300",
 ]
-if not DEBUG:
-    CXX_FLAGS += ["-DNDEBUG"]
+if DEBUG:
+    CXX_FLAGS += ["-UNDEBUG"]
 
 
 def get_path(*filepath) -> str:

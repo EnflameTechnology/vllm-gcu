@@ -18,6 +18,8 @@
 
 #include <topsaten/topsaten_extensions.h>
 
+#include <tuple>
+
 #include "tops_extension/torch/GCUAten.h"
 #include "torch_gcu.h"
 
@@ -58,8 +60,9 @@ topsatenDataType_t scalarTypeToTopsatenDataType(
     }
   }
 }
-void moe_sum(at::Tensor &out, const at::Tensor &input, const at::Tensor &size,
-             int64_t dim, bool keepdim) {
+
+void moe_sum_gcu(at::Tensor &out, const at::Tensor &input,
+                 const at::Tensor &size, int64_t dim, bool keepdim) {
   const torch_gcu::OptionalGCUGuard device_guard(device_of(input));
   const topsStream_t stream = torch_gcu::getCurrentGCUStream();
   at::ScalarType dtype_aten = out.scalar_type();
@@ -71,6 +74,50 @@ void moe_sum(at::Tensor &out, const at::Tensor &input, const at::Tensor &size,
 
   ATEN_ATENOP_CHECK(ATEN_ATENOP_CALL(topsexts::topsextsSum)(
       out, input, size, reduce_dim, keepdim, dtype, stream));
+}
+
+void moe_sum(at::Tensor &out, const at::Tensor &input, const at::Tensor &size,
+             int64_t dim, bool keepdim) {
+#ifndef NDEBUG
+  auto fallback_ops = c10::utils::get_env("VLLM_GCU_FALLBACK_CPU");
+  bool is_fallback = false;
+  at::Tensor out_cpu, input_cpu, size_cpu;
+
+  if (fallback_ops.has_value()) {
+    if (fallback_ops->find("moe_sum") != std::string::npos ||
+        (*fallback_ops) == "all") {
+      is_fallback = true;
+
+      // Convert tensors to CPU for native implementation
+      out_cpu = out.to(at::kCPU);
+      input_cpu = input.to(at::kCPU);
+      size_cpu = size.to(at::kCPU);
+
+      // Convert reduce_dim to IntArrayRef for native call
+      std::vector<int64_t> reduce_dim_v = {dim};
+      at::IntArrayRef dimensions(reduce_dim_v);
+      at::ScalarType dtype_aten = out.scalar_type();
+
+      // Call native implementation on CPU tensors
+      extsSum(out_cpu, input_cpu, size_cpu, dimensions, keepdim, dtype_aten,
+              nullptr);
+    }
+  }
+#endif
+
+  moe_sum_gcu(out, input, size, dim, keepdim);
+
+#ifndef NDEBUG
+  if (is_fallback) {
+    const topsStream_t stream = torch_gcu::getCurrentGCUStream();
+    topsStreamSynchronize(stream);
+
+    auto cpu_output = std::make_tuple(out_cpu);
+    auto device_outputs = std::make_tuple(out.to(at::kCPU));
+    EXPECT_TRUE(extsSumCheck(cpu_output, device_outputs), "moe_sum");
+    out.copy_(out_cpu);
+  }
+#endif
 }
 
 }  // namespace vllm_gcu::llm_ops

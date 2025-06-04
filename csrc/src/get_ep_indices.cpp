@@ -76,8 +76,11 @@ void get_ep_indices(at::Tensor &ep_count, at::Tensor &ep_token_indices,
     auto cpu_outputs = std::make_tuple(ep_count_cpu, ep_token_indices_cpu,
                                        ep_valid_token_indices_cpu);
     auto device_outputs =
-        std::make_tuple(ep_count, ep_token_indices, ep_valid_token_indices);
-    // get_ep_indices_check(cpu_outputs, device_outputs);
+        std::make_tuple(ep_count.to(at::kCPU),
+                        ep_token_indices.to(at::kCPU),
+                        ep_valid_token_indices.to(at::kCPU));
+    EXPECT_TRUE(vllmGetEPIndicesCheck(cpu_outputs, device_outputs),
+                "get_ep_indices");
     ep_count.copy_(ep_count_cpu);
     ep_token_indices.copy_(ep_token_indices_cpu);
     ep_valid_token_indices.copy_(ep_valid_token_indices_cpu);

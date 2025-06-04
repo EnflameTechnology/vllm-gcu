@@ -11,11 +11,11 @@
 
 namespace vllm_gcu::llm_ops {
 void layer_norm_static_int8_quant(at::Tensor &output, const at::Tensor &input,
-                      const at::Tensor &scaling,
-                      at::IntArrayRef normalized_shape,
-                      const c10::optional<at::Tensor> &weight_opt,
-                      const c10::optional<at::Tensor> &bias_opt,
-                      double epsilon) {
+                                  const at::Tensor &scaling,
+                                  at::IntArrayRef normalized_shape,
+                                  const c10::optional<at::Tensor> &weight_opt,
+                                  const c10::optional<at::Tensor> &bias_opt,
+                                  double epsilon) {
   const torch_gcu::OptionalGCUGuard device_guard(device_of(output));
   const topsStream_t stream = torch_gcu::getCurrentGCUStream();
   c10::MaybeOwned<at::Tensor> weight_maybe_owned =

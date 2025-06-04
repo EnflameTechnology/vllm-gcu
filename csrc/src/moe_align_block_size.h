@@ -2,6 +2,9 @@
 #pragma once
 
 #include <ATen/ATen.h>
+#ifndef NDEBUG
+#include "native_vllm.h"
+#endif
 
 namespace vllm_gcu::llm_ops {
 

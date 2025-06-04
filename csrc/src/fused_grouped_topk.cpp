@@ -41,3 +41,4 @@ void fused_grouped_topk(at::Tensor &topk_weights, at::Tensor &topk_ids,
   }
 }
 }  // namespace vllm_gcu::llm_ops
+

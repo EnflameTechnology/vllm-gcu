@@ -10,7 +10,7 @@
 
 namespace vllm_gcu::llm_ops {
 void silu_static_int8_quant(at::Tensor& out, const at::Tensor& input,
-                const at::Tensor& scale) {
+                            const at::Tensor& scale) {
   const torch_gcu::OptionalGCUGuard device_guard(device_of(out));
   const topsStream_t stream = torch_gcu::getCurrentGCUStream();
 

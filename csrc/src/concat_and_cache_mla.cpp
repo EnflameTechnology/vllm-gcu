@@ -17,27 +17,76 @@
 
 #include <topsaten/topsaten_vllm.h>
 
+#include <tuple>
+
 #include "tops_extension/torch/GCUAten.h"
 #include "torch_gcu.h"
 
 namespace vllm_gcu::llm_ops {
 
+void concat_and_cache_mla_gcu(const at::Tensor &kv_c, const at::Tensor &k_pe,
+                              at::Tensor &kv_cache,
+                              const at::Tensor &slot_mapping,
+                              const char *kv_dtype,
+                              const at::Tensor &scale_tensor) {
+  const torch_gcu::OptionalGCUGuard device_guard(device_of(kv_c));
+  const topsStream_t stream = torch_gcu::getCurrentGCUStream();
+
+  ATEN_ATENOP_CHECK(ATEN_ATENOP_CALL(topsvllm::topsvllmConcatAndCacheMla)(
+      kv_cache, kv_c, k_pe, slot_mapping, kv_dtype, scale_tensor, stream));
+}
+
 void concat_and_cache_mla(const at::Tensor &kv_c, const at::Tensor &k_pe,
                           at::Tensor &kv_cache, const at::Tensor &slot_mapping,
                           c10::string_view kv_cache_dtype,
                           const at::Tensor &scale) {
-  const torch_gcu::OptionalGCUGuard device_guard(device_of(kv_c));
-  const topsStream_t stream = torch_gcu::getCurrentGCUStream();
-
   at::Tensor scale_tensor = scale;
   if (scale.dim() == 0) {
     scale_tensor = scale.unsqueeze(0);
   }
 
   const char *kv_dtype = kv_cache_dtype.data();
-  //   const float scale_value = 1.0f;
-  ATEN_ATENOP_CHECK(ATEN_ATENOP_CALL(topsvllm::topsvllmConcatAndCacheMla)(
-      kv_cache, kv_c, k_pe, slot_mapping, kv_dtype, scale_tensor, stream));
+
+#ifndef NDEBUG
+  auto fallback_ops = c10::utils::get_env("VLLM_GCU_FALLBACK_CPU");
+  bool is_fallback = false;
+  at::Tensor kv_cache_cpu, kv_c_cpu, k_pe_cpu, slot_mapping_cpu,
+      scale_tensor_cpu;
+
+  if (fallback_ops.has_value()) {
+    if (fallback_ops->find("concat_and_cache_mla") != std::string::npos ||
+        (*fallback_ops) == "all") {
+      is_fallback = true;
+
+      // Convert tensors to CPU for native implementation
+      kv_cache_cpu = kv_cache.to(at::kCPU);
+      kv_c_cpu = kv_c.to(at::kCPU);
+      k_pe_cpu = k_pe.to(at::kCPU);
+      slot_mapping_cpu = slot_mapping.to(at::kCPU);
+      scale_tensor_cpu = scale_tensor.to(at::kCPU);
+
+      // Call native implementation on CPU tensors
+      vllmConcatAndCacheMla(kv_cache_cpu, kv_c_cpu, k_pe_cpu, slot_mapping_cpu,
+                            kv_dtype, scale_tensor_cpu);
+    }
+  }
+#endif
+
+  concat_and_cache_mla_gcu(kv_c, k_pe, kv_cache, slot_mapping, kv_dtype,
+                           scale_tensor);
+
+#ifndef NDEBUG
+  if (is_fallback) {
+    const topsStream_t stream = torch_gcu::getCurrentGCUStream();
+    topsStreamSynchronize(stream);
+
+    auto cpu_output = std::make_tuple(kv_cache_cpu);
+    auto device_outputs = std::make_tuple(kv_cache.to(at::kCPU));
+    EXPECT_TRUE(vllmConcatAndCacheMlaCheck(cpu_output, device_outputs),
+                "concat_and_cache_mla");
+    kv_cache.copy_(kv_cache_cpu);
+  }
+#endif
 }
 
 }  // namespace vllm_gcu::llm_ops

@@ -19,22 +19,82 @@
 #include <topsaten/topsaten_vllm.h>
 #include <torch/all.h>
 
+#include <string>
+#include <tuple>
+
 #include "tops_extension/torch/GCUAten.h"
 #include "torch_gcu.h"
 
 namespace vllm_gcu::llm_ops {
 
-void moe_align_block_size_pad(at::Tensor topk_ids, at::Tensor topk_ids_size,
-                              int64_t num_experts, int64_t block_size,
-                              at::Tensor sorted_token_ids,
-                              at::Tensor experts_ids,
-                              at::Tensor num_tokens_post_pad) {
+void moe_align_block_size_pad_gcu(at::Tensor topk_ids, at::Tensor topk_ids_size,
+                                  int64_t num_experts, int64_t block_size,
+                                  at::Tensor sorted_token_ids,
+                                  at::Tensor experts_ids,
+                                  at::Tensor num_tokens_post_pad) {
   const torch_gcu::OptionalGCUGuard device_guard(device_of(topk_ids));
   const topsStream_t stream = torch_gcu::getCurrentGCUStream();
 
   ATEN_ATENOP_CHECK(ATEN_ATENOP_CALL(topsvllm::topsvllmMoeAlignBlockSize)(
       sorted_token_ids, experts_ids, num_tokens_post_pad, topk_ids,
       topk_ids_size, num_experts, block_size, stream));
+}
+
+void moe_align_block_size_pad(at::Tensor topk_ids, at::Tensor topk_ids_size,
+                              int64_t num_experts, int64_t block_size,
+                              at::Tensor sorted_token_ids,
+                              at::Tensor experts_ids,
+                              at::Tensor num_tokens_post_pad) {
+#ifndef NDEBUG
+  auto fallback_ops = c10::utils::get_env("VLLM_GCU_FALLBACK_CPU");
+  bool is_fallback = false;
+  at::Tensor topk_ids_cpu, topk_ids_size_cpu, sorted_token_ids_cpu,
+      experts_ids_cpu, num_tokens_post_pad_cpu;
+
+  if (fallback_ops.has_value()) {
+    if (fallback_ops->find("moe_align_block_size_pad") != std::string::npos ||
+        (*fallback_ops) == "all") {
+      is_fallback = true;
+
+      // Convert tensors to CPU for native implementation
+      topk_ids_cpu = topk_ids.to(at::kCPU);
+      topk_ids_size_cpu = topk_ids_size.to(at::kCPU);
+      sorted_token_ids_cpu = sorted_token_ids.to(at::kCPU);
+      experts_ids_cpu = experts_ids.to(at::kCPU);
+      num_tokens_post_pad_cpu = num_tokens_post_pad.to(at::kCPU);
+
+      // Call native implementation on CPU tensors - using the version with
+      // real_token_num
+      int result = vllmMoeAlignBlockSize(
+          sorted_token_ids_cpu, experts_ids_cpu, num_tokens_post_pad_cpu,
+          topk_ids_cpu, topk_ids_size_cpu, static_cast<int>(num_experts),
+          static_cast<int>(block_size));
+    }
+  }
+#endif
+
+  moe_align_block_size_pad_gcu(topk_ids, topk_ids_size, num_experts, block_size,
+                               sorted_token_ids, experts_ids,
+                               num_tokens_post_pad);
+
+#ifndef NDEBUG
+  if (is_fallback) {
+    const topsStream_t stream = torch_gcu::getCurrentGCUStream();
+    topsStreamSynchronize(stream);
+
+    auto cpu_output = std::make_tuple(sorted_token_ids_cpu, experts_ids_cpu,
+                                      num_tokens_post_pad_cpu);
+    auto device_outputs =
+        std::make_tuple(sorted_token_ids.to(at::kCPU),
+                        experts_ids.to(at::kCPU),
+                        num_tokens_post_pad.to(at::kCPU));
+    EXPECT_TRUE(vllmMoeAlignBlockSizeCheck(cpu_output, device_outputs),
+                "moe_align_block_size_pad");
+    sorted_token_ids.copy_(sorted_token_ids_cpu);
+    experts_ids.copy_(experts_ids_cpu);
+    num_tokens_post_pad.copy_(num_tokens_post_pad_cpu);
+  }
+#endif
 }
 
 }  // namespace vllm_gcu::llm_ops

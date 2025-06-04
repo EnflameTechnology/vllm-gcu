@@ -10,10 +10,9 @@
 
 namespace vllm_gcu::llm_ops {
 void cutlass_scaled_mm(at::Tensor& out, const at::Tensor& x,
-                      const at::Tensor& weight,
-                      const at::Tensor& x_scale,
-                      const at::Tensor& w_scale,
-                      const c10::optional<at::Tensor>& bias) {
+                       const at::Tensor& weight, const at::Tensor& x_scale,
+                       const at::Tensor& w_scale,
+                       const c10::optional<at::Tensor>& bias) {
   const torch_gcu::OptionalGCUGuard device_guard(device_of(out));
   const topsStream_t stream = torch_gcu::getCurrentGCUStream();
   at::Tensor bias_tensor;
