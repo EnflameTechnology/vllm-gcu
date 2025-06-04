@@ -397,7 +397,7 @@ if __name__ == "__main__":
     parser.add_argument('--input-len', type=int, default=500,
                         help='Input length (fixed or max random length when --random_doc_len_enabled is used)')
     parser.add_argument('--total-requests', type=int, default=100, help='Total number of requests to send')
-    parser.add_argument('--request-rate', type=float, default=10.0,
+    parser.add_argument('--request-rate', type=float, default=float('inf'),
                         help='Request rate in requests per second, use "inf" for immediate sending')
     parser.add_argument(
         "--burstiness",
