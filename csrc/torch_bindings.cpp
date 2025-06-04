@@ -93,10 +93,14 @@
 // https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/native/README.md#annotations
 
 using namespace vllm_gcu::llm_ops;
-TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
+TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
   // vLLM custom ops
+  std::optional<c10::OperatorHandle> handle;
 
-  ops.def("weak_ref_tensor(Tensor input) -> Tensor");
+  handle = c10::Dispatcher::singleton().findSchema({"_C::weak_ref_tensor", ""});
+  if (!handle.has_value()) {
+    ops.def("weak_ref_tensor(Tensor input) -> Tensor");
+  }
   ops.impl("weak_ref_tensor", torch::kPrivateUse1, &weak_ref_tensor);
 
   // Attention ops

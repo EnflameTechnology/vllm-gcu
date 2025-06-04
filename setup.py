@@ -61,6 +61,9 @@ try:
 except ImportError:
     _TORCH_GCU_PATH = os.getenv("TORCH_GCU_PATH", None)
 
+
+DEBUG = os.getenv("BUILD_VLLM_DEBUG", False)
+
 ABI = 1 if torch._C._GLIBCXX_USE_CXX11_ABI else 0
 # Compiler flags.
 CXX_FLAGS = [
@@ -82,6 +85,8 @@ TOPSCC_FLAGS = [
     "-D__GCU_ARCH__=300",
     "-D__KRT_ARCH__=300",
 ]
+if not DEBUG:
+    CXX_FLAGS += ["-DNDEBUG"]
 
 
 def get_path(*filepath) -> str:
@@ -147,6 +152,22 @@ class VllmBuildExtension(TopsBuildExtension):
                 namespace="vllm_gcu::llm_ops",
                 python_output_dir=None,
                 include_dir=src_dir,
+                header="""
+#pragma once
+
+#include <ATen/ATen.h>
+#include <tops/tops_runtime.h>
+
+#ifndef NDEBUG
+#include "native_vllm.h"
+#endif
+
+namespace ${namespace} {
+
+${declarations};
+
+} // namespace ${namespace}
+""",
             )
         ext.sources = list(filter(lambda f: not f.endswith(".yaml"), ext.sources))
         return TopsBuildExtension.build_extension(self, ext)
@@ -258,6 +279,13 @@ def _get_include_and_library_dirs():
     library_dirs.append(os.path.join(_TOPSATEN_HOME, "lib"))
     library_dirs.append(os.path.join(_TORCH_GCU_PATH, "lib"))
 
+    if DEBUG:
+        library_dirs.append(
+            os.path.join(
+                os.path.dirname(_TOPS_EXTENSION_PATH), "torch_custom_op_native"
+            )
+        )
+
     return {"include_dirs": include_dirs, "library_dirs": library_dirs}
 
 
@@ -270,7 +298,7 @@ ext_modules.append(
             "tops_extension",
             "topsaten",
             "torch_gcu",
-        ],
+        ] + (["vllm_custom_ops"] if DEBUG else []),
         extra_compile_args={
             "cxx": CXX_FLAGS,
             "topscc": TOPSCC_FLAGS.copy(),
@@ -278,7 +306,7 @@ ext_modules.append(
         extra_link_args=[
             "-Wl,--disable-new-dtags",
             "-Wl,-rpath,$ORIGIN/../tops_extension/lib:$ORIGIN/../torch_gcu/lib",
-        ],
+        ] + (["-Wl,-rpath,$ORIGIN/../torch_custom_op_native"] if DEBUG else []),
         py_limited_api=True,
         **_get_include_and_library_dirs(),
     )
