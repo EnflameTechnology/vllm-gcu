@@ -202,7 +202,7 @@
 - func: fused_dispatch_decode(Tensor(a!)[] outputs, Tensor recv_packed, Tensor sp_split_size, int[] split_sizes) -> ()
   variants: function
 
-- func: ets_moe_align_block_size(Tensor(a!) sorted_token_ids, Tensor(a!) experts_ids, Tensor(a!) num_tokens_post_pad, Tensor topk_ids, Tensor real_token_num, Tensor expert_map, int num_experts, int block_size) -> ()
+- func: exts_moe_align_block_size(Tensor(a!) sorted_token_ids, Tensor(a!) experts_ids, Tensor(a!) num_tokens_post_pad, Tensor topk_ids, Tensor real_token_num, Tensor expert_map, int num_experts, int block_size) -> ()
   variants: function
 
 - func: static_scaled_fp8_quant(Tensor(a!) result, Tensor input, Tensor scale) -> ()
