@@ -22,4 +22,4 @@ void dynamic_per_token_scaled_fp8_quant(
     at::Tensor &result, const at::Tensor &input, at::Tensor &scale,
     const ::std::optional<at::Tensor> &scale_ub) {}
 
-} // namespace vllm_gcu::llm_ops
+}  // namespace vllm_gcu::llm_ops

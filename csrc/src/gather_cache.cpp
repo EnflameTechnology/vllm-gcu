@@ -16,8 +16,8 @@ void gather_cache(const at::Tensor& src_cache, const at::Tensor& dst,
   const topsStream_t stream = torch_gcu::getCurrentGCUStream();
 
   ATEN_ATENOP_CHECK(ATEN_ATENOP_CALL(topsvllm::topsvllmGatherCache)(
-      src_cache, dst, block_table, cu_seq_lens,
-      batch_size, seq_starts, stream));
+      src_cache, dst, block_table, cu_seq_lens, batch_size, seq_starts,
+      stream));
 }
 
 }  // namespace vllm_gcu::llm_ops

@@ -9,10 +9,8 @@
 #include "torch_gcu.h"
 
 namespace vllm_gcu::llm_ops {
-void dynamic_scaled_int8_quant(at::Tensor& output,
-                               const at::Tensor& input,
-                               at::Tensor& scales,
-                               const at::Tensor& azp) {
+void dynamic_scaled_int8_quant(at::Tensor& output, const at::Tensor& input,
+                               at::Tensor& scales, const at::Tensor& azp) {
   const torch_gcu::OptionalGCUGuard device_guard(device_of(output));
   const topsStream_t stream = torch_gcu::getCurrentGCUStream();
 

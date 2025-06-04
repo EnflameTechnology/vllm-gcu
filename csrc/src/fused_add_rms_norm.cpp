@@ -18,52 +18,17 @@
 
 #include <topsaten/topsaten_vllm.h>
 
+#include <tuple>
+
 #include "tops_extension/torch/GCUAten.h"
 #include "torch_gcu.h"
 
 namespace vllm_gcu::llm_ops {
 
-std::tuple<at::Tensor, at::Tensor>
-fused_add_rms_norm_native(const at::Tensor &input, const at::Tensor &residual,
-                          const at::Tensor &weight, double epsilon) {
-  at::ScalarType orig_dtype = input.scalar_type();
-
-  at::Tensor input_float = input.to(at::kFloat);
-  at::Tensor residual_float = residual.to(at::kFloat);
-  at::Tensor result = input_float + residual_float;
-  at::Tensor residual_out = result.to(orig_dtype);
-
-  at::Tensor variance = result.pow(2).mean(-1, /*keepdim=*/true);
-
-  at::Tensor normalized = result * at::rsqrt(variance + epsilon);
-  normalized = normalized.to(orig_dtype);
-  at::Tensor final_result = normalized * weight;
-
-  return std::make_tuple(final_result, residual_out);
-}
-
-void fused_add_rms_norm(at::Tensor &input, at::Tensor &residual,
-                        const at::Tensor &weight, double epsilon) {
+void fused_add_rms_norm_gcu(at::Tensor &input, at::Tensor &residual,
+                            const at::Tensor &weight, double epsilon) {
   const torch_gcu::OptionalGCUGuard device_guard(device_of(input));
   const topsStream_t stream = torch_gcu::getCurrentGCUStream();
-
-  if (input.numel() == 0) return;
-
-  auto use_native = c10::utils::check_env("VLLM_GCU_NATIVE");
-  auto fallback_cpu = c10::utils::check_env("VLLM_GCU_FALLBACK_CPU");
-
-  if (use_native) {
-    std::tuple<at::Tensor, at::Tensor> ret;
-    if (fallback_cpu) {
-      ret = TORCH_FALLBACK_CALL(fused_add_rms_norm_native)(input, residual,
-                                                           weight, epsilon);
-    } else {
-      ret = fused_add_rms_norm_native(input, residual, weight, epsilon);
-    }
-    input.copy_(std::get<0>(ret));
-    residual.copy_(std::get<1>(ret));
-    return;
-  }
 
   at::Tensor device_weight;
   if (!weight.device().is_privateuseone()) {
@@ -76,4 +41,47 @@ void fused_add_rms_norm(at::Tensor &input, at::Tensor &residual,
       input, residual, device_weight, epsilon, stream));
 }
 
-} // namespace vllm_gcu::llm_ops
+void fused_add_rms_norm(at::Tensor &input, at::Tensor &residual,
+                        const at::Tensor &weight, double epsilon) {
+  if (input.numel() == 0) return;
+
+#ifndef NDEBUG
+  auto fallback_ops = c10::utils::get_env("VLLM_GCU_FALLBACK_CPU");
+  bool is_fallback = false;
+  at::Tensor input_cpu, residual_cpu, weight_cpu;
+
+  if (fallback_ops.has_value()) {
+    if (fallback_ops->find("fused_add_rms_norm") != std::string::npos ||
+        (*fallback_ops) == "all") {
+      is_fallback = true;
+
+      // Convert tensors to CPU for native implementation
+      input_cpu = input.to(at::kCPU);
+      residual_cpu = residual.to(at::kCPU);
+      weight_cpu = weight.to(at::kCPU);
+
+      // Call native implementation on CPU tensors
+      vllmFusedAddRmsNorm(input_cpu, residual_cpu, weight_cpu,
+                          static_cast<float>(epsilon));
+    }
+  }
+#endif
+
+  fused_add_rms_norm_gcu(input, residual, weight, epsilon);
+
+#ifndef NDEBUG
+  if (is_fallback) {
+    const topsStream_t stream = torch_gcu::getCurrentGCUStream();
+    topsStreamSynchronize(stream);
+
+    auto cpu_output = std::make_tuple(input_cpu);
+    auto gcu_output = std::make_tuple(input.to(at::kCPU));
+    EXPECT_TRUE(vllmFusedAddRmsNormCheck(cpu_output, gcu_output),
+                "fused_add_rms_norm");
+    input.copy_(input_cpu);
+    residual.copy_(residual_cpu);
+  }
+#endif
+}
+
+}  // namespace vllm_gcu::llm_ops
