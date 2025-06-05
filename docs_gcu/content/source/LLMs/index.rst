@@ -24,3 +24,5 @@
    xuanyuan
    yi
    ziyacoding
+   jina
+   alibaba-nlp
