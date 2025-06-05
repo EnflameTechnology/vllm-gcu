@@ -182,6 +182,8 @@
   variants: function
 
 - func: dynamic_per_token_group_fp8_quant(Tensor(a!) out, Tensor(a!) scale, Tensor input, int group_size) -> ()
+  variants: function
+
 - func: silu_mul_per_token_group_quant(Tensor(a!) out, Tensor(a!) scale, Tensor input, int group_size) -> ()
   variants: function
 
@@ -228,4 +230,7 @@
   variants: function
   
 - func: gather_cache(Tensor src_cache, Tensor dst, Tensor block_table, Tensor cu_seq_lens, int batch_size, Tensor seq_starts) -> ()
+  variants: function
+
+- func: dynamic_per_token_group_fp8_quant_with_size(Tensor(a!) output, Tensor(a!) scale, Tensor input, Tensor real_size, int group_size) -> ()
   variants: function

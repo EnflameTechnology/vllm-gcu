@@ -1,4 +1,5 @@
 #include <torch/library.h>
+
 #include "registration.h"
 #include "src/advance_step_flashattn.h"
 #include "src/advance_step_xformers.h"
@@ -13,6 +14,7 @@
 #include "src/dispatch_bgmv_low_level.h"
 #include "src/dot_bias_quant.h"
 #include "src/dynamic_per_token_group_fp8_quant.h"
+#include "src/dynamic_per_token_group_fp8_quant_with_size.h"
 #include "src/dynamic_per_token_scaled_fp8_quant.h"
 #include "src/dynamic_scaled_fp8_quant.h"
 #include "src/dynamic_scaled_int8_quant.h"
@@ -29,6 +31,7 @@
 #include "src/fused_moe_quant_kernel.h"
 #include "src/fused_qkv_gemm_quant.h"
 #include "src/fused_qkv_proj.h"
+#include "src/gather_cache.h"
 #include "src/gelu_and_mul.h"
 #include "src/gelu_asym_quant.h"
 #include "src/gelu_fast.h"
@@ -38,8 +41,8 @@
 #include "src/gelu_new.h"
 #include "src/gelu_new_asym_quant.h"
 #include "src/gelu_new_static_int8_quant.h"
-#include "src/gelu_static_int8_quant.h"
 #include "src/gelu_quick.h"
+#include "src/gelu_static_int8_quant.h"
 #include "src/gelu_tanh_and_mul.h"
 #include "src/gelu_tanh_asym_quant.h"
 #include "src/gelu_tanh_mul_quant.h"
@@ -51,7 +54,6 @@
 #include "src/linear_quant.h"
 #include "src/memory_efficient_attention_alibi.h"
 #include "src/merge_attn_states.h"
-#include "src/gather_cache.h"
 #include "src/moe_align_block_size.h"
 #include "src/moe_align_block_size_pad.h"
 #include "src/moe_sum.h"
@@ -581,31 +583,28 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
       "fused_add_rms_norm_static_int8_quant(Tensor(a!) result, Tensor input, "
       "Tensor(a!) "
       "residual, Tensor weight, float epsilon, Tensor scale) -> ()");
-  ops.impl("fused_add_rms_norm_static_int8_quant",
-           c10::kPrivateUse1,
+  ops.impl("fused_add_rms_norm_static_int8_quant", c10::kPrivateUse1,
            &fused_add_rms_norm_static_int8_quant);
 
   ops.def("gelu_tanh_static_int8_quant", &gelu_tanh_static_int8_quant);
   ops.impl("gelu_tanh_static_int8_quant", c10::kPrivateUse1,
-            &gelu_tanh_static_int8_quant);
+           &gelu_tanh_static_int8_quant);
 
   ops.def("gelu_static_int8_quant", &gelu_static_int8_quant);
-  ops.impl("gelu_static_int8_quant",
-            c10::kPrivateUse1,
-            &gelu_static_int8_quant);
+  ops.impl("gelu_static_int8_quant", c10::kPrivateUse1,
+           &gelu_static_int8_quant);
 
   ops.def("gelu_new_static_int8_quant", &gelu_new_static_int8_quant);
-  ops.impl("gelu_new_static_int8_quant",
-            c10::kPrivateUse1,
-            &gelu_new_static_int8_quant);
+  ops.impl("gelu_new_static_int8_quant", c10::kPrivateUse1,
+           &gelu_new_static_int8_quant);
 
   ops.def("silu_static_int8_quant", &silu_static_int8_quant);
   ops.impl("silu_static_int8_quant", c10::kPrivateUse1,
-            &silu_static_int8_quant);
+           &silu_static_int8_quant);
 
   ops.def("gelu_fast_static_int8_quant", &gelu_fast_static_int8_quant);
   ops.impl("gelu_fast_static_int8_quant", c10::kPrivateUse1,
-            &gelu_fast_static_int8_quant);
+           &gelu_fast_static_int8_quant);
 
   ops.def("gelu_tanh_asym_quant", &gelu_tanh_asym_quant);
   ops.impl("gelu_tanh_asym_quant", c10::kPrivateUse1, &gelu_tanh_asym_quant);
@@ -634,10 +633,11 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
   ops.impl("static_scaled_int8_asym_dequant", c10::kPrivateUse1,
            &static_scaled_int8_asym_dequant);
 
-  ops.def("silu_mul_static_int8_quant(Tensor(a!) result, "
-            "Tensor input, Tensor scale) -> ()");
+  ops.def(
+      "silu_mul_static_int8_quant(Tensor(a!) result, "
+      "Tensor input, Tensor scale) -> ()");
   ops.impl("silu_mul_static_int8_quant", c10::kPrivateUse1,
-            &silu_mul_static_int8_quant);
+           &silu_mul_static_int8_quant);
 
   ops.def("gelu_mul_quant", &gelu_mul_quant);
   ops.impl("gelu_mul_quant", c10::kPrivateUse1, &gelu_mul_quant);
@@ -647,7 +647,7 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
 
   ops.def("layer_norm_static_int8_quant", &layer_norm_static_int8_quant);
   ops.impl("layer_norm_static_int8_quant", c10::kPrivateUse1,
-            &layer_norm_static_int8_quant);
+           &layer_norm_static_int8_quant);
 
   ops.def("dot_bias_quant", &dot_bias_quant);
   ops.impl("dot_bias_quant", c10::kPrivateUse1, &dot_bias_quant);
@@ -690,6 +690,13 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
       "Tensor input, int group_size) -> ()");
   ops.impl("dynamic_per_token_group_fp8_quant", torch::kPrivateUse1,
            dynamic_per_token_group_fp8_quant);
+
+  ops.def(
+      "dynamic_per_token_group_fp8_quant_with_size(Tensor! out, Tensor! scale, "
+      "Tensor input, Tensor real_size, int group_size) -> ()");
+  ops.impl("dynamic_per_token_group_fp8_quant_with_size", torch::kPrivateUse1,
+           dynamic_per_token_group_fp8_quant_with_size);
+
   ops.def(
       "silu_mul_per_token_group_quant("
       "Tensor! out, Tensor! scale, Tensor input, "
