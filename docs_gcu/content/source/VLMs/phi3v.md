@@ -40,7 +40,7 @@ python3 -m vllm_utils.benchmark_vision_language --perf \
  --block-size=64 \
  --input-len=8192 \
  --max-output-len=1024 \
- --batch-size=1 \
+ --batch-size=4 \
  --trust-remote-code \
  --device=gcu
 ```

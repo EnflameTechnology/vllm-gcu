@@ -944,8 +944,8 @@ python3 -m vllm_utils.benchmark_test --perf \
  --max-model-len=32768 \
  --dtype=float16 \
  --gpu-memory-utilization 0.9 \
- --input-len=1024 \
- --output-len=1024 \
+ --input-len=8192 \
+ --output-len=512 \
  --num-prompts=1 \
  --tensor-parallel-size=4 \
  --block-size=64 \

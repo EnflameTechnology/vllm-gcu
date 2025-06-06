@@ -184,8 +184,8 @@ python3 -m vllm_utils.benchmark_test --perf \
  --tensor-parallel-size=4 \
  --max-model-len=4096 \
  --tokenizer=[path of llama-2-70b-hf] \
- --input-len=128 \
- --output-len=3968 \
+ --input-len=512 \
+ --output-len=240 \
  --num-prompts=1 \
  --block-size=64 \
  --gpu-memory-utilization=0.9 \
@@ -654,7 +654,7 @@ python3 -m vllm_utils.benchmark_test \
  --device=gcu \
  --max-model-len=32768 \
  --tensor-parallel-size 1 \
- --gpu-memory-utilization 0.8
+ --gpu-memory-utilization 0.9
 ```
 
 #### 性能测试
@@ -664,14 +664,14 @@ python3 -m vllm_utils.benchmark_test --perf \
  --model=[path of Meta-Llama-3.1-8B-Instruct] \
  --max-model-len=32768 \
  --tokenizer=[path of Meta-Llama-3.1-8B-Instruct] \
- --input-len=1024 \
- --output-len=1024 \
+ --input-len=8192 \
+ --output-len=512 \
  --num-prompts=1 \
  --block-size=64 \
  --dtype=bfloat16 \
  --device gcu \
  --tensor-parallel-size 1 \
- --gpu-memory-utilization 0.8
+ --gpu-memory-utilization 0.9
 ```
 注：
 *  本模型支持的`max-model-len`为131072, 单张卡可跑32768；
@@ -761,7 +761,7 @@ python3 -m vllm_utils.benchmark_test \
  --dtype=bfloat16 \
  --device=gcu \
  --output-len=256 \
- --gpu-memory-utilization 0.8
+ --gpu-memory-utilization 0.9
 ```
 
 #### 性能测试
@@ -772,13 +772,13 @@ python3 -m vllm_utils.benchmark_test --perf \
  --max-model-len=32768 \
  --tokenizer=[path of Meta-Llama-3.1-70B-Instruct] \
  --tensor-parallel-size=8 \
- --input-len=1024 \
- --output-len=1024 \
+ --input-len=8192 \
+ --output-len=512 \
  --num-prompts=1 \
  --block-size=64 \
  --device=gcu \
  --dtype=bfloat16 \
- --gpu-memory-utilization 0.8
+ --gpu-memory-utilization 0.9
 ```
 注：
 *  本模型支持的`max-model-len`为131072, 需8张卡跑32768；
@@ -1109,7 +1109,7 @@ python3 -m vllm_utils.benchmark_test \
  --device=gcu \
  --output-len=256 \
  --demo=te \
- --gpu-memory-utilization=0.8 \
+ --gpu-memory-utilization=0.9 \
  --quantization=awq
 ```
 
@@ -1256,7 +1256,7 @@ python3 -m vllm_utils.benchmark_test --perf \
  --block-size=64 \
  --dtype=float16 \
  --device gcu \
- --gpu-memory-utilization 0.8
+ --gpu-memory-utilization 0.9
 ```
 注：
 *  本模型支持的`max-model-len`为4096；
