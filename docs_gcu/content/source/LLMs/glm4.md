@@ -159,6 +159,7 @@ python3 -m vllm_utils.benchmark_test \
  --output-len=128 \
  --block-size=64 \
  --max-model-len=32768 \
+ --gpu-memory-utilization=0.9 \
  --trust-remote-code \
  --device gcu
 ```
