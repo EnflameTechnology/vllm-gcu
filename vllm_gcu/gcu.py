@@ -65,7 +65,7 @@ class GCUPlatform(Platform):
                 return "vllm_gcu.v1.attention.mla.GCUMLABackend"
             else:
                 if gcu_envs.VLLM_GCU_DEEPSEEK_FUSION:
-                    return "vllm_gcu.attention.backends.mla_fusion.GCUMLABackend"
+                    return "vllm_gcu.attention.backends.mla_fusion.GCUMLAFusionBackend"
                 else:
                     return "vllm_gcu.attention.backends.mla.GCUMLABackend"
         if use_v1:
