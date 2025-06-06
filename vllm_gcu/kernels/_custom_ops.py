@@ -325,7 +325,7 @@ def scaled_int8_dequant(
 def gelu_tanh_quant(
     out: torch.Tensor, input: torch.Tensor, scale: torch.Tensor
 ) -> None:
-    torch.ops._C.gelu_tanh_quant(out, input, scale)
+    torch.ops._C.gelu_tanh_static_int8_quant(out, input, scale)
 
 
 def gelu_quant(out: torch.Tensor, input: torch.Tensor, scale: torch.Tensor) -> None:
@@ -333,17 +333,17 @@ def gelu_quant(out: torch.Tensor, input: torch.Tensor, scale: torch.Tensor) -> N
 
 
 def gelu_new_quant(out: torch.Tensor, input: torch.Tensor, scale: torch.Tensor) -> None:
-    torch.ops._C.gelu_new_quant(out, input, scale)
+    torch.ops._C.gelu_static_int8_quant(out, input, scale)
 
 
 def silu_quant(out: torch.Tensor, input: torch.Tensor, scale: torch.Tensor) -> None:
-    torch.ops._C.silu_quant(out, input, scale)
+    torch.ops._C.silu_static_int8_quant(out, input, scale)
 
 
 def gelu_fast_quant(
     out: torch.Tensor, input: torch.Tensor, scale: torch.Tensor
 ) -> None:
-    torch.ops._C.gelu_fast_quant(out, input, scale)
+    torch.ops._C.gelu_fast_static_int8_quant(out, input, scale)
 
 
 def gelu_tanh_asym_quant(
@@ -383,7 +383,7 @@ def rms_norm_quant(
     epsilon: float,
     scaling: torch.Tensor,
 ) -> None:
-    torch.ops._C.rms_norm_quant(output, input, weight, scaling, epsilon)
+    torch.ops._C.rms_norm_static_int8_quant(output, input, weight, scaling, epsilon)
 
 
 def fused_add_rms_norm_quant(
@@ -394,7 +394,7 @@ def fused_add_rms_norm_quant(
     epsilon: float,
     scaling: torch.Tensor,
 ) -> None:
-    torch.ops._C.fused_add_rms_norm_quant(
+    torch.ops._C.fused_add_rms_norm_static_int8_quant(
         output, input, residual, weight, epsilon, scaling
     )
 
@@ -402,7 +402,7 @@ def fused_add_rms_norm_quant(
 def silu_mul_quant(
     out: torch.Tensor, input: torch.Tensor, scaling: torch.Tensor
 ) -> None:
-    torch.ops._C.silu_mul_quant(out, input, scaling)
+    torch.ops._C.layer_norm_static_int8_quant(out, input, scaling)
 
 
 def gelu_mul_quant(
@@ -426,7 +426,7 @@ def layer_norm_quant(
     epsilon: float,
     scaling: torch.Tensor,
 ) -> None:
-    torch.ops._C.layer_norm_quant(
+    torch.ops._C.layer_norm_static_int8_quant(
         output, input, scaling, normalized_shape, weight, bias, epsilon
     )
 
