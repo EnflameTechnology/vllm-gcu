@@ -338,6 +338,7 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
                     layer.w13_scales.data = layer.w13_scales.data.squeeze(1)
                     layer.w2_scales.data = layer.w2_scales.data.squeeze(1)
             elif self.quant_config.weight_bits == 4:
+                self.quant_config.has_zp = True
                 from vllm_gcu.kernels.quantization.rearrange import (
                     rearrange_uint4_int32_uint8_gptq,
                 )
@@ -356,13 +357,13 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
                     qweight13, qzeros13 = rearrange_uint4_int32_uint8_gptq(
                         self,
                         qweight=qweight13.cpu(),
-                        qzeros=qzeros13.cpu() if qzeros13 else None,
+                        qzeros=qzeros13.cpu() if qzeros13 is not None else None,
                         scales=scales13.cpu(),
                     )
                     qweight2, qzeros2 = rearrange_uint4_int32_uint8_gptq(
                         self,
                         qweight=qweight2.cpu(),
-                        qzeros=qzeros2.cpu() if qzeros2 else None,
+                        qzeros=qzeros2.cpu() if qzeros2 is not None else None,
                         scales=scales2.cpu(),
                     )
                     # TODO: support weight shuffle
