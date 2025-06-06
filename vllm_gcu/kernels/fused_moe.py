@@ -138,7 +138,9 @@ def invoke_fused_moe_kernel(
                 block_n == block_k
             ), "FP8 only support DeepSeek V3 with same group_n and group_k"
             if A_scale is None:
-                A, A_scale = ops.per_token_group_quant_fp8(A, block_k)
+                A, A_scale = ops.per_token_group_quant_fp8(
+                    A, block_k, real_token_num=real_token_num
+                )
     elif use_int8_w8a16 or use_int4_w4a16:
         assert B_scale is not None
         assert block_shape and block_shape[0] == 0
