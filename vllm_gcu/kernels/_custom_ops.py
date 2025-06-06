@@ -10,6 +10,7 @@ except ImportError:
     from torch.library import impl_abstract as register_fake
 
 from vllm.platforms import current_platform
+
 import vllm_gcu._C  # noqa: F401
 
 
@@ -233,9 +234,7 @@ def _awq_gemm_gcu_fake(
     group_size=128,
 ) -> torch.Tensor:
     out_shape = input.shape[:-1] + (qweight.shape[-1],)
-    return torch.empty(
-        out_shape, dtype=input.dtype, device=input.device
-    )
+    return torch.empty(out_shape, dtype=input.dtype, device=input.device)
 
 
 # gptq
@@ -478,6 +477,7 @@ def per_token_group_quant_fp8(
     eps: float = 1e-10,
     dtype: Optional[torch.dtype] = None,
     column_major_scales: bool = False,
+    real_token_num: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     dtype = torch.float8_e4m3fn if dtype is None else dtype
     x_q = torch.empty_like(x, device=x.device, dtype=dtype)
@@ -485,7 +485,12 @@ def per_token_group_quant_fp8(
     shape = x.shape[:-1] + (x.shape[-1] // group_size,)
     x_s = torch.empty(shape, device=x.device, dtype=torch.float32)
 
-    torch.ops._C.dynamic_per_token_group_fp8_quant(x_q, x_s, x, group_size)
+    if real_token_num is None:
+        torch.ops._C.dynamic_per_token_group_fp8_quant(x_q, x_s, x, group_size)
+    else:
+        torch.ops._C.dynamic_per_token_group_fp8_quant_with_size(
+            x_q, x_s, x, real_token_num, group_size
+        )
 
     return x_q, x_s
 
