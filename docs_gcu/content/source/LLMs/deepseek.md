@@ -663,6 +663,8 @@ python3 -m vllm_utils.benchmark_serving \
 ### DeepSeek-R1-awq
 本模型推理及性能测试需要32张enflame gcu。
 
+模型推理需要安装peermem，具体安装方式参考《TopsRider 软件栈安装手册》
+
 #### 模型下载
 *  url: [DeepSeek-R1-awq](https://www.modelscope.cn/models/cognitivecomputations/DeepSeek-R1-awq)
 
@@ -729,7 +731,7 @@ python3 -m vllm.entrypoints.openai.api_server \
  --distributed_executor_backend ray \
  --max-num-batched-tokens 4096 \
  --max-num-seqs 256 \
- --gpu-memory-utilization 0.9 \
+ --gpu-memory-utilization 0.9
 
 
 # 在主节点上启动客户端
@@ -788,7 +790,7 @@ python3 -m vllm.entrypoints.openai.api_server \
  --block-size=64 \
  --enable-expert-parallel \
  --num-scheduler-steps 8 \
- --compilation-config "{\"cudagraph_capture_sizes\": [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]}" \
+ --compilation-config '{"cudagraph_capture_sizes": [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]}' \
  --scheduling-policy priority
 ```
 
@@ -797,14 +799,14 @@ python3 -m vllm.entrypoints.openai.api_server \
 # 将4台服务器ip分别填入[IP_Node0],[IP_Node1],[IP_Node2],[IP_Node3]
 # 主节点ip填入[master node ip]
 python3 -m vllm_utils.router \
- --server-urls "http://[IP_Node0]:7555 \
+ --server-urls http://[IP_Node0]:7555 \
   http://[IP_Node0]:7556 \
   http://[IP_Node1]:7555 \
   http://[IP_Node1]:7556 \
   http://[IP_Node2]:7555 \
   http://[IP_Node2]:7556 \
   http://[IP_Node3]:7555 \
-  http://[IP_Node3]:7556" \
+  http://[IP_Node3]:7556 \
  --host [master node ip] \
  --port 8002 \
  --model [path of DeepSeek-R1-awq]
@@ -832,6 +834,8 @@ python3 -m vllm_utils.benchmark_serving \
 
 ### DeepSeek-V3-awq
 本模型推理及性能测试需要32张enflame gcu。
+
+模型推理需要安装peermem，具体安装方式参考《TopsRider 软件栈安装手册》
 
 #### 模型下载
 *  url: [DeepSeek-V3-awq](https://www.modelscope.cn/models/cognitivecomputations/DeepSeek-V3-awq)
@@ -940,7 +944,7 @@ python3 -m vllm.entrypoints.openai.api_server \
  --gpu-memory-utilization=0.75 \
  --block-size=64 \
  --enable-expert-parallel \
- --compilation-config "{\"cudagraph_capture_sizes\": [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]}" \
+ --compilation-config '{"cudagraph_capture_sizes": [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]}' \
  --scheduling-policy priority
 ```
 
@@ -949,14 +953,14 @@ python3 -m vllm.entrypoints.openai.api_server \
 # 将4台服务器ip分别填入[IP_Node0],[IP_Node1],[IP_Node2],[IP_Node3]
 # 主节点ip填入[master node ip]
 python3 -m vllm_utils.router \
- --server-urls "http://[IP_Node0]:7555 \
+ --server-urls http://[IP_Node0]:7555 \
   http://[IP_Node0]:7556 \
   http://[IP_Node1]:7555 \
   http://[IP_Node1]:7556 \
   http://[IP_Node2]:7555 \
   http://[IP_Node2]:7556 \
   http://[IP_Node3]:7555 \
-  http://[IP_Node3]:7556" \
+  http://[IP_Node3]:7556 \
  --host [master node ip] \
  --port 8002 \
  --model [path of deepseek-v3-awq]
