@@ -447,8 +447,9 @@ def run_vllm(
 
             min_req_index = list(timings)[0]
             min_sum_decode_latency = timings[min_req_index]["decode"]
+            min_req_outputs = list(filter(lambda x: int(x.request_id) == min_req_index, outputs))[0]
+            real_decode_num = len(min_req_outputs.outputs[0].token_ids) - 1
 
-            real_decode_num = len(outputs[min_req_index].outputs[0].token_ids) - 1
             if real_decode_num > 0:
                 mean_decode_latency = min_sum_decode_latency / real_decode_num
                 avg_decode_latency += mean_decode_latency
