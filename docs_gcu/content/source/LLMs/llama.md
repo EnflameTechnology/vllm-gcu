@@ -597,7 +597,7 @@ python3 -m vllm_utils.benchmark_test \
  --output-len=256 \
  --quantization gptq \
  --tensor-parallel-size=2 \
- --gpu-memory-utilization=0.9 \
+ --gpu-memory-utilization=0.945 \
  --max-model-len=4096
 ```
 
@@ -615,7 +615,7 @@ python3 -m vllm_utils.benchmark_test --perf \
  --block-size=64 \
  --dtype=float16 \
  --quantization gptq \
- --gpu-memory-utilization=0.9
+ --gpu-memory-utilization=0.945
 ```
 注：
 *  本模型支持的`max-model-len`为8192；
@@ -640,7 +640,7 @@ python3 -m vllm_utils.benchmark_test --perf \
 #### requirements
 
 ```shell
-python3 -m pip install transformers==4.48.2 
+python3 -m pip install transformers==4.48.2
 ```
 
 #### 批量离线推理
@@ -747,7 +747,7 @@ python3 -m vllm_utils.benchmark_test \
 #### requirements
 
 ```shell
-python3 -m pip install transformers==4.48.2 
+python3 -m pip install transformers==4.48.2
 ```
 
 #### 批量离线推理
@@ -1096,7 +1096,7 @@ Meta-Llama-3.1-70B-Instruct_W4A16_AWQ/
 #### requirements
 
 ```shell
-python3 -m pip install transformers==4.48.2 
+python3 -m pip install transformers==4.48.2
 ```
 
 #### 批量离线推理

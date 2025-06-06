@@ -324,7 +324,7 @@ python3 -m vllm_utils.benchmark_test \
  --dtype=bfloat16 \
  --device=gcu \
  --max-model-len=32768 \
- --gpu-memory-utilization 0.9 \
+ --gpu-memory-utilization 0.945 \
  --trust-remote-code
 ```
 
@@ -342,7 +342,7 @@ python3 -m vllm_utils.benchmark_test --perf \
  --dtype=bfloat16 \
  --tensor-parallel-size=8 \
  --block-size=64 \
- --gpu-memory-utilization 0.9 \
+ --gpu-memory-utilization 0.945 \
  --trust-remote-code
 ```
 注：

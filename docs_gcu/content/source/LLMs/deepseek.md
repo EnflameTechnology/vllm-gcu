@@ -449,7 +449,7 @@ python3 -m vllm_utils.benchmark_test \
  --demo=te \
  --dtype=bfloat16 \
  --device gcu \
- --gpu-memory-utilization 0.9 \
+ --gpu-memory-utilization 0.945 \
  --trust-remote-code
 ```
 
@@ -462,7 +462,7 @@ python3 -m vllm.entrypoints.openai.api_server  \
  --tensor-parallel-size 1 \
  --max-model-len 32768 \
  --disable-log-requests \
- --gpu-memory-utilization 0.9 \
+ --gpu-memory-utilization 0.945 \
  --block-size=64 \
  --dtype=bfloat16 \
  --device gcu
