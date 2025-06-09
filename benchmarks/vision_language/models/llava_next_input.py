@@ -1,11 +1,11 @@
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Tuple
 import os
 import math
 import numpy as np
 from PIL import Image
 from vllm_utils.vision_language.models.base import VLMInput
 from vllm.assets.video import VideoAsset
-from transformers import LlavaNextVideoProcessor
+from transformers import LlavaNextVideoProcessor, LlavaNextConfig
 from transformers import (CLIPVisionConfig, LlavaOnevisionConfig,
                           SiglipVisionConfig)
 from transformers.models.llava_onevision.modeling_llava_onevision import get_anyres_image_grid_shape
@@ -134,6 +134,81 @@ def get_llava_onevision_image_feature_size(
 
     return unpadded_feature_size + newline_feature_size + base_feature_size
 
+# Based on: https://github.com/huggingface/text-generation-inference/blob/v2.2.0/server/text_generation_server/models/vlm_causal_lm.py#L79
+def _get_llava_next_num_unpadded_features(
+    original_height: int,
+    original_width: int,
+    npatches: int,
+    num_patch_height: int,
+    num_patch_width: int,
+) -> Tuple[int, int]:
+    current_height = npatches * num_patch_height
+    current_width = npatches * num_patch_width
+
+    aspect_ratio = original_width / original_height
+    current_aspect_ratio = current_width / current_height
+
+    if aspect_ratio > current_aspect_ratio:
+        new_height = (original_height * current_width) // original_width
+        padding = (current_height - new_height) // 2
+        current_height -= padding * 2
+    else:
+        new_width = (original_width * current_height) // original_height
+        padding = (current_width - new_width) // 2
+        current_width -= padding * 2
+
+    unpadded_features = current_height * current_width
+    newline_features = current_height
+    return (unpadded_features, newline_features)
+
+
+# Based on: https://github.com/huggingface/text-generation-inference/blob/v2.2.0/server/text_generation_server/models/vlm_causal_lm.py#L106
+def get_llava_next_image_feature_size(
+    hf_config: LlavaNextConfig,
+    *,
+    input_height: int,
+    input_width: int,
+) -> int:
+    vision_config = hf_config.vision_config
+
+    if isinstance(vision_config, CLIPVisionConfig):
+        num_patches = get_clip_patch_grid_length(
+            image_size=vision_config.image_size,
+            patch_size=vision_config.patch_size,
+        )
+        base_feature_size = get_clip_image_feature_size(vision_config)
+    elif isinstance(vision_config, SiglipVisionConfig):
+        num_patches = get_siglip_patch_grid_length(
+            image_size=vision_config.image_size,
+            patch_size=vision_config.patch_size,
+        )
+        base_feature_size = get_siglip_image_feature_size(vision_config)
+    else:
+        msg = f"Unsupported vision config: {type(vision_config)}"
+        raise NotImplementedError(msg)
+
+    strategy = hf_config.vision_feature_select_strategy
+    if strategy == "default":
+        base_feature_size -= 1
+    elif strategy == "full":
+        pass
+    else:
+        raise ValueError(f"Unexpected select feature strategy: {strategy}")
+
+    num_patch_height, num_patch_width = get_anyres_image_grid_shape(
+        image_size=(input_height, input_width),
+        grid_pinpoints=hf_config.image_grid_pinpoints,
+        patch_size=vision_config.image_size,
+    )
+
+    (
+        unpadded_feature_size,
+        newline_feature_size,
+    ) = _get_llava_next_num_unpadded_features(input_height, input_width,
+                                              num_patches, num_patch_height,
+                                              num_patch_width)
+
+    return unpadded_feature_size + newline_feature_size + base_feature_size
 
 class LlavaNextVideoInput(VLMInput):
     def __init__(self, model: str,
@@ -234,7 +309,6 @@ class LlavaNextImageInput(VLMInput):
         input_height = int(input_shape[-2])
         input_width = int(input_shape[-1])
 
-        from vllm.model_executor.models.llava_next import get_llava_next_image_feature_size
         image_feature_size = get_llava_next_image_feature_size(
             self.hf_config,input_height=input_height,input_width=input_width)
         return image_feature_size
