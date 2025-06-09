@@ -1,7 +1,9 @@
 #!/usr/bin/env python
 # coding=utf-8
 import itertools
-from typing import Any, Dict, List, Optional, Type
+from itertools import accumulate
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Type, TYPE_CHECKING
 
 import torch
 from vllm.attention.backends.abstract import AttentionType
@@ -13,10 +15,16 @@ from vllm.attention.backends.mla.common import (
 )
 
 from vllm.platforms import current_platform
+from vllm.utils import async_tensor_h2d, cdiv, make_tensor_with_pad, round_down
+from vllm.attention.backends.utils import PAD_SLOT_ID
+from vllm.attention.backends.abstract import AttentionMetadata
+
 
 from vllm import envs
 from vllm.attention.ops.triton_merge_attn_states import merge_attn_states
 import vllm_gcu.kernels._custom_ops as ops
+if TYPE_CHECKING:
+    from vllm.worker.model_runner import ModelInputForGPUWithSamplingMetadata
 
 
 class GCUMLABackend(MLACommonBackend):
@@ -36,6 +44,10 @@ class GCUMLABackend(MLACommonBackend):
         return GCUMLACommonMetadataBuilder
 
     @staticmethod
+    def get_metadata_cls() -> Type["AttentionMetadata"]:
+        return GCUMLACommonMetadata
+
+    @staticmethod
     def swap_blocks(
         src_kv_cache: torch.Tensor,
         dst_kv_cache: torch.Tensor,
@@ -52,18 +64,175 @@ class GCUMLABackend(MLACommonBackend):
         raise NotImplementedError
 
 
+@dataclass
+class GCUMLACommonMetadata(MLACommonMetadata):
+    def advance_step(self,
+                     model_input: "ModelInputForGPUWithSamplingMetadata",
+                     sampled_token_ids: Optional[torch.Tensor],
+                     block_size: int,
+                     num_seqs: int,
+                     num_queries: int,
+                     turn_prefills_into_decodes: bool = False):
+        super().advance_step(model_input, sampled_token_ids, block_size,
+                             num_seqs, num_queries, turn_prefills_into_decodes)
+        if not self.input_positions is model_input.input_positions:
+            # NOTE: input positions in model_input and attn_metadata
+            # are different obj in driver worker, same obj in other workers.
+            self.input_positions.add_(1)
+
 class GCUMLACommonMetadataBuilder(MLACommonMetadataBuilder):
-    def build(
-        self,
-        seq_lens: List[int],
-        query_lens: List[int],
-        cuda_graph_pad_size: int,
-        batch_size: int,
-    ):
+    def build(self, seq_lens: List[int], query_lens: List[int],
+              cuda_graph_pad_size: int, batch_size: int):
+        """Build attention metadata with on-device tensors.
+
+        Args:
+            seq_lens: The maybe padded sequence lengths of the input sequences.
+            query_lens: The query lengths of the input sequences.
+            cuda_graph_pad_size: The padding size for cuda graph.
+                                 -1 if cuda graph is not used.
+            batch_size: The maybe padded batch size.
+        """
+        prefix_cache_hit = any([
+            inter_data.prefix_cache_hit
+            for inter_data in self.input_builder.inter_data_list
+        ])
+
+        for inter_data in self.input_builder.inter_data_list:
+            self._add_seq_group(inter_data,
+                                self.input_builder.chunked_prefill_enabled,
+                                prefix_cache_hit)
+
+        device = self.runner.device
         use_captured_graph = cuda_graph_pad_size != -1
+
+        max_query_len = max(query_lens)
+        decode_query_lens = query_lens[self.num_prefills:]
+        if len(decode_query_lens) > 0:
+            max_decode_query_len = max(decode_query_lens)
+        else:
+            max_decode_query_len = 1
+        max_prefill_seq_len = max(self.prefill_seq_lens, default=0)
+        max_decode_seq_len = max(self.curr_seq_lens, default=0)
+        num_decode_tokens = self.num_decode_tokens
+        query_start_loc = list(accumulate(query_lens, initial=0))
+        seq_start_loc = list(accumulate(seq_lens, initial=0))
+
+        num_seqs = len(seq_lens)
         if use_captured_graph:
             self.input_positions.extend(itertools.repeat(0, cuda_graph_pad_size))
-        return super().build(seq_lens, query_lens, cuda_graph_pad_size, batch_size)
+            self.slot_mapping.extend([PAD_SLOT_ID] * cuda_graph_pad_size)
+            self.block_tables.extend([] * cuda_graph_pad_size)
+            num_decode_tokens = batch_size - self.num_prefill_tokens
+            block_tables = self._get_graph_runner_block_tables(
+                num_seqs, self.block_tables)
+        else:
+            block_tables = make_tensor_with_pad(
+                self.block_tables,
+                pad=0,
+                dtype=torch.int,
+                device=device,
+            )
+        assert max_query_len > 0, ("query_lens: {}".format(query_lens))
+
+        assert device is not None
+        context_lens_tensor = async_tensor_h2d(self.context_lens, torch.int,
+                                               device, self.runner.pin_memory)
+        seq_lens_tensor = async_tensor_h2d(seq_lens, torch.int, device,
+                                           self.runner.pin_memory)
+        input_positions = async_tensor_h2d(self.input_positions, torch.long,
+                                           device, self.runner.pin_memory)
+        slot_mapping_tensor = async_tensor_h2d(self.slot_mapping, torch.long,
+                                               device, self.runner.pin_memory)
+        query_start_loc_tensor = async_tensor_h2d(query_start_loc, torch.int32,
+                                                  device,
+                                                  self.runner.pin_memory)
+        seq_start_loc_tensor = async_tensor_h2d(seq_start_loc, torch.int32,
+                                                device, self.runner.pin_memory)
+
+        context_chunk_cu_seq_lens = None
+        context_chunk_starts = None
+        context_chunk_seq_tot = None
+        context_chunk_max_seq_lens = None
+
+        if (self.chunked_prefill_enabled or self.enable_prefix_caching) \
+                and self.num_prefills > 0 \
+                and context_lens_tensor is not None \
+                and context_lens_tensor[:self.num_prefills].max() > 0:
+
+            # NOTE: it is recommend you read the `Chunked Prefill` section in
+            # the comment at the top of the file before trying to understand
+            # the following code
+
+            num_prefills_with_context = \
+                (context_lens_tensor[:self.num_prefills] > 0).sum().item()
+
+            # currently we allocate an equal amount of workspace for each
+            # prefill in the batch, we could probably use a more advanced
+            # algorithm here and allocate more workspace to prefills with
+            # longer context lengths
+            max_context_chunk = \
+                self.context_chunk_workspace_size // num_prefills_with_context
+
+            # align max_context_chunk to page_size by rounding down,
+            # currently the `gather_cache` kernel cannot handle
+            # `context_chunk_starts` that are not aligned to page_size
+            max_context_chunk = round_down(max_context_chunk, self.page_size)
+            assert max_context_chunk > 0
+            num_chunks = cdiv(context_lens_tensor.max(), max_context_chunk)
+
+            # if `max_context_chunk = 256`, `num_chunks = 3`, and
+            #   `num_prefills_with_context = 4`, create a tensor that looks like
+            #  [[0, 0, 0, 0], [256, 256, 256, 256], [512, 512, 512, 512]]
+            context_chunk_starts = \
+                torch.arange(num_chunks, device=device, dtype=torch.int32)\
+                .unsqueeze(1).expand(-1, self.num_prefills)\
+                * max_context_chunk
+            chunk_ends = torch.min(context_lens_tensor[:self.num_prefills]
+                                   .unsqueeze(0), context_chunk_starts + max_context_chunk)
+            chunk_seq_lens = (chunk_ends - context_chunk_starts).clamp(min=0)
+            _context_chunk_cu_seq_lens = chunk_seq_lens.cumsum(dim=1).to(
+                torch.int32)
+            zero = torch.zeros(num_chunks, dtype=torch.int32, device=device)\
+                .unsqueeze(-1)
+            context_chunk_cu_seq_lens = \
+                torch.cat([zero, _context_chunk_cu_seq_lens], dim=1)
+            context_chunk_max_seq_lens = \
+                chunk_seq_lens.max(dim=1).values.tolist()
+            context_chunk_seq_tot = chunk_seq_lens.sum(dim=1).tolist()
+            assert max(context_chunk_seq_tot) <= \
+                self.context_chunk_workspace_size
+
+        return self.runner.attn_backend.make_metadata(
+            # Required by ModelRunner
+            use_cuda_graph=use_captured_graph,  # Not Attention Related
+            # Required by Attention Metadata
+            num_prefills=self.num_prefills,
+            slot_mapping=slot_mapping_tensor,
+            num_prefill_tokens=self.num_prefill_tokens,
+            num_decode_tokens=num_decode_tokens,
+            # Required by Attention Metadata (not used)
+            multi_modal_placeholder_index_maps=None,  # Not Attention Related
+            enable_kv_scales_calculation=False,
+            # MLACommonMetadata
+            input_positions=input_positions,
+            seq_lens=seq_lens,
+            seq_lens_tensor=seq_lens_tensor,
+            max_query_len=max_query_len,
+            max_decode_query_len=max_decode_query_len,
+            max_prefill_seq_len=max_prefill_seq_len,
+            max_decode_seq_len=max_decode_seq_len,
+            query_start_loc=query_start_loc_tensor,
+            seq_start_loc=seq_start_loc_tensor,
+            context_lens_tensor=context_lens_tensor,
+            block_tables=block_tables,
+            head_dim=self.runner.model_config.get_head_size(),
+            is_profile_run=self.runner.in_profile_run,
+            # MLACommonMetadata Chunk prefill specific
+            context_chunk_cu_seq_lens=context_chunk_cu_seq_lens,
+            context_chunk_starts=context_chunk_starts,
+            context_chunk_seq_tot=context_chunk_seq_tot,
+            context_chunk_max_seq_lens=context_chunk_max_seq_lens,
+        )
 
 
 class GCUMLAImpl(MLACommonImpl[MLACommonMetadata]):
