@@ -69,7 +69,9 @@ class MoeWNA16GCUConfig(QuantizationConfig):
         group_size = cls.get_from_keys(config, ["group_size"])
         lm_head_quantized = cls.get_from_keys_or(config, ["lm_head"], default=False)
         if linear_quant_method == "gptq":
-            has_zp = not cls.get_from_keys(config, ["sym"])
+            has_zp = (not cls.get_from_keys(config, ["sym"])) \
+                or (cls.get_from_keys(config, ["sym"]) \
+                and cls.get_from_keys(config, ["bits"]) == 4)
             modules_to_not_convert = []
         elif linear_quant_method == "awq":
             has_zp = cls.get_from_keys(config, ["zero_point"])
@@ -338,7 +340,6 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
                     layer.w13_scales.data = layer.w13_scales.data.squeeze(1)
                     layer.w2_scales.data = layer.w2_scales.data.squeeze(1)
             elif self.quant_config.weight_bits == 4:
-                self.quant_config.has_zp = True
                 from vllm_gcu.kernels.quantization.rearrange import (
                     rearrange_uint4_int32_uint8_gptq,
                 )
