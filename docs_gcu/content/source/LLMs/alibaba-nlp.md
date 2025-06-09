@@ -11,30 +11,19 @@
 
 将上述 url 路径下的内容全部下载到 `gte-Qwen2-7B-instruct` 文件夹中。
 
-#### 离线推理
-
-Server:
+#### 在线推理
 
 ```shell
+# 启动服务端
 python3 -m vllm.entrypoints.openai.api_server \
  --model [path of gte-Qwen2-7B-instruct] \
  --dtype=float16 \
  --max-model-len 32768
-```
 
-Client:
-
-```shell
-curl -X POST \
-http://localhost:8000/v1/embeddings \
+# 启动客户端
+curl -X POST http://localhost:8000/v1/embeddings \
   -H "Content-Type: application/json" \
-  -d '{
-        "model": [path of gte-Qwen2-7B-instruct],
-        "input": [
-            "text1",
-            "text2"
-        ]
-      }'
+  -d '{"model":"[path of gte-Qwen2-7B-instruct]","input":["text1","text2"]}'
 ```
 
 
@@ -43,15 +32,15 @@ http://localhost:8000/v1/embeddings \
 Server:
 
 ```shell
+# 启动服务端
 python3 -m vllm.entrypoints.openai.api_server \
  --model [path of gte-Qwen2-7B-instruct] \
  --dtype=float16 \
- --max-model-len 32768
-```
+ --max-model-len 32768 \
+ --block-size=64 \
+ --disable-log-requests
 
-Client:
-
-```shell
+# 启动客户端
 python -m vllm_utils.benchmark_embedding_rerank \
  --test-type embedding \
  --api-url http://localhost:8000/v1/embeddings \

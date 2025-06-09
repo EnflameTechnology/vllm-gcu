@@ -69,7 +69,7 @@ python3 -m vllm_utils.benchmark_vision_language \
 python3 -m pip install timm==1.0.15
 ```
 
-#### 批量离线推理
+#### 在线推理
 ```shell
 # 启动服务端
 python3 -m vllm.entrypoints.openai.api_server \
