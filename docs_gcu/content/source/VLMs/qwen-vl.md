@@ -252,7 +252,7 @@ python3 -m vllm_utils.benchmark_vision_language \
  --trust-remote-code \
  --block-size=64 \
  --quantization gptq \
- --gpu-memory-utilization 0.9
+ --gpu-memory-utilization 0.945
 ```
 ##### 多图性能测试
 ```shell

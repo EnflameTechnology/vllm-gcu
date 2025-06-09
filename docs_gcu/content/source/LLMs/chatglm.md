@@ -131,7 +131,8 @@ python3 -m vllm_utils.benchmark_test \
  --demo=tc \
  --dtype=float16 \
  --quantization=gptq \
- --output-len=256
+ --output-len=256 \
+ --trust-remote-code
 ```
 
 #### 性能测试
@@ -145,5 +146,6 @@ python3 -m vllm_utils.benchmark_test --perf \
  --block-size=64 \
  --dtype=float16 \
  --quantization=gptq \
- --max-model-len 8192
+ --max-model-len 8192 \
+ --trust-remote-code
 ```
