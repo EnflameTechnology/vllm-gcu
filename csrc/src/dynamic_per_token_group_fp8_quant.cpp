@@ -39,6 +39,10 @@ void dynamic_per_token_group_fp8_quant(at::Tensor &out, at::Tensor &scale,
         (*fallback_ops) == "all") {
       is_fallback = true;
 
+      // Log fallback CPU usage
+      VLLM_FALLBACK_CPU_LOG("dynamic_per_token_group_fp8_quant",
+                            "Using CPU fallback implementation");
+
       // Convert tensors to CPU for native implementation
       out_cpu = out.to(at::kCPU);
       scale_cpu = scale.to(at::kCPU);
@@ -47,6 +51,9 @@ void dynamic_per_token_group_fp8_quant(at::Tensor &out, at::Tensor &scale,
       // Call native implementation on CPU tensors
       vllmDynamicPerTokenGroupFP8Quant(out_cpu, scale_cpu, input_cpu,
                                        group_size);
+
+      VLLM_FALLBACK_CPU_LOG("dynamic_per_token_group_fp8_quant",
+                            "CPU fallback computation completed");
     }
   }
 #endif
@@ -58,6 +65,9 @@ void dynamic_per_token_group_fp8_quant(at::Tensor &out, at::Tensor &scale,
     const topsStream_t stream = torch_gcu::getCurrentGCUStream();
     topsStreamSynchronize(stream);
 
+    VLLM_FALLBACK_CPU_LOG("dynamic_per_token_group_fp8_quant",
+                          "Starting result verification");
+
     auto cpu_output = std::make_tuple(out_cpu, scale_cpu);
     auto device_outputs = std::make_tuple(out.to(at::kCPU),
                                           scale.to(at::kCPU));
@@ -66,6 +76,9 @@ void dynamic_per_token_group_fp8_quant(at::Tensor &out, at::Tensor &scale,
         "dynamic_per_token_group_fp8_quant");
     out.copy_(out_cpu);
     scale.copy_(scale_cpu);
+
+    VLLM_FALLBACK_CPU_LOG("dynamic_per_token_group_fp8_quant",
+                          "Fallback CPU results copied back to device");
   }
 #endif
 }

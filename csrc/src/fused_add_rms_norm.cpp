@@ -55,6 +55,10 @@ void fused_add_rms_norm(at::Tensor &input, at::Tensor &residual,
         (*fallback_ops) == "all") {
       is_fallback = true;
 
+      // Log fallback CPU usage
+      VLLM_FALLBACK_CPU_LOG("fused_add_rms_norm",
+                            "Using CPU fallback implementation");
+
       // Convert tensors to CPU for native implementation
       input_cpu = input.to(at::kCPU);
       residual_cpu = residual.to(at::kCPU);
@@ -63,6 +67,9 @@ void fused_add_rms_norm(at::Tensor &input, at::Tensor &residual,
       // Call native implementation on CPU tensors
       vllmFusedAddRmsNorm(input_cpu, residual_cpu, weight_cpu,
                           static_cast<float>(epsilon));
+
+      VLLM_FALLBACK_CPU_LOG("fused_add_rms_norm",
+                            "CPU fallback computation completed");
     }
   }
 #endif
@@ -74,12 +81,17 @@ void fused_add_rms_norm(at::Tensor &input, at::Tensor &residual,
     const topsStream_t stream = torch_gcu::getCurrentGCUStream();
     topsStreamSynchronize(stream);
 
+    VLLM_FALLBACK_CPU_LOG("fused_add_rms_norm", "Starting result verification");
+
     auto cpu_output = std::make_tuple(input_cpu);
     auto gcu_output = std::make_tuple(input.to(at::kCPU));
     EXPECT_TRUE(vllmFusedAddRmsNormCheck(cpu_output, gcu_output),
                 "fused_add_rms_norm");
     input.copy_(input_cpu);
     residual.copy_(residual_cpu);
+
+    VLLM_FALLBACK_CPU_LOG("fused_add_rms_norm",
+                          "Fallback CPU results copied back to device");
   }
 #endif
 }

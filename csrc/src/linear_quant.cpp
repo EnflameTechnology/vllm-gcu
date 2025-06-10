@@ -35,10 +35,6 @@ void linear_quant(at::Tensor &out, const at::Tensor &lhs, const at::Tensor &rhs,
   }
 
 #ifndef NDEBUG
-  std::cout << "[DEBUG] linear_quant: Entering debug mode, checking fallback "
-               "options..."
-            << std::endl;
-
   auto fallback_ops = c10::utils::get_env("VLLM_GCU_FALLBACK_CPU");
   bool is_fallback = false;
   at::Tensor out_cpu, lhs_cpu, rhs_cpu, bias_tensor_cpu, lhs_scale_cpu,
@@ -48,25 +44,30 @@ void linear_quant(at::Tensor &out, const at::Tensor &lhs, const at::Tensor &rhs,
     if (fallback_ops->find("linear_quant") != std::string::npos ||
         (*fallback_ops) == "all") {
       is_fallback = true;
-      std::cout << "[DEBUG] linear_quant: Fallback to CPU enabled for "
-                   "linear_quant operation"
-                << std::endl;
+
+      // Log fallback CPU usage
+      VLLM_FALLBACK_CPU_LOG("linear_quant",
+                            "Using CPU fallback implementation");
 
       // Convert tensors to CPU for native implementation
       out_cpu = out.to(at::kCPU);
       lhs_cpu = lhs.to(at::kCPU);
       rhs_cpu = rhs.to(at::kCPU);
-      bias_tensor_cpu = bias_tensor.to(at::kCPU);
+      //bias_tensor_cpu = bias_tensor.to(at::kCPU);
+      if (bias.has_value()) {
+        bias_tensor_cpu = bias.value().to(at::kCPU);
+      } else {
+        bias_tensor_cpu = at::Tensor();
+      }
       lhs_scale_cpu = lhs_scale.to(at::kCPU);
       rhs_scale_cpu = rhs_scale.to(at::kCPU);
 
-      std::cout << "[DEBUG] linear_quant: Calling native CPU implementation..."
-                << std::endl;
       // Call native implementation on CPU tensors
       atenLinearQuant(out_cpu, lhs_cpu, rhs_cpu, bias_tensor_cpu, lhs_scale_cpu,
                       rhs_scale_cpu);
-      std::cout << "[DEBUG] linear_quant: CPU implementation completed"
-                << std::endl;
+
+      VLLM_FALLBACK_CPU_LOG("linear_quant",
+                            "CPU fallback computation completed");
     }
   }
 #endif
@@ -75,27 +76,20 @@ void linear_quant(at::Tensor &out, const at::Tensor &lhs, const at::Tensor &rhs,
 
 #ifndef NDEBUG
   if (is_fallback) {
-    std::cout
-        << "[DEBUG] linear_quant: Synchronizing GCU stream before comparison..."
-        << std::endl;
     const topsStream_t stream = torch_gcu::getCurrentGCUStream();
     topsStreamSynchronize(stream);
 
-    std::cout << "[DEBUG] linear_quant: Performing result comparison between "
-                 "CPU and GCU implementations..."
-              << std::endl;
+    VLLM_FALLBACK_CPU_LOG("linear_quant", "Starting result verification");
+
     auto cpu_output = std::make_tuple(out_cpu);
     auto device_outputs = std::make_tuple(out.to(at::kCPU));
     EXPECT_TRUE(atenLinearQuantCheck(cpu_output, device_outputs),
                 "linear_quant");
 
-    std::cout
-        << "[DEBUG] linear_quant: Copying CPU results back to output tensor..."
-        << std::endl;
     out.copy_(out_cpu);
-    std::cout
-        << "[DEBUG] linear_quant: Fallback execution completed successfully"
-        << std::endl;
+
+    VLLM_FALLBACK_CPU_LOG("linear_quant",
+                          "Fallback CPU results copied back to device");
   }
 #endif
 }

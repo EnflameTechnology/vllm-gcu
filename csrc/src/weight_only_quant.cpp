@@ -57,6 +57,10 @@ void weight_only_quant(at::Tensor &output, const at::Tensor &input,
         (*fallback_ops) == "all") {
       is_fallback = true;
 
+      // Log fallback CPU usage
+      VLLM_FALLBACK_CPU_LOG("weight_only_quant",
+                            "Using CPU fallback implementation");
+
       // Convert tensors to CPU for native implementation
       output_cpu = output.to(at::kCPU);
       input_cpu = input.to(at::kCPU);
@@ -70,6 +74,9 @@ void weight_only_quant(at::Tensor &output, const at::Tensor &input,
       // Note: Assuming there's a corresponding native function
       atenLinearQuant(output_cpu, input_cpu, qweight_cpu, bias_tensor_cpu,
                       scale_cpu, scale_cpu);
+
+      VLLM_FALLBACK_CPU_LOG("weight_only_quant",
+                            "CPU fallback computation completed");
     }
   }
 #endif
@@ -81,11 +88,14 @@ void weight_only_quant(at::Tensor &output, const at::Tensor &input,
     const topsStream_t stream = torch_gcu::getCurrentGCUStream();
     topsStreamSynchronize(stream);
 
+    VLLM_FALLBACK_CPU_LOG("weight_only_quant", "Starting result verification");
     auto cpu_output = std::make_tuple(output_cpu);
     auto device_outputs = std::make_tuple(output.to(at::kCPU));
     EXPECT_TRUE(atenLinearQuantCheck(cpu_output, device_outputs),
                 "weight_only_quant");
     output.copy_(output_cpu);
+    VLLM_FALLBACK_CPU_LOG("weight_only_quant",
+                          "Fallback CPU results copied back to device");
   }
 #endif
 }
