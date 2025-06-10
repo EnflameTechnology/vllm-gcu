@@ -18,20 +18,18 @@ python3 -m pip install transformers==4.52.4 beir==2.1.0
 
 #### 离线推理
 
-Server:
-
 ```shell
+
+# 启动服务端
 python3 -m vllm.entrypoints.openai.api_server  \
     --model [jina-reranker-v2-base-multilingual] \
     --served-model-name jina-reranker-v2-base-multilingual  \
     --task embed \
     --trust-remote-code \
+    --max-model-len 1024 \
     --port 6343
-```
 
-Client:
-
-```shell
+# 启动客户端
 curl -X POST \
 http://localhost:6343/rerank \
   -H "Content-Type: application/json" \
@@ -50,20 +48,18 @@ http://localhost:6343/rerank \
 
 #### 性能测试
 
-Server:
-
 ```shell
+
+# 启动服务端
 python3 -m vllm.entrypoints.openai.api_server  \
     --model [jina-reranker-v2-base-multilingual] \
     --served-model-name jina-reranker-v2-base-multilingual  \
     --task embed \
     --trust-remote-code \
+    --max-model-len 1024 \
     --port 6343
-```
 
-Client:
-
-```shell
+# 启动客户端
 python3 -m vllm_utils.benchmark_embedding_rerank \
     --tokenizer [jina-reranker-v2-base-multilingual] \
     --trust-remote-code \

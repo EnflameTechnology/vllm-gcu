@@ -29,7 +29,6 @@ curl -X POST http://localhost:8000/v1/embeddings \
 
 #### 性能测试
 
-Server:
 
 ```shell
 # 启动服务端
