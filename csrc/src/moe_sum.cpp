@@ -88,6 +88,9 @@ void moe_sum(at::Tensor &out, const at::Tensor &input, const at::Tensor &size,
         (*fallback_ops) == "all") {
       is_fallback = true;
 
+      // Log fallback CPU usage
+      VLLM_FALLBACK_CPU_LOG("moe_sum", "Using CPU fallback implementation");
+
       // Convert tensors to CPU for native implementation
       out_cpu = out.to(at::kCPU);
       input_cpu = input.to(at::kCPU);
@@ -101,6 +104,8 @@ void moe_sum(at::Tensor &out, const at::Tensor &input, const at::Tensor &size,
       // Call native implementation on CPU tensors
       extsSum(out_cpu, input_cpu, size_cpu, dimensions, keepdim, dtype_aten,
               nullptr);
+
+      VLLM_FALLBACK_CPU_LOG("moe_sum", "CPU fallback computation completed");
     }
   }
 #endif
@@ -112,10 +117,15 @@ void moe_sum(at::Tensor &out, const at::Tensor &input, const at::Tensor &size,
     const topsStream_t stream = torch_gcu::getCurrentGCUStream();
     topsStreamSynchronize(stream);
 
+    VLLM_FALLBACK_CPU_LOG("moe_sum", "Starting result verification");
+
     auto cpu_output = std::make_tuple(out_cpu);
     auto device_outputs = std::make_tuple(out.to(at::kCPU));
     EXPECT_TRUE(extsSumCheck(cpu_output, device_outputs), "moe_sum");
     out.copy_(out_cpu);
+
+    VLLM_FALLBACK_CPU_LOG("moe_sum",
+                          "Fallback CPU results copied back to device");
   }
 #endif
 }

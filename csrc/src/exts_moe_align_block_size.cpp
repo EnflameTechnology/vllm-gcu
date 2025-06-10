@@ -43,9 +43,13 @@ void exts_moe_align_block_size(at::Tensor& sorted_token_ids,
   at::Tensor topk_ids_cpu, real_token_num_cpu, expert_map_cpu;
 
   if (fallback_ops.has_value()) {
-    if (fallback_ops->find("ets_moe_align_block_size") != std::string::npos ||
+    if (fallback_ops->find("exts_moe_align_block_size") != std::string::npos ||
         (*fallback_ops) == "all") {
       is_fallback = true;
+
+      // Log fallback CPU usage
+      VLLM_FALLBACK_CPU_LOG("exts_moe_align_block_size",
+                            "Using CPU fallback implementation");
 
       // Convert tensors to CPU for native implementation
       sorted_token_ids_cpu = sorted_token_ids.to(at::kCPU);
@@ -60,6 +64,9 @@ void exts_moe_align_block_size(at::Tensor& sorted_token_ids,
                             num_tokens_post_pad_cpu, topk_ids_cpu,
                             real_token_num_cpu, expert_map_cpu, num_experts,
                             block_size);
+
+      VLLM_FALLBACK_CPU_LOG("exts_moe_align_block_size",
+                            "CPU fallback computation completed");
     }
   }
 #endif
@@ -73,17 +80,22 @@ void exts_moe_align_block_size(at::Tensor& sorted_token_ids,
     const topsStream_t stream = torch_gcu::getCurrentGCUStream();
     topsStreamSynchronize(stream);
 
+    VLLM_FALLBACK_CPU_LOG("exts_moe_align_block_size",
+                          "Starting result verification");
+
     auto cpu_output = std::make_tuple(sorted_token_ids_cpu, experts_ids_cpu,
                                       num_tokens_post_pad_cpu);
     auto device_outputs =
-        std::make_tuple(sorted_token_ids.to(at::kCPU),
-                        experts_ids.to(at::kCPU),
+        std::make_tuple(sorted_token_ids.to(at::kCPU), experts_ids.to(at::kCPU),
                         num_tokens_post_pad.to(at::kCPU));
     EXPECT_TRUE(extsMoeAlignBlockSizeCheck(cpu_output, device_outputs),
-                "ets_moe_align_block_size");
+                "exts_moe_align_block_size");
     sorted_token_ids.copy_(sorted_token_ids_cpu);
     experts_ids.copy_(experts_ids_cpu);
     num_tokens_post_pad.copy_(num_tokens_post_pad_cpu);
+
+    VLLM_FALLBACK_CPU_LOG("exts_moe_align_block_size",
+                          "Fallback CPU results copied back to device");
   }
 #endif
 }

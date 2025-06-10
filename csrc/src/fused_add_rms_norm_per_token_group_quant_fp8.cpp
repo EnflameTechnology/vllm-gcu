@@ -42,6 +42,10 @@ void fused_add_rms_norm_per_token_group_quant_fp8(
         (*fallback_ops) == "all") {
       is_fallback = true;
 
+      // Log fallback CPU usage
+      VLLM_FALLBACK_CPU_LOG("fused_add_rms_norm_per_token_group_quant_fp8",
+                            "Using CPU fallback implementation");
+
       // Convert tensors to CPU for native implementation
       out_cpu = out.to(at::kCPU);
       residual_cpu = residual.to(at::kCPU);
@@ -53,6 +57,9 @@ void fused_add_rms_norm_per_token_group_quant_fp8(
       vllmFusedAddRmsNormPerTokenGroupQuantFp8(
           out_cpu, residual_cpu, scale_cpu, input_cpu, residual_cpu, weight_cpu,
           static_cast<float>(epsilon), group_size);
+
+      VLLM_FALLBACK_CPU_LOG("fused_add_rms_norm_per_token_group_quant_fp8",
+                            "CPU fallback computation completed");
     }
   }
 #endif
@@ -65,6 +72,9 @@ void fused_add_rms_norm_per_token_group_quant_fp8(
     const topsStream_t stream = torch_gcu::getCurrentGCUStream();
     topsStreamSynchronize(stream);
 
+    VLLM_FALLBACK_CPU_LOG("fused_add_rms_norm_per_token_group_quant_fp8",
+                          "Starting result verification");
+
     auto cpu_output = std::make_tuple(out_cpu, residual_cpu, scale_cpu);
     auto gcu_output = std::make_tuple(out.to(at::kCPU),
                                       residual.to(at::kCPU),
@@ -75,6 +85,9 @@ void fused_add_rms_norm_per_token_group_quant_fp8(
     out.copy_(out_cpu);
     residual.copy_(residual_cpu);
     scale.copy_(scale_cpu);
+
+    VLLM_FALLBACK_CPU_LOG("fused_add_rms_norm_per_token_group_quant_fp8",
+                          "Fallback CPU results copied back to device");
   }
 #endif
 }

@@ -2,8 +2,10 @@
  * Copyright 2024 Enflame. All Rights Reserved.
  */
 #include "rms_norm_per_token_group_quant_fp8.h"
-#include <tuple>
+
 #include <topsaten/topsaten_vllm.h>
+
+#include <tuple>
 
 #include "tops_extension/torch/GCUAten.h"
 #include "torch_gcu.h"
@@ -40,6 +42,10 @@ void rms_norm_per_token_group_quant_fp8(at::Tensor &out, at::Tensor &scale,
         (*fallback_ops) == "all") {
       is_fallback = true;
 
+      // Log fallback CPU usage
+      VLLM_FALLBACK_CPU_LOG("rms_norm_per_token_group_quant_fp8",
+                            "Using CPU fallback implementation");
+
       // Convert tensors to CPU for native implementation
       out_cpu = out.to(at::kCPU);
       scale_cpu = scale.to(at::kCPU);
@@ -50,6 +56,9 @@ void rms_norm_per_token_group_quant_fp8(at::Tensor &out, at::Tensor &scale,
       vllmRmsNormPerTokenGroupQuantFp8(out_cpu, scale_cpu, input_cpu,
                                        weight_cpu, static_cast<float>(epsilon),
                                        group_size);
+
+      VLLM_FALLBACK_CPU_LOG("rms_norm_per_token_group_quant_fp8",
+                            "CPU fallback computation completed");
     }
   }
 #endif
@@ -62,17 +71,21 @@ void rms_norm_per_token_group_quant_fp8(at::Tensor &out, at::Tensor &scale,
     const topsStream_t stream = torch_gcu::getCurrentGCUStream();
     topsStreamSynchronize(stream);
 
+    VLLM_FALLBACK_CPU_LOG("rms_norm_per_token_group_quant_fp8",
+                          "Starting result verification");
+
     auto cpu_output = std::make_tuple(out_cpu, scale_cpu);
-    auto device_outputs = std::make_tuple(out.to(at::kCPU),
-                                          scale.to(at::kCPU));
+    auto device_outputs = std::make_tuple(out.to(at::kCPU), scale.to(at::kCPU));
     EXPECT_TRUE(
         vllmRmsNormPerTokenGroupQuantFp8Check(cpu_output, device_outputs),
         "rms_norm_per_token_group_quant_fp8");
     out.copy_(out_cpu);
     scale.copy_(scale_cpu);
+
+    VLLM_FALLBACK_CPU_LOG("rms_norm_per_token_group_quant_fp8",
+                          "Fallback CPU results copied back to device");
   }
 #endif
 }
 
 }  // namespace vllm_gcu::llm_ops
-

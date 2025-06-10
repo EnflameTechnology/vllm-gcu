@@ -58,6 +58,10 @@ void rotary_embedding_with_kv_cache(
         (*fallback_ops) == "all") {
       is_fallback = true;
 
+      // Log fallback CPU usage
+      VLLM_FALLBACK_CPU_LOG("rotary_embedding_with_kv_cache",
+                            "Using CPU fallback implementation");
+
       // Convert tensors to CPU for native implementation
       q_out_cpu = q_out.to(at::kCPU);
       kv_cache_cpu = kv_cache.to(at::kCPU);
@@ -77,6 +81,9 @@ void rotary_embedding_with_kv_cache(
           q_out_cpu, kv_cache_cpu, q_cpu, kv_cpu, positions_cpu,
           cos_sin_cache_cpu, weight_cpu, slot_mapping_cpu, scale_tensor_cpu,
           eps, split_size_vec, std::string(kv_cache_dtype));
+
+      VLLM_FALLBACK_CPU_LOG("rotary_embedding_with_kv_cache",
+                            "CPU fallback computation completed");
     }
   }
 #endif
@@ -90,6 +97,9 @@ void rotary_embedding_with_kv_cache(
     const topsStream_t stream = torch_gcu::getCurrentGCUStream();
     topsStreamSynchronize(stream);
 
+    VLLM_FALLBACK_CPU_LOG("rotary_embedding_with_kv_cache",
+                          "Starting result verification");
+
     auto cpu_output = std::make_tuple(q_out_cpu, kv_cache_cpu);
     auto device_outputs = std::make_tuple(q_out.to(at::kCPU),
                                           kv_cache.to(at::kCPU));
@@ -97,6 +107,9 @@ void rotary_embedding_with_kv_cache(
                 "rotary_embedding_with_kv_cache");
     q_out.copy_(q_out_cpu);
     kv_cache.copy_(kv_cache_cpu);
+
+    VLLM_FALLBACK_CPU_LOG("rotary_embedding_with_kv_cache",
+                          "Fallback CPU results copied back to device");
   }
 #endif
 }
