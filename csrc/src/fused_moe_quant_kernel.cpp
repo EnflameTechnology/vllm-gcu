@@ -90,6 +90,10 @@ void fused_moe_quant_kernel(
         (*fallback_ops) == "all") {
       is_fallback = true;
 
+      // Log fallback CPU usage
+      VLLM_FALLBACK_CPU_LOG("fused_moe_quant_kernel",
+                            "Using CPU fallback implementation");
+
       // Convert tensors to CPU for native implementation
       C_cpu = C.to(at::kCPU);
       A_cpu = A.to(at::kCPU);
@@ -120,19 +124,50 @@ void fused_moe_quant_kernel(
       // Call native implementation on CPU tensors
       if (A_scale.has_value()) {
         // w8a8 path - use second function signature
+        at::Tensor empty_zp = at::Tensor();
         vllmInvokeFusedMoeNonGatherQuantKernel(
-            C_cpu, A_cpu, B_cpu, A_scale_cpu, B_scale_cpu, bias_cpu,
-            topk_weights_cpu, topk_ids_cpu, sorted_token_ids_cpu,
-            experts_ids_cpu, num_tokens_post_pad_cpu, real_token_num_cpu,
-            mul_routed_weight, topk, block_size);
+            C_cpu,            // at::Tensor &C
+            A_cpu,            // const at::Tensor &A
+            B_cpu,            // const at::Tensor &B
+            A_scale_cpu,      // const at::Tensor &AScale
+            B_scale_cpu,      // const at::Tensor &Scale
+            gs,               // int64_t gs
+            empty_zp,         // const at::Tensor &Deq_Zeros (empty for w8a8)
+            bias_cpu,         // const at::Tensor &bias
+            topk_weights_cpu, // const at::Tensor &topk_weights
+            topk_ids_cpu,     // const at::Tensor &topk_ids
+            sorted_token_ids_cpu,    // const at::Tensor &sorted_token_ids
+            experts_ids_cpu,         // const at::Tensor &experts_ids
+            num_tokens_post_pad_cpu, // const at::Tensor &num_tokens_post_pad
+            real_token_num_cpu,      // const at::Tensor &real_token_num
+            mul_routed_weight,       // bool mul_routed_weight
+            topk,                    // int64_t topk
+            block_size);             // int64_t block_size
       } else {
+        at::Tensor empty_scale = at::Tensor();
         // non-w8a8 path - use first function signature
         vllmInvokeFusedMoeNonGatherQuantKernel(
-            C_cpu, A_cpu, B_cpu, B_scale_cpu, gs, B_zp_cpu, bias_cpu,
-            topk_weights_cpu, topk_ids_cpu, sorted_token_ids_cpu,
-            experts_ids_cpu, num_tokens_post_pad_cpu, real_token_num_cpu,
-            mul_routed_weight, topk, block_size);
+            C_cpu,            // at::Tensor &C
+            A_cpu,            // const at::Tensor &A
+            B_cpu,            // const at::Tensor &B
+            empty_scale,      // const at::Tensor &AScale (empty for non-w8a8)
+            B_scale_cpu,      // const at::Tensor &Scale
+            gs,               // int64_t gs
+            B_zp_cpu,         // const at::Tensor &Deq_Zeros
+            bias_cpu,         // const at::Tensor &bias
+            topk_weights_cpu, // const at::Tensor &topk_weights
+            topk_ids_cpu,     // const at::Tensor &topk_ids
+            sorted_token_ids_cpu,    // const at::Tensor &sorted_token_ids
+            experts_ids_cpu,         // const at::Tensor &experts_ids
+            num_tokens_post_pad_cpu, // const at::Tensor &num_tokens_post_pad
+            real_token_num_cpu,      // const at::Tensor &real_token_num
+            mul_routed_weight,       // bool mul_routed_weight
+            topk,                    // int64_t topk
+            block_size);             // int64_t block_size
       }
+
+      VLLM_FALLBACK_CPU_LOG("fused_moe_quant_kernel",
+                            "CPU fallback computation completed");
     }
   }
 #endif
@@ -147,12 +182,19 @@ void fused_moe_quant_kernel(
     const topsStream_t stream = torch_gcu::getCurrentGCUStream();
     topsStreamSynchronize(stream);
 
+    VLLM_FALLBACK_CPU_LOG("fused_moe_quant_kernel",
+                          "Starting result verification");
+
     auto cpu_output = std::make_tuple(C_cpu);
-    auto device_outputs = std::make_tuple(C.to(at::kCPU));
+    // auto device_outputs = std::make_tuple(C.to(at::kCPU));
+    auto device_outputs = std::make_tuple(C);
     EXPECT_TRUE(
         vllmInvokeFusedMoeNonGatherQuantKernelCheck(cpu_output, device_outputs),
         "fused_moe_quant_kernel");
     C.copy_(C_cpu);
+
+    VLLM_FALLBACK_CPU_LOG("fused_moe_quant_kernel",
+                          "Fallback CPU results copied back to device");
   }
 #endif
 }

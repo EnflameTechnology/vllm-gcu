@@ -60,6 +60,9 @@ void rms_norm(at::Tensor &out, const at::Tensor &input,
         (*fallback_ops) == "all") {
       is_fallback = true;
 
+      // Log fallback CPU usage
+      VLLM_FALLBACK_CPU_LOG("rms_norm", "Using CPU fallback implementation");
+
       // Convert tensors to CPU for native implementation
       at::Tensor view_out = out.view({-1, out.size(-1)});
       at::Tensor view_input = input.view({-1, input.size(-1)});
@@ -69,6 +72,8 @@ void rms_norm(at::Tensor &out, const at::Tensor &input,
 
       // Call native implementation on CPU tensors
       vllmRmsNorm(view_out_cpu, view_input_cpu, device_weight_cpu, epsilon);
+
+      VLLM_FALLBACK_CPU_LOG("rms_norm", "CPU fallback computation completed");
     }
   }
 #endif
@@ -80,11 +85,16 @@ void rms_norm(at::Tensor &out, const at::Tensor &input,
     const topsStream_t stream = torch_gcu::getCurrentGCUStream();
     topsStreamSynchronize(stream);
 
+    VLLM_FALLBACK_CPU_LOG("rms_norm", "Starting result verification");
+
     auto cpu_output = std::make_tuple(view_out_cpu);
     auto reshaped_out = out.view({-1, out.size(-1)});
     auto device_outputs = std::make_tuple(reshaped_out.to(at::kCPU));
     EXPECT_TRUE(vllmRmsNormCheck(cpu_output, device_outputs), "rms_norm");
     out.copy_(view_out_cpu.view_as(out));
+
+    VLLM_FALLBACK_CPU_LOG("rms_norm",
+                          "Fallback CPU results copied back to device");
   }
 #endif
 }

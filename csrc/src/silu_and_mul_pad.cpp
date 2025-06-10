@@ -52,6 +52,10 @@ void silu_and_mul_pad(at::Tensor &out, const at::Tensor &input,
         (*fallback_ops) == "all") {
       is_fallback = true;
 
+      // Log fallback CPU usage
+      VLLM_FALLBACK_CPU_LOG("silu_and_mul_pad",
+                            "Using CPU fallback implementation");
+
       // Convert tensors to CPU for native implementation
       out_cpu = out.to(at::kCPU);
       input_cpu = input.to(at::kCPU);
@@ -59,6 +63,9 @@ void silu_and_mul_pad(at::Tensor &out, const at::Tensor &input,
 
       // Call native implementation on CPU tensors
       extSiluAndMul(out_cpu, input_cpu, size_cpu);
+
+      VLLM_FALLBACK_CPU_LOG("silu_and_mul_pad",
+                            "CPU fallback computation completed");
     }
   }
 #endif
@@ -70,11 +77,14 @@ void silu_and_mul_pad(at::Tensor &out, const at::Tensor &input,
     const topsStream_t stream = torch_gcu::getCurrentGCUStream();
     topsStreamSynchronize(stream);
 
+    VLLM_FALLBACK_CPU_LOG("silu_and_mul_pad", "Starting result verification");
     auto cpu_output = std::make_tuple(out_cpu);
     auto device_outputs = std::make_tuple(out.to(at::kCPU));
     EXPECT_TRUE(extSiluAndMulCheck(cpu_output, device_outputs),
                 "silu_and_mul_pad");
     out.copy_(out_cpu);
+    VLLM_FALLBACK_CPU_LOG("silu_and_mul_pad",
+                          "Fallback CPU results copied back to device");
   }
 #endif
 }

@@ -58,6 +58,10 @@ void concat_and_cache_mla(const at::Tensor &kv_c, const at::Tensor &k_pe,
         (*fallback_ops) == "all") {
       is_fallback = true;
 
+      // Log fallback CPU usage
+      VLLM_FALLBACK_CPU_LOG("concat_and_cache_mla",
+                            "Using CPU fallback implementation");
+
       // Convert tensors to CPU for native implementation
       kv_cache_cpu = kv_cache.to(at::kCPU);
       kv_c_cpu = kv_c.to(at::kCPU);
@@ -68,6 +72,9 @@ void concat_and_cache_mla(const at::Tensor &kv_c, const at::Tensor &k_pe,
       // Call native implementation on CPU tensors
       vllmConcatAndCacheMla(kv_cache_cpu, kv_c_cpu, k_pe_cpu, slot_mapping_cpu,
                             kv_dtype, scale_tensor_cpu);
+
+      VLLM_FALLBACK_CPU_LOG("concat_and_cache_mla",
+                            "CPU fallback computation completed");
     }
   }
 #endif
@@ -80,11 +87,16 @@ void concat_and_cache_mla(const at::Tensor &kv_c, const at::Tensor &k_pe,
     const topsStream_t stream = torch_gcu::getCurrentGCUStream();
     topsStreamSynchronize(stream);
 
+    VLLM_FALLBACK_CPU_LOG("concat_and_cache_mla",
+                          "Starting result verification");
+
     auto cpu_output = std::make_tuple(kv_cache_cpu);
     auto device_outputs = std::make_tuple(kv_cache.to(at::kCPU));
     EXPECT_TRUE(vllmConcatAndCacheMlaCheck(cpu_output, device_outputs),
                 "concat_and_cache_mla");
     kv_cache.copy_(kv_cache_cpu);
+    VLLM_FALLBACK_CPU_LOG("concat_and_cache_mla",
+                          "Fallback CPU results copied back to device");
   }
 #endif
 }

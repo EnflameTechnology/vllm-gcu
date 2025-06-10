@@ -34,6 +34,10 @@ void fused_qkv_proj(at::Tensor &q, at::Tensor &kv, const at::Tensor &x,
     if (fallback_ops->find("fused_qkv_proj") != std::string::npos) {
       is_fallback = true;
 
+      // Log fallback CPU usage
+      VLLM_FALLBACK_CPU_LOG("fused_qkv_proj",
+                            "Using CPU fallback implementation");
+
       // Convert tensors to CPU for native implementation
       q_cpu = q.to(at::kCPU);
       kv_cpu = kv.to(at::kCPU);
@@ -45,6 +49,9 @@ void fused_qkv_proj(at::Tensor &q, at::Tensor &kv, const at::Tensor &x,
       // Call native implementation on CPU tensors
       extsFusedQKVProj(q_cpu, kv_cpu, x_cpu, weight_cpu, x_scale_cpu,
                        weight_scale_cpu, group_size);
+
+      VLLM_FALLBACK_CPU_LOG("fused_qkv_proj",
+                            "CPU fallback computation completed");
     }
   }
 #endif
@@ -53,12 +60,17 @@ void fused_qkv_proj(at::Tensor &q, at::Tensor &kv, const at::Tensor &x,
 
 #ifndef NDEBUG
   if (is_fallback) {
+    VLLM_FALLBACK_CPU_LOG("fused_qkv_proj", "Starting result verification");
+
     auto cpu_output = std::make_tuple(q_cpu, kv_cpu);
     auto gcu_output = std::make_tuple(q.to(at::kCPU), kv.to(at::kCPU));
     EXPECT_TRUE(extsFusedQKVProjCheck(cpu_output, gcu_output),
                 "fused_qkv_proj");
     q.copy_(q_cpu);
     kv.copy_(kv_cpu);
+
+    VLLM_FALLBACK_CPU_LOG("fused_qkv_proj",
+                          "Fallback CPU results copied back to device");
   }
 #endif
 }
