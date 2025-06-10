@@ -56,6 +56,10 @@ void moe_align_block_size_pad(at::Tensor topk_ids, at::Tensor topk_ids_size,
         (*fallback_ops) == "all") {
       is_fallback = true;
 
+      // Log fallback CPU usage
+      VLLM_FALLBACK_CPU_LOG("moe_align_block_size_pad",
+                            "Using CPU fallback implementation");
+
       // Convert tensors to CPU for native implementation
       topk_ids_cpu = topk_ids.to(at::kCPU);
       topk_ids_size_cpu = topk_ids_size.to(at::kCPU);
@@ -69,6 +73,9 @@ void moe_align_block_size_pad(at::Tensor topk_ids, at::Tensor topk_ids_size,
           sorted_token_ids_cpu, experts_ids_cpu, num_tokens_post_pad_cpu,
           topk_ids_cpu, topk_ids_size_cpu, static_cast<int>(num_experts),
           static_cast<int>(block_size));
+
+      VLLM_FALLBACK_CPU_LOG("moe_align_block_size_pad",
+                            "CPU fallback computation completed");
     }
   }
 #endif
@@ -82,17 +89,22 @@ void moe_align_block_size_pad(at::Tensor topk_ids, at::Tensor topk_ids_size,
     const topsStream_t stream = torch_gcu::getCurrentGCUStream();
     topsStreamSynchronize(stream);
 
+    VLLM_FALLBACK_CPU_LOG("moe_align_block_size_pad",
+                          "Starting result verification");
+
     auto cpu_output = std::make_tuple(sorted_token_ids_cpu, experts_ids_cpu,
                                       num_tokens_post_pad_cpu);
     auto device_outputs =
-        std::make_tuple(sorted_token_ids.to(at::kCPU),
-                        experts_ids.to(at::kCPU),
+        std::make_tuple(sorted_token_ids.to(at::kCPU), experts_ids.to(at::kCPU),
                         num_tokens_post_pad.to(at::kCPU));
     EXPECT_TRUE(vllmMoeAlignBlockSizeCheck(cpu_output, device_outputs),
                 "moe_align_block_size_pad");
     sorted_token_ids.copy_(sorted_token_ids_cpu);
     experts_ids.copy_(experts_ids_cpu);
     num_tokens_post_pad.copy_(num_tokens_post_pad_cpu);
+
+    VLLM_FALLBACK_CPU_LOG("moe_align_block_size_pad",
+                          "Fallback CPU results copied back to device");
   }
 #endif
 }

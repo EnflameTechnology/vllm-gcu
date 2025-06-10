@@ -52,6 +52,10 @@ void dynamic_split(at::TensorList out, const at::Tensor& input,
         (*fallback_ops) == "all") {
       is_fallback = true;
 
+      // Log fallback CPU usage
+      VLLM_FALLBACK_CPU_LOG("dynamic_split",
+                            "Using CPU fallback implementation");
+
       // Convert tensors to CPU for native implementation
       out_cpu.reserve(out.size());
       for (const auto& tensor : out) {
@@ -66,6 +70,9 @@ void dynamic_split(at::TensorList out, const at::Tensor& input,
 
       // Call native implementation on CPU tensors
       extsDynamicSplit(out_cpu, input_cpu, size_cpu, split_sizes_vec, dim);
+
+      VLLM_FALLBACK_CPU_LOG("dynamic_split",
+                            "CPU fallback computation completed");
     }
   }
 #endif
@@ -76,6 +83,8 @@ void dynamic_split(at::TensorList out, const at::Tensor& input,
   if (is_fallback) {
     const topsStream_t stream = torch_gcu::getCurrentGCUStream();
     topsStreamSynchronize(stream);
+
+    VLLM_FALLBACK_CPU_LOG("dynamic_split", "Starting result verification");
 
     auto concat_out_cpu = torch::cat(out_cpu, 0);
     auto concat_out = torch::cat(out, 0);
@@ -89,6 +98,9 @@ void dynamic_split(at::TensorList out, const at::Tensor& input,
     for (size_t i = 0; i < out.size(); ++i) {
       out[i].copy_(out_cpu[i]);
     }
+
+    VLLM_FALLBACK_CPU_LOG("dynamic_split",
+                          "Fallback CPU results copied back to device");
   }
 #endif
 }

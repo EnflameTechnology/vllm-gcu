@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <torch/torch.h>
+#include <c10/util/env.h>
 
 #include <string>
 #include <tuple>
@@ -16,6 +17,17 @@
     if (!(condition)) {                           \
       fprintf(stderr, "op %s has mismatch", #op); \
     }                                             \
+  } while (0)
+
+// Fallback CPU logging macro for NDEBUG builds
+#define VLLM_FALLBACK_CPU_LOG(op_name, message)                              \
+  do {                                                                        \
+    auto fallback_ops = c10::utils::get_env("VLLM_GCU_FALLBACK_CPU");        \
+    if (fallback_ops.has_value() &&                                          \
+        (fallback_ops->find(op_name) != std::string::npos ||                 \
+         (*fallback_ops) == "all")) {                                        \
+      fprintf(stderr, "[VLLM_FALLBACK_CPU] %s: %s\n", op_name, message);    \
+    }                                                                         \
   } while (0)
 
 // FP8 format constants
@@ -209,25 +221,38 @@ void atenLinearQuant(at::Tensor& out, const at::Tensor& lhs,
 /**
  * @brief Fused MoE non-gather quantization kernel (general version)
  */
-void vllmInvokeFusedMoeNonGatherQuantKernel(
-    at::Tensor& c, const at::Tensor& a, const at::Tensor& b,
-    const at::Tensor& scale, int64_t gs, const at::Tensor& deq_zeros,
-    const at::Tensor& bias, const at::Tensor& topk_weights,
-    const at::Tensor& topk_ids, const at::Tensor& sorted_token_ids,
-    const at::Tensor& experts_ids, const at::Tensor& num_tokens_post_pad,
-    const at::Tensor& real_token_num, bool mul_routed_weight, int64_t topk,
-    int64_t block_size);
+//void vllmInvokeFusedMoeNonGatherQuantKernel(
+//    at::Tensor& c, const at::Tensor& a, const at::Tensor& b,
+//    const at::Tensor& scale, int64_t gs, const at::Tensor& deq_zeros,
+//    const at::Tensor& bias, const at::Tensor& topk_weights,
+//   const at::Tensor& topk_ids, const at::Tensor& sorted_token_ids,
+//    const at::Tensor& experts_ids, const at::Tensor& num_tokens_post_pad,
+//    const at::Tensor& real_token_num, bool mul_routed_weight, int64_t topk,
+//    int64_t block_size);
 
 /**
  * @brief Fused MoE non-gather quantization kernel (W8A8 version)
  */
 void vllmInvokeFusedMoeNonGatherQuantKernel(
-    at::Tensor& c, const at::Tensor& a, const at::Tensor& b,
-    const at::Tensor& a_scale, const at::Tensor& scale, const at::Tensor& bias,
-    const at::Tensor& topk_weights, const at::Tensor& topk_ids,
-    const at::Tensor& sorted_token_ids, const at::Tensor& experts_ids,
-    const at::Tensor& num_tokens_post_pad, const at::Tensor& real_token_num,
-    bool mul_routed_weight, int64_t topk, int64_t block_size);
+    at::Tensor &C,       // Output tensor C [M, topk, N] - inplace modification
+    const at::Tensor &A, // Input tensor A [*, K] (fp16/bf16)
+    const at::Tensor &B, // Weight tensor B [E, N, K] (int8)
+    const at::Tensor &AScale, // Scale for A [M, K/gs] (fp32)
+    const at::Tensor &Scale,  // Scale for w8a8 quant [E, N/gs, K/gs] (fp32)
+    int64_t gs,               // Group size for per-group quantization (128)
+    const at::Tensor
+        &Deq_Zeros, // Zero point for dequant (unused, kept for compatibility)
+    const at::Tensor &bias, // Bias tensor (unused, kept for compatibility)
+    const at::Tensor &topk_weights, // Top-k expert weights [M, topk] (fp32)
+    const at::Tensor &topk_ids,     // Top-k expert indices [M, topk] (int32)
+    const at::Tensor
+        &sorted_token_ids, // Sorted token indices [num_tokens_post_pad] (int32)
+    const at::Tensor &experts_ids, // Expert index for each block (int32)
+    const at::Tensor &num_tokens_post_pad, // Number of tokens after padding [1]
+    const at::Tensor &real_token_num,      // Actual number of valid tokens [1]
+    bool mul_routed_weight, // Flag for topk_weights participation
+    int64_t topk,           // Number of experts for each token
+    int64_t b);
 
 /**
  * @brief SiLU multiplication per token group quantization

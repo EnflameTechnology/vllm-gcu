@@ -53,6 +53,10 @@ void get_ep_indices(at::Tensor &ep_count, at::Tensor &ep_token_indices,
         (*fallback_ops) == "all") {
       is_fallback = true;
 
+      // Log fallback CPU usage
+      VLLM_FALLBACK_CPU_LOG("get_ep_indices",
+                            "Using CPU fallback implementation");
+
       ep_count_cpu = ep_count.to(at::kCPU);
       ep_token_indices_cpu = ep_token_indices.to(at::kCPU);
       ep_valid_token_indices_cpu = ep_valid_token_indices.to(at::kCPU);
@@ -61,6 +65,9 @@ void get_ep_indices(at::Tensor &ep_count, at::Tensor &ep_token_indices,
                        ep_valid_token_indices_cpu, topk_ids_cpu,
                        static_cast<int>(expert_per_rank),
                        static_cast<int>(ep_size));
+
+      VLLM_FALLBACK_CPU_LOG("get_ep_indices",
+                            "CPU fallback computation completed");
     }
   }
 #endif
@@ -73,6 +80,8 @@ void get_ep_indices(at::Tensor &ep_count, at::Tensor &ep_token_indices,
     const topsStream_t stream = torch_gcu::getCurrentGCUStream();
     topsStreamSynchronize(stream);
 
+    VLLM_FALLBACK_CPU_LOG("get_ep_indices", "Starting result verification");
+
     auto cpu_outputs = std::make_tuple(ep_count_cpu, ep_token_indices_cpu,
                                        ep_valid_token_indices_cpu);
     auto device_outputs =
@@ -84,6 +93,9 @@ void get_ep_indices(at::Tensor &ep_count, at::Tensor &ep_token_indices,
     ep_count.copy_(ep_count_cpu);
     ep_token_indices.copy_(ep_token_indices_cpu);
     ep_valid_token_indices.copy_(ep_valid_token_indices_cpu);
+
+    VLLM_FALLBACK_CPU_LOG("get_ep_indices",
+                          "Fallback CPU results copied back to device");
   }
 #endif
 }

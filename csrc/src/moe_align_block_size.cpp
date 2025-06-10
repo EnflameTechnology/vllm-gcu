@@ -54,6 +54,10 @@ void moe_align_block_size(at::Tensor topk_ids, int64_t num_experts,
         (*fallback_ops) == "all") {
       is_fallback = true;
 
+      // Log fallback CPU usage
+      VLLM_FALLBACK_CPU_LOG("moe_align_block_size",
+                            "Using CPU fallback implementation");
+
       // Convert tensors to CPU for native implementation
       topk_ids_cpu = topk_ids.to(at::kCPU);
       sorted_token_ids_cpu = sorted_token_ids.to(at::kCPU);
@@ -65,6 +69,9 @@ void moe_align_block_size(at::Tensor topk_ids, int64_t num_experts,
                                          num_tokens_post_pad_cpu, topk_ids_cpu,
                                          static_cast<int>(num_experts),
                                          static_cast<int>(block_size));
+
+      VLLM_FALLBACK_CPU_LOG("moe_align_block_size",
+                            "CPU fallback computation completed");
     }
   }
 #endif
@@ -77,17 +84,22 @@ void moe_align_block_size(at::Tensor topk_ids, int64_t num_experts,
     const topsStream_t stream = torch_gcu::getCurrentGCUStream();
     topsStreamSynchronize(stream);
 
+    VLLM_FALLBACK_CPU_LOG("moe_align_block_size",
+                          "Starting result verification");
+
     auto cpu_output = std::make_tuple(sorted_token_ids_cpu, experts_ids_cpu,
                                       num_tokens_post_pad_cpu);
     auto device_outputs =
-        std::make_tuple(sorted_token_ids.to(at::kCPU),
-                        experts_ids.to(at::kCPU),
+        std::make_tuple(sorted_token_ids.to(at::kCPU), experts_ids.to(at::kCPU),
                         num_tokens_post_pad.to(at::kCPU));
     EXPECT_TRUE(vllmMoeAlignBlockSizeCheck(cpu_output, device_outputs),
                 "moe_align_block_size");
     sorted_token_ids.copy_(sorted_token_ids_cpu);
     experts_ids.copy_(experts_ids_cpu);
     num_tokens_post_pad.copy_(num_tokens_post_pad_cpu);
+
+    VLLM_FALLBACK_CPU_LOG("moe_align_block_size",
+                          "Fallback CPU results copied back to device");
   }
 #endif
 }

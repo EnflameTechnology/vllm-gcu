@@ -42,6 +42,10 @@ void fused_dispatch_decode(at::TensorList outputs,
         (*fallback_ops) == "all") {
       is_fallback = true;
 
+      // Log fallback CPU usage
+      VLLM_FALLBACK_CPU_LOG("fused_dispatch_decode",
+                            "Using CPU fallback implementation");
+
       // Convert tensors to CPU for native implementation
       outputs_cpu.reserve(outputs.size());
       for (const auto &tensor : outputs) {
@@ -55,6 +59,9 @@ void fused_dispatch_decode(at::TensorList outputs,
       // Call native implementation on CPU tensors
       extsFusedDispatchDecode(outputs_cpu, recv_packed_cpu, sp_split_size_cpu,
                               split_sizes_vec);
+
+      VLLM_FALLBACK_CPU_LOG("fused_dispatch_decode",
+                            "CPU fallback computation completed");
     }
   }
 #endif
@@ -65,6 +72,10 @@ void fused_dispatch_decode(at::TensorList outputs,
   if (is_fallback) {
     const topsStream_t stream = torch_gcu::getCurrentGCUStream();
     topsStreamSynchronize(stream);
+
+    VLLM_FALLBACK_CPU_LOG("fused_dispatch_decode",
+                          "Starting result verification");
+
     auto concat_outputs_cpu = torch::cat(outputs_cpu, 0);
     auto concat_outputs = torch::cat(outputs, 0);
     auto cpu_output = std::make_tuple(concat_outputs_cpu);
@@ -76,6 +87,9 @@ void fused_dispatch_decode(at::TensorList outputs,
     for (size_t i = 0; i < outputs.size(); ++i) {
       outputs[i].copy_(outputs_cpu[i]);
     }
+
+    VLLM_FALLBACK_CPU_LOG("fused_dispatch_decode",
+                          "Fallback CPU results copied back to device");
   }
 #endif
 }

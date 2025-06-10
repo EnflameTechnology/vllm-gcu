@@ -43,6 +43,10 @@ void silu_mul_per_token_group_quant_with_size(at::Tensor &out,
         (*fallback_ops) == "all") {
       is_fallback = true;
 
+      // Log fallback CPU usage
+      VLLM_FALLBACK_CPU_LOG("silu_mul_per_token_group_quant_with_size",
+                            "Using CPU fallback implementation");
+
       // Convert tensors to CPU for native implementation
       out_cpu = out.to(at::kCPU);
       scale_cpu = scale.to(at::kCPU);
@@ -52,6 +56,9 @@ void silu_mul_per_token_group_quant_with_size(at::Tensor &out,
       // Call native implementation on CPU tensors
       extsSiluMulPerTokenGroupQuant(out_cpu, scale_cpu, input_cpu, size_cpu,
                                     static_cast<int32_t>(group_size));
+
+      VLLM_FALLBACK_CPU_LOG("silu_mul_per_token_group_quant_with_size",
+                            "CPU fallback computation completed");
     }
   }
 #endif
@@ -64,6 +71,8 @@ void silu_mul_per_token_group_quant_with_size(at::Tensor &out,
     const topsStream_t stream = torch_gcu::getCurrentGCUStream();
     topsStreamSynchronize(stream);
 
+    VLLM_FALLBACK_CPU_LOG("silu_mul_per_token_group_quant_with_size",
+                          "Starting result verification");
     auto cpu_output = std::make_tuple(out_cpu, scale_cpu);
     auto device_outputs = std::make_tuple(out.to(at::kCPU),
                                           scale.to(at::kCPU));
@@ -71,6 +80,8 @@ void silu_mul_per_token_group_quant_with_size(at::Tensor &out,
                 "silu_mul_per_token_group_quant_with_size");
     out.copy_(out_cpu);
     scale.copy_(scale_cpu);
+    VLLM_FALLBACK_CPU_LOG("silu_mul_per_token_group_quant_with_size",
+                          "Fallback CPU results copied back to device");
   }
 #endif
 }

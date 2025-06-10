@@ -63,7 +63,7 @@ def moe_align_block_size(
             if expert_map is not None:
                 expert_ids = torch_gcu.gcu.efficient.gcu_index(expert_map, [expert_ids])
         else:
-            torch.ops._C.ets_moe_align_block_size(
+            torch.ops._C.exts_moe_align_block_size(
                 sorted_ids,
                 expert_ids,
                 num_tokens_post_pad,
