@@ -346,7 +346,8 @@ def run_vllm(
         prompt=requests[0][0],
         params=dummy_sampling_params,
     )
-    _: list[RequestOutput] = engine.step()
+    while engine.has_unfinished_requests():
+        _: list[RequestOutput] = engine.step()
 
     if profile:
         engine.start_profile()
