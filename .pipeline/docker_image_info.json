@@ -28,6 +28,11 @@
                     "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2004_aarch64_gcc9:1.0.1",
                     "TORCH_2_3_0": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2004_aarch64_gcc9:0.0.7"
                 }
+            },
+            "TLINUX_24": {
+                "X86_GCC9": {
+                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/tlinux/qic_tlinux_24_gcc9:1.0.5"
+                }
             }
         },
         "TEST": {
