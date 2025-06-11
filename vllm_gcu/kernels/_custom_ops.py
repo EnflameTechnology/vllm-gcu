@@ -329,7 +329,7 @@ def gelu_tanh_quant(
 
 
 def gelu_quant(out: torch.Tensor, input: torch.Tensor, scale: torch.Tensor) -> None:
-    torch.ops._C.gelu_quant(out, input, scale)
+    torch.ops._C.gelu_static_int8_quant(out, input, scale)
 
 
 def gelu_new_quant(out: torch.Tensor, input: torch.Tensor, scale: torch.Tensor) -> None:
@@ -402,7 +402,7 @@ def fused_add_rms_norm_quant(
 def silu_mul_quant(
     out: torch.Tensor, input: torch.Tensor, scaling: torch.Tensor
 ) -> None:
-    torch.ops._C.layer_norm_static_int8_quant(out, input, scaling)
+    torch.ops._C.silu_mul_static_int8_quant(out, input, scaling)
 
 
 def gelu_mul_quant(
