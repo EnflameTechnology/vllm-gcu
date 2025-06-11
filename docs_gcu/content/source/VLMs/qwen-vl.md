@@ -292,7 +292,7 @@ python3 -m vllm_utils.benchmark_vision_language \
 注：需要安装以下依赖：
 
 ```shell
-python3 -m pip install transformers>=4.50.1
+python3 -m pip install transformers>=4.50.1 opencv-python==4.11.0.86
 ```
 
 #### 批量离线推理
