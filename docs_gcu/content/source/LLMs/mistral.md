@@ -217,7 +217,7 @@ python3 -m vllm_utils.benchmark_test \
  --demo=te \
  --dtype=float16 \
  --device gcu \
- --quantization gptq
+ --quantization moe_wna16_gcu
 ```
 
 #### 性能测试
@@ -233,7 +233,7 @@ python3 -m vllm_utils.benchmark_test --perf \
  --tensor-parallel-size=8 \
  --block-size=64 \
  --device=gcu \
- --quantization gptq
+ --quantization moe_wna16_gcu
 ```
 注：
 *  本模型支持的`max-model-len`为65536；
