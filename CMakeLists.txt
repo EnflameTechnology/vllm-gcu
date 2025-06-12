@@ -38,7 +38,7 @@ set(CMAKE_INSTALL_PYTHON_PACKAGES "${CMAKE_INSTALL_PREFIX}/${CMAKE_FPKG_PYTHON_P
 file(MAKE_DIRECTORY ${CMAKE_INSTALL_PYTHON_PACKAGES})
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}ci/module_packages.json" "{}")
 include(package_version)
-
+option(NEED_DAILY_TEST_CASE "enable daily test case" FALSE)
 # init vllm version
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/requirements.txt" FILE_CONTENT)
 string(REGEX MATCH "vllm==([0-9]+\\.[0-9]+\\.[0-9]+[^ ]*)" VERSION_MATCH "${FILE_CONTENT}")
@@ -107,3 +107,7 @@ install(CODE "
         endif ()
         ")
 add_subdirectory(tests)
+
+if(NEED_DAILY_TEST_CASE)
+    add_subdirectory(tests/daily_test/vllm/kernels)
+endif()

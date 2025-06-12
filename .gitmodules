@@ -1,0 +1,4 @@
+[submodule "tests/daily_test"]
+	path = tests/daily_test
+	url = git@gitee.enflame.cn:sw/qod/framework_scripts.git
+	branch = vllm_gcu_0.7.2
