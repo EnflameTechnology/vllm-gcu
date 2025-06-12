@@ -2,6 +2,7 @@
 file (GLOB ctest_file_list
            @CMAKE_BINARY_DIR@/*/CTestTestfile.cmake
            @CMAKE_BINARY_DIR@/tests/*/CTestTestfile.cmake
+           @CMAKE_BINARY_DIR@/tests/daily_test/vllm/*/CTestTestfile.cmake
 )
 
 file (GLOB ctest_file_list_exclude

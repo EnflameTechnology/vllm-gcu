@@ -34,7 +34,8 @@ function x86_normal_build() {
 function x86_normal_daily_build() {
   echo "Current build job: $FUNCNAME"
   echo `pwd`
-  cmake ${project_name} --preset ci_all -B cmake_build
+  sudo python3.12 -m pip install --index-url http://data-oceanus.enflame.cn/artifactory/api/pypi/pypi_virtual/simple --trusted-host data-oceanus.enflame.cn torch==$TORCH_VERSION+cpu patch pyyaml packaging
+  cmake ${project_name} --preset ci_all -B cmake_build -DNEED_DAILY_TEST_CASE=TRUE
   cd cmake_build
   ninja -j${cpu_count} install
   ninja -j${cpu_count} package_all
