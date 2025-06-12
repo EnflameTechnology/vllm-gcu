@@ -18,13 +18,15 @@
    gemma
    gpt-j
    gpt-neox-20b
+   iflytekspark
    internlm
    llama
+   mistral
    opt
    orion
    qwen
    starcoder
    vicuna
-   wizardcoder
    xuanyuan
    yi
+   ziyacoding
