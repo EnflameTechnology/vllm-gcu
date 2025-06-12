@@ -1,52 +1,5 @@
 ## Yi
 
-### Yi-34B-200K
-
-本模型推理及性能测试需要8张enflame gcu。
-
-#### 模型下载
-*  url: [Yi-34B-200K](https://huggingface.co/01-ai/Yi-34B-200K/tree/main)
-
-*  branch: `main`
-
-*  commit id: `09a39628465e62ea2bf199a39ac391135ba59e01`
-
-将上述url设定的路径下的内容全部下载到`yi-34b-200k`文件夹中。
-
-#### 批量离线推理
-```shell
-python3 -m vllm_utils.benchmark_test \
- --model=[path of yi-34b-200k] \
- --tensor-parallel-size=8 \
- --max-model-len=200000 \
- --output-len=20 \
- --demo=te \
- --dtype=float16 \
- --device=gcu
-```
-
-#### 性能测试
-
-```shell
-python3 -m vllm_utils.benchmark_test --perf \
- --model=[path of yi-34b-200k] \
- --device=gcu \
- --max-model-len=200000 \
- --tokenizer=[path of yi-34b-200k] \
- --dtype=float16 \
- --input-len=198976 \
- --output-len=1024 \
- --num-prompts=1 \
- --tensor-parallel-size=8 \
- --block-size=64
-```
-注：
-*  本模型支持的`max-model-len`为200000；
-
-*  `input-len`、`output-len`和`num-prompts`可按需调整；
-
-*  配置 `output-len`为1时,输出内容中的`latency`即为time_to_first_token_latency;
-
 ### Yi-34B-Chat-w8a16_gptq
 
 本模型推理及性能测试需要两张enflame gcu。

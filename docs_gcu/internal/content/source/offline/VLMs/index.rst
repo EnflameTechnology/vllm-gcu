@@ -9,3 +9,4 @@
 
    lists
    qwen-vl
+   internvl

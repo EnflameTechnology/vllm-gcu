@@ -8,12 +8,10 @@
    lists
    baichuan2
    chatglm
-   codellama
    dbrx
    deepseek
    gemma
    glm4
-   iflytekspark
    internlm
    llama
    mistral
