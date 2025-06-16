@@ -1,11 +1,37 @@
 import os
+import cv2
 import numpy as np
+import numpy.typing as npt
 from typing import Optional, List, Union
 from decord import VideoReader, cpu
 from PIL import Image
 from vllm_utils.vision_language.models.base import VLMInput
 from transformers import AutoProcessor
 
+def video_to_ndarrays(path: str, num_frames: int = -1) -> npt.NDArray:
+    cap = cv2.VideoCapture(path)
+    if not cap.isOpened():
+        raise ValueError(f"Could not open video file {path}")
+
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    frames = []
+
+    num_frames = num_frames if num_frames > 0 else total_frames
+    frame_indices = np.linspace(0, total_frames - 1, num_frames, dtype=int)
+    for idx in range(total_frames):
+        ok = cap.grab()  # next img
+        if not ok:
+            break
+        if idx in frame_indices:  # only decompress needed
+            ret, frame = cap.retrieve()
+            if ret:
+                frames.append(frame)
+
+    frames = np.stack(frames)
+    if len(frames) < num_frames:
+        raise ValueError(f"Could not read enough frames from video file {path}"
+                         f" (expected {num_frames} frames, got {len(frames)})")
+    return frames
 
 class MinicpmvImageInput(VLMInput):
     def __init__(self, model: str, tokenizer: Optional[str]):
@@ -180,11 +206,10 @@ class MinicpmvVideoInput(MinicpmvImageInput):
             raise ValueError(f"Unsupported dataset {dataset_name}.")
 
     def get_demo_vision_data(self, input_vision_file: str, **kwargs):
-        from vllm.assets.video import VideoAsset
 
-        video = VideoAsset(
-            name=input_vision_file,
-                           num_frames=kwargs["num_frames"]).np_ndarrays
+        video = video_to_ndarrays(
+            path=input_vision_file,
+            num_frames=kwargs["num_frames"])
 
         return {self.modality: video}
 
