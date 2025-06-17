@@ -227,7 +227,13 @@ def inplace_fused_experts(
     a2_scale: Optional[torch.Tensor] = None,
     block_shape: Optional[List[int]] = None,
 ) -> None:
-    fused_experts_impl(
+    parallel_config = get_current_vllm_config().parallel_config
+    if parallel_config.enable_expert_parallel:
+        impl = ep_fused_experts_impl
+    else:
+        impl = fused_experts_impl
+
+    impl(
         hidden_states,
         w1,
         w2,
@@ -270,7 +276,13 @@ def outplace_fused_experts(
     a2_scale: Optional[torch.Tensor] = None,
     block_shape: Optional[List[int]] = None,
 ) -> torch.Tensor:
-    return fused_experts_impl(
+    parallel_config = get_current_vllm_config().parallel_config
+    if parallel_config.enable_expert_parallel:
+        impl = ep_fused_experts_impl
+    else:
+        impl = fused_experts_impl
+
+    impl(
         hidden_states,
         w1,
         w2,
@@ -324,6 +336,241 @@ def fused_experts_impl(
     b1=None,
     b2=None,
 ):
+    activation_and_layer_name = activation.split("_", 1)
+    if len(activation_and_layer_name) > 1:
+        activation, layer_name = activation_and_layer_name
+    else:
+        layer_name = None
+
+    assert activation == "silu", f"not support activation: {activation}"
+
+    scheduler_config = get_current_vllm_config().scheduler_config
+
+    shared_experts = None
+    if layer_name is not None:
+        forward_context: ForwardContext = get_forward_context()
+        layer = forward_context.no_compile_layers[layer_name]
+
+        shared_experts = getattr(layer, "shared_experts", None)
+        routed_scaling_factor = getattr(layer, "routed_scaling_factor", None)
+
+        if shared_experts is not None:
+            assert routed_scaling_factor is not None
+
+    # Check constraints.
+    if use_int4_w4a16:
+        assert hidden_states.shape[1] // 2 == w1.shape[2], "Hidden size mismatch"
+    else:
+        assert hidden_states.shape[1] == w1.shape[2], "Hidden size mismatch"
+
+    assert topk_weights.shape == topk_ids.shape, "topk shape mismatch"
+    assert hidden_states.is_contiguous(), "Hidden_states must be contiguous"
+    # assert w1.is_contiguous(), "Expert weights1 must be contiguous"
+    # assert w2.is_contiguous(), "Expert weights2 must be contiguous"
+    assert hidden_states.dtype in [torch.float32, torch.float16, torch.bfloat16]
+
+    if use_fp8_w8a8 and use_int8_w8a16:
+        # hack int8_w8a8 when both True
+        use_int8_w8a8 = True
+        use_fp8_w8a8 = False
+        use_int8_w8a16 = False
+    else:
+        use_int8_w8a8 = False
+
+    num_tokens, _ = hidden_states.shape
+    E, N, _ = w1.shape
+    if global_num_experts == -1:
+        global_num_experts = E
+    top_k_num = topk_ids.shape[1]
+    # We execute the fused_moe kernel in chunks to circumvent this issue:
+    # https://github.com/vllm-project/vllm/issues/5938
+    CHUNK_SIZE = envs.VLLM_FUSED_MOE_CHUNK_SIZE
+    M = min(num_tokens, CHUNK_SIZE)
+
+    get_config_func = functools.partial(
+        get_default_config,
+        E=w2.shape[0],
+        N=w2.shape[2],
+        K=w1.shape[2],
+        topk=top_k_num,
+        dtype="",
+        is_marlin=False,
+        block_shape=block_shape,
+    )
+
+    config = get_config_func(M)
+
+    cache13 = torch.empty(
+        M * top_k_num * max(N, w2.shape[1]),
+        device=hidden_states.device,
+        dtype=hidden_states.dtype,
+    )
+    intermediate_cache1 = cache13[: M * top_k_num * N].view((M, topk_ids.shape[1], N))
+    intermediate_cache3 = cache13[: M * top_k_num * w2.shape[1]].view(
+        (M, topk_ids.shape[1], w2.shape[1])
+    )
+
+    cache2_dtype = torch.float8_e4m3fn if use_fp8_w8a8 else hidden_states.dtype
+    intermediate_cache2 = torch.empty(
+        (M * top_k_num, N // 2),
+        device=hidden_states.device,
+        dtype=cache2_dtype,
+    )
+
+    if inplace:
+        out_hidden_states = hidden_states
+    else:
+        out_hidden_states = torch.empty_like(hidden_states)
+
+    chunk_num = math.ceil(num_tokens / CHUNK_SIZE)
+    for chunk in range(chunk_num):
+        begin_chunk_idx, end_chunk_idx = (
+            chunk * CHUNK_SIZE,
+            min((chunk + 1) * CHUNK_SIZE, num_tokens),
+        )
+        curr_hidden_states = hidden_states[begin_chunk_idx:end_chunk_idx]
+        tokens_in_chunk, _ = curr_hidden_states.shape
+        valid_in_chunk = torch.full(
+                (1,),
+                tokens_in_chunk,
+                dtype=torch.int32,
+                device=curr_hidden_states.device,
+        )
+
+        if tokens_in_chunk == 0:
+            break
+
+        if tokens_in_chunk < CHUNK_SIZE and chunk > 0:
+            # Adjust the intermediate cache size and config for the last
+            # chunk. Note that in most cases we only have one chunk
+            # so the cache size and config are already set correctly and
+            # do not need to be adjusted.
+            intermediate_cache1 = intermediate_cache1[:tokens_in_chunk]
+            intermediate_cache2 = intermediate_cache2[: tokens_in_chunk * top_k_num]
+            intermediate_cache3 = intermediate_cache3[:tokens_in_chunk]
+            config = get_config_func(tokens_in_chunk)
+
+        curr_topk_ids = topk_ids[begin_chunk_idx:end_chunk_idx]
+        curr_topk_weights = topk_weights[begin_chunk_idx:end_chunk_idx]
+
+        sorted_token_ids, expert_ids, num_tokens_post_padded = moe_align_block_size(
+            curr_topk_ids,
+            config["BLOCK_SIZE_M"],
+            global_num_experts,
+            expert_map,
+            valid_in_chunk,
+        )
+
+        invoke_fused_moe_kernel(
+            curr_hidden_states,
+            w1,
+            intermediate_cache1,
+            a1_scale,
+            w1_scale,
+            w1_zp,
+            curr_topk_weights,
+            curr_topk_ids,
+            sorted_token_ids,
+            expert_ids,
+            num_tokens_post_padded,
+            False,
+            top_k_num,
+            config,
+            use_fp8_w8a8=use_fp8_w8a8,
+            use_int8_w8a16=use_int8_w8a16,
+            use_int4_w4a16=use_int4_w4a16,
+            use_int8_w8a8=use_int8_w8a8,
+            block_shape=block_shape,
+            real_token_num=valid_in_chunk,
+            bias=b1,
+        )
+
+        if use_fp8_w8a8:
+            group_size = block_shape[1]
+            shape = (
+                *intermediate_cache2.shape[:-1],
+                N // 2 // group_size,
+            )
+            a2_scale = torch.empty(
+                shape, dtype=torch.float32, device=intermediate_cache1.device
+            )
+            torch.ops._C.silu_mul_per_token_group_quant_with_size(
+                intermediate_cache2.view(-1, top_k_num, N // 2),
+                a2_scale.view(-1, top_k_num, N // 2 // group_size),
+                intermediate_cache1,
+                valid_in_chunk,
+                group_size,
+            )
+        else:
+            torch.ops._C.silu_and_mul_pad(
+                intermediate_cache2.view(-1, top_k_num, N // 2),
+                intermediate_cache1,
+                valid_in_chunk,
+            )
+
+        invoke_fused_moe_kernel(
+            intermediate_cache2,
+            w2,
+            intermediate_cache3,
+            a2_scale,
+            w2_scale,
+            w2_zp,
+            curr_topk_weights,
+            curr_topk_ids,
+            sorted_token_ids,
+            expert_ids,
+            num_tokens_post_padded,
+            True,
+            1,
+            config,
+            use_fp8_w8a8=use_fp8_w8a8,
+            use_int8_w8a16=use_int8_w8a16,
+            use_int4_w4a16=use_int4_w4a16,
+            use_int8_w8a8=use_int8_w8a8,
+            block_shape=block_shape,
+            real_token_num=valid_in_chunk,
+            bias=b2,
+        )
+        # TODO: replace with moe_sum
+        torch.ops._moe_C.moe_sum_pad(
+            out_hidden_states[begin_chunk_idx:end_chunk_idx],
+            intermediate_cache3.view(*intermediate_cache3.shape),
+            valid_in_chunk,
+            1,
+            False,
+        )
+
+    if shared_experts is not None:
+        shared_output = shared_experts(hidden_states)
+        out_hidden_states.mul_(routed_scaling_factor)
+        out_hidden_states.add_(shared_output)
+
+    return out_hidden_states
+
+
+def ep_fused_experts_impl(
+    hidden_states: torch.Tensor,
+    w1: torch.Tensor,
+    w2: torch.Tensor,
+    topk_weights: torch.Tensor,
+    topk_ids: torch.Tensor,
+    inplace: bool = False,
+    activation: str = "silu",
+    use_fp8_w8a8: bool = False,
+    use_int8_w8a16: bool = False,
+    use_int4_w4a16: bool = False,
+    global_num_experts: int = -1,
+    expert_map: Optional[torch.Tensor] = None,
+    w1_scale: Optional[torch.Tensor] = None,
+    w2_scale: Optional[torch.Tensor] = None,
+    w1_zp: Optional[torch.Tensor] = None,
+    w2_zp: Optional[torch.Tensor] = None,
+    a1_scale: Optional[torch.Tensor] = None,
+    a2_scale: Optional[torch.Tensor] = None,
+    block_shape: Optional[List[int]] = None,
+    b1=None,
+    b2=None,
+):
     from vllm.distributed import get_world_group
 
     activation_and_layer_name = activation.split("_", 1)
@@ -337,6 +584,8 @@ def fused_experts_impl(
     parallel_config = get_current_vllm_config().parallel_config
     scheduler_config = get_current_vllm_config().scheduler_config
 
+    assert parallel_config.enable_expert_parallel
+
     if layer_name is not None:
         forward_context: ForwardContext = get_forward_context()
         layer = forward_context.no_compile_layers[layer_name]
@@ -347,9 +596,6 @@ def fused_experts_impl(
 
         if shared_experts is not None:
             assert routed_scaling_factor is not None
-
-        if log2phy is not None:
-            assert parallel_config.enable_expert_parallel
     else:
         shared_experts = None
         log2phy = None
@@ -532,8 +778,7 @@ def fused_experts_impl(
         topk_ids = topk_ids_.view(topk_ids.dtype)
         topk_weights = topk_weights_.view(topk_weights.dtype)
     else:
-        if shared_experts is not None:
-            shared_output = shared_experts(hidden_states)
+        assert parallel_config.enable_expert_parallel
 
     # Check constraints.
     if use_int4_w4a16:
@@ -772,11 +1017,6 @@ def fused_experts_impl(
                 alpha=routed_scaling_factor,
             )
         return output
-    else:
-        if shared_output is not None:
-            out_hidden_states.mul_(routed_scaling_factor)
-            out_hidden_states.add_(shared_output)
-        return out_hidden_states
 
 
 def forward_oot(
