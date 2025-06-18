@@ -147,11 +147,10 @@ class GCUPlatform(Platform):
                 parser._option_string_actions[key].choices += ["gcu"]
                 parser._option_string_actions[key].default = "gcu"
 
-            if not envs.VLLM_USE_V1:
-                key = "--disable-async-output-proc"
-                if key in parser._option_string_actions:
-                    # set disable_async_output_proc default True
-                    parser._option_string_actions[key].default = True
+            key = "--disable-async-output-proc"
+            if key in parser._option_string_actions:
+                # set disable_async_output_proc default True
+                parser._option_string_actions[key].default = True
 
     @classmethod
     def check_and_update_config(cls, vllm_config) -> None:
