@@ -1,10 +1,6 @@
 ## glm4
 
-glm系列模型，使用vllm 0.6.1.post2及以上版本时，需要手动降级transformers库版本
 
-```
-python3 -m pip install transformers==4.43.0
-```
 
 ### glm-4-9b
 

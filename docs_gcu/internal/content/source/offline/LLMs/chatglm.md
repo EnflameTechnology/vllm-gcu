@@ -1,10 +1,5 @@
 ## chatglm2/3
 
-chatglm系列模型，使用vllm 0.6.1.post2及以上版本时，需要手动降级transformers库版本
-
-```
-python3 -m pip install transformers==4.43.0
-```
 
 ### chatglm2-6b
 #### 模型下载
