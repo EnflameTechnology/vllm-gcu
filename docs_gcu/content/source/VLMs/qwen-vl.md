@@ -66,11 +66,7 @@ python3 -m vllm_utils.benchmark_vision_language \
 
 - 将上述url设定的路径下的内容全部下载到`Qwen2-VL-2B-Instruct`文件夹中。
 
-#### requirements
 
-```shell
-python3 -m pip install git+https://github.com/huggingface/transformers@21fac7abba2a37fae86106f87fcf9974fd1e3830
-```
 
 #### 批量离线推理
 ```shell
@@ -125,11 +121,7 @@ python3 -m vllm_utils.benchmark_vision_language \
 
 - 将上述url设定的路径下的内容全部下载到`Qwen2-VL-7B-Instruct-GPTQ-Int4`文件夹中。
 
-#### requirements
 
-```shell
-python3 -m pip install git+https://github.com/huggingface/transformers@21fac7abba2a37fae86106f87fcf9974fd1e3830
-```
 
 #### 批量离线推理
 ```shell
@@ -186,11 +178,7 @@ python3 -m vllm_utils.benchmark_vision_language \
 
 - 将上述url设定的路径下的内容全部下载到`Qwen2-VL-72B-Instruct-GPTQ-Int8`文件夹中。
 
-注：需要安装以下依赖：
 
-```shell
-python3 -m pip install git+https://github.com/huggingface/transformers@21fac7abba2a37fae86106f87fcf9974fd1e3830
-```
 
 #### 批量离线推理
 ##### 图像推理
@@ -366,11 +354,7 @@ python3 -m vllm_utils.benchmark_vision_language \
 
 - 将上述url设定的路径下的内容全部下载到`QVQ-72B-Preview`文件夹中。
 
-注：需要安装以下依赖：
 
-```shell
-python3 -m pip install git+https://github.com/huggingface/transformers.git@1931a351408dbd1d0e2c4d6d7ee0eb5e8807d7bf
-```
 
 #### 批量离线推理
 ##### 图像推理

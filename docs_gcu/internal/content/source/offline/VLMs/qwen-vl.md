@@ -9,11 +9,6 @@
 
 - 将上述url设定的路径下的内容全部下载到`Qwen2-VL-72B-Instruct`文件夹中。
 
-#### requirements
-
-```shell
-python3 -m pip install git+https://github.com/huggingface/transformers@21fac7abba2a37fae86106f87fcf9974fd1e3830
-```
 
 #### 批量离线推理
 ```shell
