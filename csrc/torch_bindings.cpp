@@ -528,11 +528,11 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
 
   // CUTLASS w8a8 GEMM, supporting symmetric per-tensor or per-row/column
   // quantization, as well as bias
-  //   ops.def(
-  //       "cutlass_scaled_mm(Tensor! out, Tensor a,"
-  //       "                  Tensor b, Tensor a_scales,"
-  //       "                  Tensor b_scales, Tensor? bias) -> ()");
-  // ops.impl("cutlass_scaled_mm", torch::kPrivateUse1, &cutlass_scaled_mm);
+  //ops.def(
+  //    "cutlass_scaled_mm(Tensor! out, "
+  //    "Tensor x, Tensor weight, Tensor x_scale, "
+  //    "Tensor w_scale, Tensor? bias) -> ()", {at::Tag::flexible_layout});
+  //ops.impl("cutlass_scaled_mm", torch::kPrivateUse1, &cutlass_scaled_mm);
 
   // CUTLASS w8a8 GEMM, supporting asymmetric per-tensor or per-row/column
   // quantization.
@@ -954,13 +954,13 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
   }
   ops.impl("dot_bias_quant", c10::kPrivateUse1, &dot_bias_quant);
 
-  handle =
-      c10::Dispatcher::singleton().findSchema({"_C::cutlass_scaled_mm", ""});
+  handle = c10::Dispatcher::singleton().findSchema(
+      {"_C::cutlass_scaled_mm", ""});
   if (!handle.has_value()) {
     ops.def(
         "cutlass_scaled_mm(Tensor! out, "
         "Tensor x, Tensor weight, Tensor x_scale, "
-        "Tensor w_scale, Tensor? bias) -> ()");
+        "Tensor w_scale, Tensor? bias) -> ()", {at::Tag::flexible_layout});
   }
   ops.impl("cutlass_scaled_mm", torch::kPrivateUse1, &cutlass_scaled_mm);
 
