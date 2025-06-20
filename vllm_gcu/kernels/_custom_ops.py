@@ -599,3 +599,5 @@ def merge_attn_states(
     torch.ops._C.merge_attn_states(
         output, output_lse, prefix_output, prefix_lse, suffix_output, suffix_lse
     )
+
+#torch.ops._C.cutlass_scaled_mm.default.tags.append(torch._C.Tag.flexible_layout)
