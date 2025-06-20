@@ -18,6 +18,7 @@ from vllm.compilation.compiler_interface import (
     InductorAdaptor,
 )
 
+from vllm_gcu.utils import is_torch_equal_or_newer
 from vllm_gcu.compilation.fx_fusion import get_passes
 
 try:
@@ -163,7 +164,7 @@ class CustomInductorAdaptor(InductorAdaptor):
                     )
                 return output
 
-        elif torch.__version__ >= "2.6":
+        elif is_torch_equal_or_newer("2.6"):
             # function renamed in 2.6
             original_load_name = None
 

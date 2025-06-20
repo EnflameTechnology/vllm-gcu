@@ -22,11 +22,10 @@ from vllm.distributed import (
 )
 from vllm.logger import init_logger
 from vllm.model_executor import set_random_seed
-from vllm.utils import GiB_bytes
+from vllm.utils import GiB_bytes, memory_profiling, MemorySnapshot
 from vllm.worker.model_runner import GPUModelRunnerBase
 from vllm.worker.worker import Worker
 
-from vllm_gcu.utils import memory_profiling, MemorySnapshot
 from vllm_gcu.worker.model_runner import GCUModelRunner
 import vllm_gcu.envs as gcu_envs
 
