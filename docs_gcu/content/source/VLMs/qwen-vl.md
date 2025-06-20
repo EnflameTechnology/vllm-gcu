@@ -12,7 +12,7 @@
 #### requirements
 
 ```shell
-python3 -m pip install matplotlib
+python3 -m pip install matplotlib opencv-python==4.11.0.86 opencv-python-headless==4.11.0.86
 ```
 
 #### 批量离线推理
@@ -66,7 +66,11 @@ python3 -m vllm_utils.benchmark_vision_language \
 
 - 将上述url设定的路径下的内容全部下载到`Qwen2-VL-2B-Instruct`文件夹中。
 
+#### requirements
 
+```shell
+python3 -m pip install opencv-python==4.11.0.86 opencv-python-headless==4.11.0.86
+```
 
 #### 批量离线推理
 ```shell
@@ -121,6 +125,11 @@ python3 -m vllm_utils.benchmark_vision_language \
 
 - 将上述url设定的路径下的内容全部下载到`Qwen2-VL-7B-Instruct-GPTQ-Int4`文件夹中。
 
+#### requirements
+
+```shell
+python3 -m pip install opencv-python==4.11.0.86 opencv-python-headless==4.11.0.86
+```
 
 
 #### 批量离线推理
@@ -178,6 +187,11 @@ python3 -m vllm_utils.benchmark_vision_language \
 
 - 将上述url设定的路径下的内容全部下载到`Qwen2-VL-72B-Instruct-GPTQ-Int8`文件夹中。
 
+#### requirements
+
+```shell
+python3 -m pip install opencv-python==4.11.0.86 opencv-python-headless==4.11.0.86
+```
 
 
 #### 批量离线推理
@@ -229,10 +243,11 @@ python3 -m vllm_utils.benchmark_vision_language \
  --model=[path of Qwen2-VL-72B-Instruct-GPTQ-Int8] \
  --model-arch-suffix Image \
  --dtype=float16 \
- --batch-size=32 \
+ --batch-size=13 \
  --input-len=1500 \
- --input-vision-shape="448,448" \
- --max-output-len=4096 \
+ --input-vision-shape="448,448;448,448" \
+ --mm-per-prompt=2 \
+ --max-output-len=8192 \
  --device=gcu \
  --tensor-parallel-size 4 \
  --max-model-len 32768 \
@@ -250,11 +265,10 @@ python3 -m vllm_utils.benchmark_vision_language \
  --model=[path of Qwen2-VL-72B-Instruct-GPTQ-Int8] \
  --model-arch-suffix Image \
  --dtype=float16 \
- --batch-size=13 \
+ --batch-size=32 \
  --input-len=1500 \
- --input-vision-shape="448,448;448,448" \
- --mm-per-prompt=2 \
- --max-output-len=8192 \
+ --input-vision-shape="448,448" \
+ --max-output-len=4096 \
  --device=gcu \
  --tensor-parallel-size 4 \
  --max-model-len 32768 \
@@ -280,7 +294,7 @@ python3 -m vllm_utils.benchmark_vision_language \
 注：需要安装以下依赖：
 
 ```shell
-python3 -m pip install transformers>=4.50.1 opencv-python==4.11.0.86
+python3 -m pip install transformers>=4.50.1 opencv-python==4.11.0.86 opencv-python-headless==4.11.0.86
 ```
 
 #### 批量离线推理
@@ -354,7 +368,11 @@ python3 -m vllm_utils.benchmark_vision_language \
 
 - 将上述url设定的路径下的内容全部下载到`QVQ-72B-Preview`文件夹中。
 
+#### requirements
 
+```shell
+python3 -m pip install opencv-python==4.11.0.86 opencv-python-headless==4.11.0.86
+```
 
 #### 批量离线推理
 ##### 图像推理

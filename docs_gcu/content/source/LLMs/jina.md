@@ -22,7 +22,7 @@ python3 -m pip install transformers==4.52.4 beir==2.1.0
 
 # 启动服务端
 python3 -m vllm.entrypoints.openai.api_server  \
-    --model [jina-reranker-v2-base-multilingual] \
+    --model [path of jina-reranker-v2-base-multilingual] \
     --served-model-name jina-reranker-v2-base-multilingual  \
     --task embed \
     --trust-remote-code \
@@ -52,7 +52,7 @@ http://localhost:6343/rerank \
 
 # 启动服务端
 python3 -m vllm.entrypoints.openai.api_server  \
-    --model [jina-reranker-v2-base-multilingual] \
+    --model [path of jina-reranker-v2-base-multilingual] \
     --served-model-name jina-reranker-v2-base-multilingual  \
     --task embed \
     --trust-remote-code \
@@ -61,7 +61,7 @@ python3 -m vllm.entrypoints.openai.api_server  \
 
 # 启动客户端
 python3 -m vllm_utils.benchmark_embedding_rerank \
-    --tokenizer [jina-reranker-v2-base-multilingual] \
+    --tokenizer [path of jina-reranker-v2-base-multilingual] \
     --trust-remote-code \
     --test-type rerank \
     --api-url http://localhost:6343/rerank \

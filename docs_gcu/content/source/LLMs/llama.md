@@ -132,12 +132,12 @@ python3 -m vllm_utils.benchmark_test --perf \
  --model=[path of Meta-Llama-3-8B] \
  --max-model-len=8192 \
  --tokenizer=[path of Meta-Llama-3-8B] \
- --input-len=128 \
- --output-len=3968 \
+ --input-len=2048 \
+ --output-len=2048 \
  --num-prompts=1 \
  --block-size=64 \
  --dtype=float16 \
- --enforce-eager
+ --device gcu
 ```
 注：
 *  本模型支持的`max-model-len`为8192；
@@ -176,9 +176,9 @@ python3 -m vllm_utils.benchmark_test --perf \
  --model=[path of Meta-Llama-3-70B] \
  --tensor-parallel-size=4 \
  --max-model-len=8192 \
- --tokenizer=[path of Meta-Llama-3-70B] \
- --input-len=1024 \
- --output-len=7168 \
+ --device "gcu" \
+ --input-len=4096 \
+ --output-len=4096 \
  --num-prompts=1 \
  --block-size=64 \
  --dtype=float16
@@ -288,9 +288,9 @@ python3 -m vllm_utils.benchmark_test --perf \
  --model=[path of llama2-70b-w8a16_gptq] \
  --tensor-parallel-size=2 \
  --max-model-len=4096 \
- --tokenizer=[path of llama2-70b-w8a16_gptq] \
- --input-len=128 \
- --output-len=3968 \
+ --device gcu \
+ --input-len=2048 \
+ --output-len=2048 \
  --num-prompts=1 \
  --block-size=64 \
  --dtype=float16 \
@@ -343,13 +343,13 @@ python3 -m vllm_utils.benchmark_test --perf \
  --model=[path of llama3-8b-w8a16_gptq] \
  --max-model-len=8192 \
  --tokenizer=[path of llama3-8b-w8a16_gptq] \
- --input-len=128 \
- --output-len=3968 \
+ --input-len=2048 \
+ --output-len=2048 \
  --num-prompts=1 \
  --block-size=64 \
  --dtype=float16 \
  --quantization gptq \
- --enforce-eager
+ --device gcu
 ```
 注：
 *  本模型支持的`max-model-len`为8192；
@@ -400,9 +400,9 @@ python3 -m vllm_utils.benchmark_test --perf \
  --model=[path of llama3-70b-w8a16_gptq] \
  --tensor-parallel-size=2 \
  --max-model-len=8192 \
- --tokenizer=[path of llama3-70b-w8a16_gptq] \
- --input-len=1024 \
- --output-len=7168 \
+ --device "gcu" \
+ --input-len=4096 \
+ --output-len=4096 \
  --num-prompts=1 \
  --block-size=64 \
  --dtype=float16 \
@@ -980,7 +980,7 @@ python3 -m vllm_utils.benchmark_test \
  --dtype=float16 \
  --output-len=128 \
  --device gcu \
- --gpu-memory-utilization 0.8
+ --gpu-memory-utilization 0.9
 ```
 
 #### 性能测试

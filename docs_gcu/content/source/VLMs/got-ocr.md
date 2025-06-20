@@ -9,6 +9,12 @@
 
 - 将上述url设定的路径下的内容全部下载到`GOT-OCR-2.0-hf`文件夹中。
 
+#### requirements
+
+```shell
+python3 -m pip install opencv-python==4.11.0.86 opencv-python-headless==4.11.0.86
+```
+
 
 #### 批量离线推理
 ```shell

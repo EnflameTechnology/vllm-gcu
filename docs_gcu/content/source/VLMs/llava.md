@@ -9,6 +9,12 @@
 
 - 将上述url设定的路径下的内容全部下载到`llava-1.5-7b-hf`文件夹中。
 
+#### requirements
+
+```shell
+python3 -m pip install opencv-python==4.11.0.86 opencv-python-headless==4.11.0.86
+```
+
 #### 批量离线推理
 ```shell
 python3 -m vllm_utils.benchmark_vision_language \

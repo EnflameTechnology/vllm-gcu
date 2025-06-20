@@ -10,6 +10,11 @@
 
 将上述url设定的路径下的内容全部下载到`mixtral-8x22b-v0.1`文件夹中。
 
+#### 安装依赖
+```shell
+python3 -m pip install transformers==0.48.2
+```
+
 #### 批量离线推理
 
 ```shell
@@ -67,6 +72,11 @@ mixtral-8x22B-v0.1-w8a16_gptq/
 
 ```
 
+#### 安装依赖
+```shell
+python3 -m pip install transformers==0.48.2
+```
+
 #### 批量离线推理
 
 ```shell
@@ -113,6 +123,11 @@ python3 -m vllm_utils.benchmark_test --perf \
 
 将上述url设定的路径下的内容全部下载到`Mixtral-8x22B-Instruct-v0.1`文件夹中。
 
+#### 安装依赖
+```shell
+python3 -m pip install transformers==0.48.2
+```
+
 #### 批量离线推理
 
 ```shell
@@ -137,7 +152,7 @@ python3 -m vllm_utils.benchmark_test --perf \
  --max-model-len=32768 \
  --input-len=1024 \
  --output-len=1024 \
- --num-prompts=1 \
+ --num-prompts=8 \
  --block-size=64 \
  --dtype=bfloat16 \
  --tensor-parallel-size=8 \
