@@ -13,9 +13,8 @@
 #### requirements
 
 ```shell
-python3 -m pip install decord==0.6.0
+python3 -m pip install decord==0.6.0 opencv-python==4.11.0.86 opencv-python-headless==4.11.0.86
 ```
-
 
 #### 批量离线推理
 ##### 图像推理
@@ -29,7 +28,7 @@ python3.10 -m vllm_utils.benchmark_vision_language \
  --max-output-len 128 \
  --device gcu \
  --trust-remote-code \
- --max-model-len 32768 \
+ --max-model-len 16384 \
  --max-num-seqs 64 \
  --dtype=float16
 ```
@@ -44,7 +43,7 @@ python3.10 -m vllm_utils.benchmark_vision_language \
  --max-output-len 128 \
  --device gcu \
  --trust-remote-code \
- --max-model-len 32768 \
+ --max-model-len 16384 \
  --num-frames 64 \
  --max-num-seqs 64 \
  --dtype=float16
@@ -65,7 +64,7 @@ python3 -m vllm_utils.benchmark_vision_language \
  --max-output-len 128 \
  --device gcu \
  --trust-remote-code \
- --max-model-len 32768 \
+ --max-model-len 16384 \
  --input-vision-shape 1080,1080 \
  --input-len 1024 \
  --max-num-seqs 64 \
@@ -88,7 +87,8 @@ python3.10 -m vllm_utils.benchmark_vision_language \
  --max-output-len 128 \
  --device=gcu \
  --trust-remote-code \
- --max-model-len 32768 \
+ --max-model-len 16384 \
+ --mm-per-prompt 8 \
  --num-frames 8 \
  --max-num-seqs 32  \
  --dtype=float16
@@ -110,7 +110,7 @@ python3.10 -m vllm_utils.benchmark_vision_language \
 #### requirements
 
 ```shell
-python3 -m pip install decord==0.6.0
+python3 -m pip install decord==0.6.0 opencv-python==4.11.0.86 opencv-python-headless==4.11.0.86
 ```
 
 #### 批量离线推理
@@ -146,7 +146,8 @@ python3.10 -m vllm_utils.benchmark_vision_language \
  --trust-remote-code \
  --max-model-len 16384 \
  --num-frames 16 \
- --dtype=bfloat16
+ --dtype=bfloat16 \
+ --block-size=64
 ```
 
 注：

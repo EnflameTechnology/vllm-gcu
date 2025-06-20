@@ -17,7 +17,8 @@ python3 -m vllm_utils.benchmark_test \
  --model=[path of chatglmckpt] \
  --demo=te \
  --dtype=float16 \
- --output-len=256
+ --output-len=256 \
+ --trust-remote-code
 ```
 
 #### 性能测试
@@ -25,12 +26,14 @@ python3 -m vllm_utils.benchmark_test \
 ```shell
 python3 -m vllm_utils.benchmark_test --perf \
  --model=[path of chatglmckpt] \
- --input-len=128 \
- --output-len=32640 \
+ --input-len=28672 \
+ --output-len=4096 \
  --num-prompts=16 \
  --block-size=64 \
  --dtype=float16 \
- --max-model-len=32768
+ --max-model-len=32768 \
+ --device "gcu" \
+ --tokenizer "chatglm3-6b-32k"
 ```
 
 注：

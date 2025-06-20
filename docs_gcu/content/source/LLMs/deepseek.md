@@ -139,8 +139,8 @@ python3 -m vllm_utils.benchmark_serving \
  --backend vllm \
  --dataset-name random \
  --num-prompts 1 \
- --random-input-len 1024 \
- --random-output-len 1024 \
+ --random-input-len 4096 \
+ --random-output-len 4096 \
  --trust-remote-code \
  --ignore_eos \
  --strict-in-out-len \

@@ -1167,8 +1167,8 @@ python3 -m vllm_utils.benchmark_serving \
  --dataset-name random \
  --model [path of Qwen2.5-0.5B-Instruct] \
  --num-prompts 1 \
- --random-input-len 1024 \
- --random-output-len 1024 \
+ --random-input-len 4096 \
+ --random-output-len 4096 \
  --trust-remote-code \
  --ignore_eos \
  --strict-in-out-len \
@@ -1218,7 +1218,7 @@ python3 -m vllm_utils.benchmark_serving \
  --num-prompts 1 \
  --block-size=64 \
  --gpu-memory-utilization 0.9 \
- --trust-remote-code
+ --backend vllm
 
 ```
 注：
@@ -1405,7 +1405,7 @@ python3 -m vllm_utils.benchmark_serving \
  --trust-remote-code \
  --ignore_eos \
  --strict-in-out-len \
- --keep-special-token
+ --keep-special-tokens
 ```
 注：
 *  本模型支持的`max-model-len`为131072；
@@ -1464,7 +1464,7 @@ python3 -m vllm_utils.benchmark_serving \
  --trust-remote-code \
  --ignore_eos \
  --strict-in-out-len \
- --keep-special-token
+ --keep-special-tokens
 ```
 注：
 *  本模型支持的`max-model-len`为131072；
@@ -1529,7 +1529,7 @@ python3 -m vllm_utils.benchmark_serving \
  --trust-remote-code \
  --ignore_eos \
  --strict-in-out-len \
- --keep-special-token
+ --keep-special-tokens
 ```
 注：
 *  本模型支持的`max-model-len`为131072；
