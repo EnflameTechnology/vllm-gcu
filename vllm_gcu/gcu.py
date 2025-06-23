@@ -146,6 +146,7 @@ class GCUPlatform(Platform):
         import vllm_gcu.compilation  # noqa: F401
         import vllm_gcu.distributed  # noqa: F401
         import vllm_gcu.kernels  # noqa: F401
+        import vllm_gcu.patch
 
         if parser:
             key = "--device"
