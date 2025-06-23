@@ -13,7 +13,7 @@
 #### requirements
 
 ```shell
-python3 -m pip install decord==0.6.0 opencv-python==4.11.0.86 opencv-python-headless==4.11.0.86
+python3 -m pip install decord==0.6.0 opencv-python==4.11.0.86 opencv-python-headless==4.11.0.86 pyarrow==20.0.0
 ```
 
 #### 批量离线推理
@@ -91,7 +91,9 @@ python3.10 -m vllm_utils.benchmark_vision_language \
  --mm-per-prompt 8 \
  --num-frames 8 \
  --max-num-seqs 32  \
- --dtype=float16
+ --dtype=float16 \
+ --disable-mm-preprocessor-cache \
+ --mm-per-prompt 8
 ```
 注：
 * 需将[Video-MME](https://huggingface.co/datasets/lmms-lab/Video-MME)文件下载到本地，并设置`--dataset-file`指向其存储路径；
