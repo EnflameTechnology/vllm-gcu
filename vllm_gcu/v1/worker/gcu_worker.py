@@ -31,7 +31,7 @@ class Worker(WorkerBase):
     ):
         import vllm_gcu.kernels  # noqa: F401
         import vllm_gcu.compilation  # noqa: F401
-        import vllm_gcu.patch.worker  # noqa: F401
+        import vllm_gcu.patch  # noqa: F401
 
         super().__init__(
             vllm_config=vllm_config,

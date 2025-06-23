@@ -44,7 +44,7 @@ class GCUWorker(Worker):
         model_runner_cls: Optional[Type[GPUModelRunnerBase]] = None,
     ) -> None:
         import vllm_gcu.kernels  # noqa: F401
-        import vllm_gcu.patch.worker  # noqa: F401
+        import vllm_gcu.patch  # noqa: F401
         import vllm_gcu.compilation  # noqa: F40
 
         if gcu_envs.VLLM_GCU_RANK_LOG_PATH:
