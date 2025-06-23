@@ -1189,6 +1189,12 @@ python3 -m vllm_utils.benchmark_serving \
 
 将上述url设定的路径下的内容全部下载到`Qwen2.5-Coder-32B-Instruct`文件夹中。
 
+#### requirements
+
+```shell
+python3 -m pip install opencv-python==4.11.0.86 opencv-python-headless==4.11.0.86
+```
+
 #### 批量离线推理
 ```shell
  python3.10 -m vllm_utils.benchmark_test \

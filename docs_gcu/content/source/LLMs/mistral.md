@@ -12,7 +12,7 @@
 
 #### 安装依赖
 ```shell
-python3 -m pip install transformers==0.48.2
+python3 -m pip install transformers==4.48.2
 ```
 
 #### 批量离线推理
@@ -74,7 +74,7 @@ mixtral-8x22B-v0.1-w8a16_gptq/
 
 #### 安装依赖
 ```shell
-python3 -m pip install transformers==0.48.2
+python3 -m pip install transformers==4.48.2
 ```
 
 #### 批量离线推理
@@ -125,7 +125,7 @@ python3 -m vllm_utils.benchmark_test --perf \
 
 #### 安装依赖
 ```shell
-python3 -m pip install transformers==0.48.2
+python3 -m pip install transformers==4.48.2
 ```
 
 #### 批量离线推理
