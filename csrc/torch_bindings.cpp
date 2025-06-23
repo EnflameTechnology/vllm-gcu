@@ -150,7 +150,7 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
   // Activation function used in SwiGLU.
   handle = c10::Dispatcher::singleton().findSchema({"_C::silu_and_mul", ""});
   if (!handle.has_value()) {
-    ops.def("silu_and_mul(Tensor! out, Tensor input) -> ()");
+    ops.def("silu_and_mul(Tensor! result, Tensor input) -> ()");
   }
   ops.impl("silu_and_mul", torch::kPrivateUse1, &silu_and_mul);
 
@@ -480,39 +480,39 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
   // conditionally compiled so impl registrations are in source file
 
   // Dequantization for GGML.
-  handle = c10::Dispatcher::singleton().findSchema({"_C::ggml_dequantize", ""});
-  if (!handle.has_value()) {
-    ops.def(
-        "ggml_dequantize(Tensor W, int type, SymInt m, SymInt n) -> Tensor");
-  }
+  // handle = c10::Dispatcher::singleton().findSchema({"_C::ggml_dequantize", ""});
+  // if (!handle.has_value()) {
+  //   ops.def(
+  //       "ggml_dequantize(Tensor W, int type, SymInt m, SymInt n) -> Tensor");
+  // }
   // ops.impl("ggml_dequantize", torch::kPrivateUse1, &ggml_dequantize);
 
   // mmvq kernel for GGML.
-  handle =
-      c10::Dispatcher::singleton().findSchema({"_C::ggml_mul_mat_vec_a8", ""});
-  if (!handle.has_value()) {
-    ops.def(
-        "ggml_mul_mat_vec_a8(Tensor W, Tensor X, int type, SymInt row) "
-        "-> Tensor");
-  }
+  // handle =
+  //     c10::Dispatcher::singleton().findSchema({"_C::ggml_mul_mat_vec_a8", ""});
+  // if (!handle.has_value()) {
+  //   ops.def(
+  //       "ggml_mul_mat_vec_a8(Tensor W, Tensor X, int type, SymInt row) "
+  //       "-> Tensor");
+  // }
   // ops.impl("ggml_mul_mat_vec_a8", torch::kPrivateUse1, &ggml_mul_mat_vec_a8);
 
   // mmq kernel for GGML.
-  handle = c10::Dispatcher::singleton().findSchema({"_C::ggml_mul_mat_a8", ""});
-  if (!handle.has_value()) {
-    ops.def(
-        "ggml_mul_mat_a8(Tensor W, Tensor X, int type, SymInt row) -> Tensor");
-  }
+  // handle = c10::Dispatcher::singleton().findSchema({"_C::ggml_mul_mat_a8", ""});
+  // if (!handle.has_value()) {
+  //   ops.def(
+  //       "ggml_mul_mat_a8(Tensor W, Tensor X, int type, SymInt row) -> Tensor");
+  // }
   // ops.impl("ggml_mul_mat_a8", torch::kPrivateUse1, &ggml_mul_mat_a8);
 
   // fp8_marlin Optimized Quantized GEMM for FP8 weight-only.
-  handle = c10::Dispatcher::singleton().findSchema({"_C::fp8_marlin_gemm", ""});
-  if (!handle.has_value()) {
-    ops.def(
-        "fp8_marlin_gemm(Tensor a, Tensor b_q_weight, Tensor b_scales, "
-        "Tensor! workspace, int num_bits, SymInt size_m, SymInt size_n, "
-        "SymInt size_k) -> Tensor");
-  }
+  // handle = c10::Dispatcher::singleton().findSchema({"_C::fp8_marlin_gemm", ""});
+  // if (!handle.has_value()) {
+  //   ops.def(
+  //       "fp8_marlin_gemm(Tensor a, Tensor b_q_weight, Tensor b_scales, "
+  //       "Tensor! workspace, int num_bits, SymInt size_m, SymInt size_n, "
+  //       "SymInt size_k) -> Tensor");
+  // }
   // conditionally compiled so impl registration is in source file
 
   // marlin_qqq_gemm for QQQ.
@@ -1034,6 +1034,13 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
   }
   ops.impl("dynamic_per_token_group_fp8_quant_with_size", torch::kPrivateUse1,
            dynamic_per_token_group_fp8_quant_with_size);
+
+  handle = c10::Dispatcher::singleton().findSchema(
+      {"_C::silu_and_mul_quant", ""});
+  if (!handle.has_value()) {
+    ops.def("silu_and_mul_quant(Tensor! result, Tensor input, Tensor scale) -> ()");
+  }
+  // ops.impl("silu_and_mul_quant", torch::kPrivateUse1, &silu_and_mul_quant);
 
   handle = c10::Dispatcher::singleton().findSchema(
       {"_C::silu_mul_per_token_group_quant", ""});

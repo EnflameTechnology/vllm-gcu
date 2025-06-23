@@ -14,12 +14,11 @@ from torch._inductor.codegen.common import device_codegens, get_scheduling_for_d
 from torch._inductor.codegen.triton import TritonScheduling
 from vllm.compilation.compiler_interface import (
     AlwaysHitShapeEnv,
-    EagerAdaptor,
     InductorAdaptor,
 )
+from vllm.compilation.inductor_pass import pass_context
 
 from vllm_gcu.utils import is_torch_equal_or_newer
-from vllm_gcu.compilation.fx_fusion import get_passes
 
 try:
     if device_schedule := get_scheduling_for_device("gcu") == TritonScheduling:
@@ -73,6 +72,11 @@ def lowering():
 
             til.make_fallback(op, warn=False, override_decomp=True)
 
+    for name in dir(torch.ops.prim):
+        if not name.startswith("_") and name not in BLACK_LIST:
+            op = getattr(torch.ops.prim, name)
+            til.make_fallback(op, warn=False, override_decomp=True)
+
     yield
 
     for op_overload, _ in origin_lowerings.items():
@@ -84,12 +88,17 @@ def lowering():
 
 
 class CustomInductorAdaptor(InductorAdaptor):
+    def compute_hash(self, vllm_config) -> str:
+        with version():
+            super().compute_hash(vllm_config)
+
     def compile(
         self,
         graph: fx.GraphModule,
         example_inputs: List[Any],
         compiler_config: Dict[str, Any],
         runtime_shape: Optional[int] = None,
+        key: Optional[str] = None,
     ) -> Tuple[Optional[Callable], Optional[Any]]:
         from torch._inductor import config
 
@@ -106,15 +115,6 @@ class CustomInductorAdaptor(InductorAdaptor):
 
         if compiler_config is not None:
             current_config.update(compiler_config)
-
-        from vllm_gcu.compilation.fusion import GCUFusionPass
-
-        PASS_KEY = "post_grad_custom_post_pass"
-        assert PASS_KEY in current_config
-        post_grad_pass_manager = current_config[PASS_KEY]
-        post_grad_pass_manager.add(
-            GCUFusionPass.instance(post_grad_pass_manager.pass_config)
-        )
 
         if isinstance(runtime_shape, int):
             # for a specific batchsize, tuning triton kernel parameters
@@ -167,7 +167,7 @@ class CustomInductorAdaptor(InductorAdaptor):
         elif is_torch_equal_or_newer("2.6"):
             # function renamed in 2.6
             original_load_name = None
-            import vllm_gcu.patch.torch_2_6_0.refs_pad
+            import vllm_gcu.patch.torch_2_6_0.refs_pad  # noqa: F401
 
             def hijacked_compile_fx_inner(*args, **kwargs):
                 with version(), lowering():
@@ -181,7 +181,22 @@ class CustomInductorAdaptor(InductorAdaptor):
                         file_path = (
                             inductor_compiled_graph.current_callable.__code__.co_filename
                         )  # noqa
-                        hash_str = inductor_compiled_graph._fx_graph_cache_key
+                        compiled_fn = inductor_compiled_graph.current_callable
+                        file_path = compiled_fn.__code__.co_filename  # noqa
+                        if not file_path.startswith(self.cache_dir):
+                            # hooked in the align_inputs_from_check_idxs function
+                            # in torch/_inductor/utils.py
+                            if compiled_fn.__closure__:
+                                for cell in compiled_fn.__closure__:
+                                    if not callable(cell.cell_contents):
+                                        continue
+                                    code = cell.cell_contents.__code__
+                                    if code.co_filename.startswith(self.cache_dir):
+                                        # this is the real file path
+                                        # compiled from Inductor
+                                        file_path = code.co_filename
+                                        break
+                            hash_str = inductor_compiled_graph._fx_graph_cache_key
                     return output
 
         def hijack_compiled_fx_graph_hash(*args, **kwargs):
@@ -202,6 +217,9 @@ class CustomInductorAdaptor(InductorAdaptor):
 
         def _get_shape_env() -> AlwaysHitShapeEnv:
             return AlwaysHitShapeEnv()
+
+        def _should_reinplace_scatter(node):
+            return False
 
         with ExitStack() as stack:
             # hijack to get the compiled graph itself
@@ -232,12 +250,30 @@ class CustomInductorAdaptor(InductorAdaptor):
                 )
             )
 
-            compiled_graph = compile_fx(
-                graph,
-                example_inputs,
-                inner_compile=hijacked_compile_fx_inner,
-                config_patches=current_config,
+            stack.enter_context(
+                patch(
+                    "torch._inductor.fx_passes.reinplace.should_reinplace_scatter",
+                    _should_reinplace_scatter
+                )
             )
+
+            stack.enter_context(self.metrics_context())
+
+            if is_torch_equal_or_newer("2.6"):
+                stack.enter_context(
+                    torch._inductor.config.patch(fx_graph_remote_cache=False)
+                )
+                stack.enter_context(
+                    torch._functorch.config.patch(enable_remote_autograd_cache=False)
+                )
+
+            with pass_context(runtime_shape):
+                compiled_graph = compile_fx(
+                    graph,
+                    example_inputs,
+                    inner_compile=hijacked_compile_fx_inner,
+                    config_patches=current_config,
+                )
 
         if not envs.VLLM_DISABLE_COMPILE_CACHE:
             assert hash_str is not None, "failed to get the hash of the compiled graph"
@@ -245,29 +281,3 @@ class CustomInductorAdaptor(InductorAdaptor):
                 file_path is not None
             ), "failed to get the file path of the compiled graph"
         return compiled_graph, (hash_str, file_path)
-
-
-class CustomEagerAdaptor(EagerAdaptor):
-    def compile(
-        self,
-        graph: fx.GraphModule,
-        example_inputs: List[Any],
-        compiler_config: Dict[str, Any],
-        runtime_shape: Optional[int] = None,
-    ) -> Tuple[Optional[Callable], Optional[Any]]:
-        # with open('before.txt', 'w') as f:
-        #     f.write(str(graph))
-        for _pass in get_passes():
-            graph = _pass(graph)
-        # with open('after.txt', 'w') as f:
-        #     f.write(str(graph))
-        return graph, None
-
-
-patcher1 = patch("vllm.compilation.compiler_interface.EagerAdaptor", CustomEagerAdaptor)
-patcher1.start()
-
-patcher2 = patch(
-    "vllm.compilation.compiler_interface.InductorAdaptor", CustomInductorAdaptor
-)
-patcher2.start()

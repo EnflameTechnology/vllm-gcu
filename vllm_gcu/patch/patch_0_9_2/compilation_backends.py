@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # coding=utf-8
 from unittest.mock import patch
+from vllm_gcu.compilation.fusion import GCUFusionPass, GCUActivationQuantFusionPass
 
 
 def make_compiler(compilation_config):
@@ -15,3 +16,5 @@ def make_compiler(compilation_config):
 
 
 patch("vllm.compilation.backends.make_compiler", make_compiler).start()
+patch("vllm.compilation.pass_manager.FusionPass", GCUFusionPass).start()
+patch("vllm.compilation.pass_manager.ActivationQuantFusionPass", GCUActivationQuantFusionPass).start()

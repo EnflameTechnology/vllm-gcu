@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 # coding=utf-8
-import hashlib
 import os
 import random
 import types
@@ -10,7 +9,6 @@ from typing import List, Optional, Tuple, Union
 import numpy as np
 import torch
 import vllm.envs as envs
-from vllm.config import SupportsHash
 from vllm.platforms.interface import (
     _Backend,
     CpuArchEnum,
@@ -24,11 +22,6 @@ import vllm_gcu.envs as gcu_envs
 
 
 logger = init_logger(__name__)
-
-
-class AdditionalConfig(dict, SupportsHash):
-    def compute_hash(self) -> str:
-        return str(hash(frozenset(self.items())))
 
 
 class GCUPlatform(Platform):
@@ -49,11 +42,6 @@ class GCUPlatform(Platform):
         "fp8_gcu",
         "compressed-tensors",
     ]
-
-    def __init__(self):
-        # initialized in vllm/platforms/__init__.py,
-        # import here before engine args added to parser
-        import vllm_gcu.kernels  # noqa: F401
 
     def is_cuda_alike(self) -> bool:
         return True
@@ -78,14 +66,12 @@ class GCUPlatform(Platform):
                 else:
                     return "vllm_gcu.attention.backends.mla.GCUMLABackend"
         if use_v1:
-            return "vllm_gcu.v1.attention.flash_attn.GCUFlashAttentionBackend"
+            return "vllm.v1.attention.backends.flash_attn.FlashAttentionBackend"
         if selected_backend == _Backend.FLASHINFER:
             raise NotImplementedError
         elif selected_backend == _Backend.XFORMERS:
             return "vllm_gcu.attention.backends.xformers.GCUXFormersBackend"
         elif selected_backend == _Backend.FLASH_ATTN:
-            if cls.get_device_capability().to_int() == 130:
-                return "vllm_gcu.attention.backends.flash_attn.FlashAttentionBackend"
             return "vllm.attention.backends.flash_attn.FlashAttentionBackend"
             # return "vllm_gcu.attention.backends.flash_attn.FlashAttentionBackend"
         elif selected_backend:
@@ -143,6 +129,10 @@ class GCUPlatform(Platform):
             torch.manual_seed(seed)
 
     @classmethod
+    def set_device(cls, device: torch.device) -> None:
+        torch.gcu.set_device(device)
+
+    @classmethod
     def pre_register_and_update(cls, parser=None) -> None:
         import tops_extension.torch  # noqa: F401
         import torch_gcu  # noqa: F401
@@ -151,7 +141,10 @@ class GCUPlatform(Platform):
         import vllm_gcu.compilation  # noqa: F401
         import vllm_gcu.distributed  # noqa: F401
         import vllm_gcu.kernels  # noqa: F401
-        import vllm_gcu.patch
+        import vllm_gcu.patch  # noqa: F401
+
+        if envs.VLLM_USE_V1:
+            os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
 
         if parser:
             key = "--device"
@@ -160,14 +153,13 @@ class GCUPlatform(Platform):
                 parser._option_string_actions[key].choices += ["gcu"]
                 parser._option_string_actions[key].default = "gcu"
 
-            key = "--disable-async-output-proc"
-            if key in parser._option_string_actions:
-                # set disable_async_output_proc default True
-                parser._option_string_actions[key].default = True
+            # key = "--disable-async-output-proc"
+            # if key in parser._option_string_actions:
+            #     # set disable_async_output_proc default True
+            #     parser._option_string_actions[key].default = True
 
     @classmethod
     def check_and_update_config(cls, vllm_config) -> None:
-
         parallel_config = vllm_config.parallel_config
         scheduler_config = vllm_config.scheduler_config
         cache_config = vllm_config.cache_config
@@ -186,7 +178,7 @@ class GCUPlatform(Platform):
                 parallel_config.sd_worker_cls = "vllm_gcu.worker.worker.GCUWorker"
             else:
                 if envs.VLLM_USE_V1:
-                    parallel_config.worker_cls = "vllm_gcu.v1.worker.gcu_worker.Worker"
+                    parallel_config.worker_cls = "vllm_gcu.worker.worker_v1.GCUWorker"
                 else:
                     parallel_config.worker_cls = "vllm_gcu.worker.worker.GCUWorker"
 
@@ -216,7 +208,6 @@ class GCUPlatform(Platform):
         parallel_config.disable_custom_all_reduce = True
         if (
             parallel_config.distributed_executor_backend == "mp"
-            and parallel_config.world_size > 1
         ):
             # force spawn multiprocessing method as others not support
             os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
@@ -243,47 +234,13 @@ class GCUPlatform(Platform):
                 "vllm_gcu.scheduler.PriorityScheduler"  # priority to preempt
             )
 
-        if vllm_config.additional_config is None:
-            # make sure additional_config is not None
-            vllm_config.additional_config = AdditionalConfig({})
-        else:
-            vllm_config.additional_config = AdditionalConfig(vllm_config.additional_config)
-
         if compilation_config:
             if compilation_config.level > 0:
                 compilation_config.backend = "topsgraph"
 
             if compilation_config.level == 3:
-                # os.environ["VLLM_DISABLE_COMPILE_CACHE"] = "1"
-                # envs.VLLM_DISABLE_COMPILE_CACHE = True
-                # TODO: WA for bug in vllm, to be removed after 0.8.2
-                if not compilation_config.cache_dir:
-                    factors = []
-                    config_hash = vllm_config.compute_hash()
-                    factors.append(config_hash)
-
-                    hash_key = hashlib.md5(str(factors).encode()).hexdigest()[:10]
-
-                    cache_dir = os.path.join(
-                        envs.VLLM_CACHE_ROOT,
-                        "torch_compile_cache",
-                        hash_key,
-                    )
-                    compilation_config.cache_dir = cache_dir
-
-                os.makedirs(compilation_config.cache_dir, exist_ok=True)
-
-                world_size = vllm_config.parallel_config.world_size
-                dp_size = vllm_config.parallel_config.data_parallel_size
-                for rank in range(world_size):
-                    for dp_rank in range(dp_size):
-                        local_cache_dir = os.path.join(
-                            compilation_config.cache_dir, f"rank_{rank}_{dp_rank}"
-                        )
-                        os.makedirs(local_cache_dir, exist_ok=True)
-
                 # TODO: remove after rmsnorm pattern fix in official.
-                compilation_config.pass_config.enable_fusion = False
+                compilation_config.pass_config.enable_fusion = True
                 compilation_config.custom_ops = ["all"]
 
                 if gcu_envs.VLLM_GCU_ENABLE_COMPILE_DUMP:
@@ -322,7 +279,7 @@ class GCUPlatform(Platform):
             logger.info("Force enable prefix caching on GCU Platform.")
             cache_config.enable_prefix_caching = True
 
-        vllm_config.additional_config.update({"all_dp_in_decode": False})
+        additional_config.update({"all_dp_in_decode": False})
 
         if "VLLM_GCU_DEEPSEEK_FUSION" not in os.environ and \
                 cls.get_device_capability().to_int() == 130 and \
@@ -333,9 +290,9 @@ class GCUPlatform(Platform):
         # Disable usage status for security
         envs.VLLM_NO_USAGE_STATS = "1"
         if gcu_envs.VLLM_GCU_DEEPSEEK_FUSION:
-            logger.info('Deepseek fusion ops enabled.')
+            logger.info("Deepseek fusion ops enabled.")
         if gcu_envs.VLLM_GCU_ENABLE_PARALLEL_COMPUTE:
-            logger.info('Overlap shared experts with dispatch enabled.')
+            logger.info("Overlap shared experts with dispatch enabled.")
 
     @classmethod
     def verify_model_arch(cls, model_arch: str) -> None:
@@ -386,3 +343,18 @@ class GCUPlatform(Platform):
     @classmethod
     def fp8_dtype(cls) -> torch.dtype:
         return torch.float8_e4m3fn
+
+    @classmethod
+    def supports_v1(cls, model_config) -> bool:
+        return True
+
+    def is_sleep_mode_available(self) -> bool:
+        return False
+
+    @classmethod
+    def get_piecewise_backend_cls(cls) -> str:
+        return "vllm_gcu.compilation.gcu_piecewise_backend.GCUPiecewiseBackend"  # noqa
+
+    @classmethod
+    def default_v1(cls, model_config) -> bool:
+        return cls.supports_v1(model_config)

@@ -47,8 +47,8 @@ def forward_oot(
 
             q_shape = query.shape
             k_shape = key.shape
-            query = query.reshape(query.shape[0], -1)
-            key = key.reshape(key.shape[0], -1)
+            query = query.reshape(query.shape[0], query.shape[1] * query.shape[2])
+            key = key.reshape(key.shape[0], key.shape[1] * key.shape[2])
         ops.rotary_embedding(
             positions,
             query,
@@ -85,8 +85,8 @@ def deepseek_oot(
     q_shape = query.shape
     k_shape = key.shape
 
-    query = query.reshape(query.shape[0], -1)
-    key = key.reshape(key.shape[0], -1)
+    query = query.reshape(query.shape[0], query.shape[1]*query.shape[2])
+    key = key.reshape(key.shape[0], key.shape[1]*key.shape[2])
     ops.rotary_embedding(
         positions,
         query,

@@ -60,3 +60,11 @@ class GCUCommunicator(CudaCommunicator):
                 out = input_.clone()
                 torch.distributed.all_reduce(out, group=self.device_group)
         return out
+
+    def dispatch(self, hidden_states, router_logits) -> tuple[torch.Tensor, torch.Tensor]:
+        # [TODO] modular kernel
+        return hidden_states, router_logits
+
+    def combine(self, hidden_states) -> torch.Tensor:
+        # [TODO] modular kernel
+        return hidden_states

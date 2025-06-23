@@ -22,65 +22,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Inference-only DeepseekV2/DeepseekV3 model."""
-from contextlib import nullcontext
-from functools import partial
-from typing import Any, Dict, Iterable, Mapping, Optional, Set, Tuple, Union
-from unittest.mock import patch
+from typing import Any, Dict, Optional
 
-import numpy as np
 import torch
 from torch import nn
 from transformers import PretrainedConfig
-from vllm.attention import Attention, AttentionMetadata
-from vllm.compilation.decorators import support_torch_compile
-from vllm.config import CacheConfig, ModelConfig, set_current_vllm_config, VllmConfig
+from vllm.attention import Attention
+from vllm.config import CacheConfig
 from vllm.distributed import (
-    get_pp_group,
     get_tensor_model_parallel_world_size,
-    get_tp_group,
-    tensor_model_parallel_all_reduce,
 )
 
-from vllm.forward_context import get_forward_context
-from vllm.inputs import DummyData, INPUT_REGISTRY, InputContext
-from vllm.model_executor.layers.activation import SiluAndMul
-from vllm.model_executor.layers.fused_moe import FusedMoE
 from vllm.model_executor.layers.layernorm import RMSNorm
 from vllm.model_executor.layers.linear import (
     ColumnParallelLinear,
-    MergedColumnParallelLinear,
     ReplicatedLinear,
     RowParallelLinear,
 )
-from vllm.model_executor.layers.logits_processor import LogitsProcessor
 from vllm.model_executor.layers.quantization import QuantizationConfig
 from vllm.model_executor.layers.rotary_embedding import get_rope
-from vllm.model_executor.layers.sampler import get_sampler, SamplerOutput
-from vllm.model_executor.layers.vocab_parallel_embedding import (
-    ParallelLMHead,
-    VocabParallelEmbedding,
-)
-from vllm.model_executor.model_loader.weight_utils import (
-    default_weight_loader,
-    maybe_remap_kv_scale_name,
-)
 
-from vllm.model_executor.models.interfaces import SupportsPP
-from vllm.model_executor.models.utils import (
-    is_pp_missing_parameter,
-    make_empty_intermediate_tensors_factory,
-    make_layers,
-    maybe_prefix,
-    PPMissingLayer,
-)
-from vllm.model_executor.sampling_metadata import SamplingMetadata
-from vllm.sequence import IntermediateTensors, SequenceData
 from vllm_gcu.kernels import _custom_ops as ops
 
 import vllm_gcu.envs as gcu_envs
-from vllm_gcu.kernels.fused_moe import fused_experts_impl
 from vllm_gcu.kernels.linear import MergedReplicatedLinear
-from vllm_gcu.kernels.quantization.fp8 import apply_w8a8_block_fp8_linear
 from vllm.model_executor.layers.linear import UnquantizedLinearMethod
 
 
@@ -112,7 +77,6 @@ class DeepseekFusedQKVProj(MergedReplicatedLinear):
     def forward(
         self, x: torch.Tensor
     ) -> tuple[torch.Tensor]:
-        bias = self.bias if not self.skip_bias_add else None
         assert self.quant_method is not None
         if self.quant_config.get_name() in ['awq_gcu', 'moe_wna16_gcu']:
             outs = tuple(torch.empty(x.shape[:-1]+(i,),
@@ -211,7 +175,7 @@ class DeepseekV2MLAAttentionFusion(nn.Module):
                 # HACK: use q_b_proj as layer since get_quant_method only check it's type
                 q_a_method = quant_config.get_quant_method(self.q_b_proj, f"{prefix}.q_a_proj")
                 kv_a_method = quant_config.get_quant_method(self.q_b_proj, f"{prefix}.kv_a_proj_with_mqa")
-                if type(q_a_method) == type(kv_a_method) and not isinstance(q_a_method, UnquantizedLinearMethod):
+                if type(q_a_method) is type(kv_a_method) and not isinstance(q_a_method, UnquantizedLinearMethod):
                     # UnquantizedLinearMethod: skip is not safe for merge linear
                     self.qkv_fuse = True
 
@@ -287,14 +251,6 @@ class DeepseekV2MLAAttentionFusion(nn.Module):
             mscale = yarn_get_mscale(scaling_factor, float(mscale_all_dim))
             self.scaling = self.scaling * mscale * mscale
 
-        self.q_proj_outside = False
-        if quant_config and quant_config.get_name().startswith("fp8"):
-            self.q_proj_outside = True
-
-        if self.q_proj_outside:
-            q_proj = nn.Identity()
-        else:
-            q_proj = self.q_proj if self.q_lora_rank is None else self.q_b_proj
 
         self.mla_attn = Attention(
             num_heads=self.num_local_heads,
@@ -312,10 +268,8 @@ class DeepseekV2MLAAttentionFusion(nn.Module):
             qk_rope_head_dim=self.qk_rope_head_dim,
             qk_head_dim=self.qk_head_dim,
             v_head_dim=self.v_head_dim,
-            rotary_emb=self.rotary_emb,
-            q_proj=q_proj,
             kv_b_proj=self.kv_b_proj,
-            o_proj=self.o_proj,
+            rotary_emb=self.rotary_emb,
             kv_a_layernorm=self.kv_a_layernorm,
         )
 
@@ -329,22 +283,25 @@ class DeepseekV2MLAAttentionFusion(nn.Module):
     ) -> torch.Tensor:
         if self.q_lora_rank is not None:
             if self.qkv_fuse:
-                ckq, kv_c_and_k_pe = self.qkv_a_proj_with_mqa(hidden_states)
+                q_c, latent_cache = self.qkv_a_proj_with_mqa(hidden_states)
             else:
-                ckq = self.q_a_proj(hidden_states)[0].contiguous()
-                kv_c_and_k_pe = self.kv_a_proj_with_mqa(hidden_states)[0].contiguous()
-            hidden_states_or_q_c = self.q_a_layernorm(ckq)
+                q_c = self.q_a_proj(hidden_states)[0].contiguous()
+                latent_cache = self.kv_a_proj_with_mqa(hidden_states)[0].contiguous()
+            q_c = self.q_a_layernorm(q_c)
+            q = self.q_b_proj(q_c)[0]
         else:
-            hidden_states_or_q_c = hidden_states
-            kv_c_and_k_pe = self.kv_a_proj_with_mqa(hidden_states)[0]
+            q = self.q_proj(hidden_states)[0].view(
+                -1, self.num_local_heads, self.qk_head_dim
+            )
+            latent_cache = self.kv_a_proj_with_mqa(hidden_states)[0]
 
-        if self.q_proj_outside:
-            q_proj = self.q_proj if self.q_lora_rank is None else self.q_b_proj
-            hidden_states_or_q_c = q_proj(hidden_states_or_q_c)[0].unsqueeze(0)
+        q = q.view(-1, self.num_local_heads, self.qk_head_dim)
 
-        return self.mla_attn(
-            hidden_states_or_q_c,
-            kv_c_and_k_pe,
-            kv_c_and_k_pe,  # place holder
-            output_shape=hidden_states.shape
-        )
+        attn_out = self.mla_attn(
+            q,
+            latent_cache,
+            positions,  # place holder
+            output_shape=(hidden_states.shape[0],
+                          self.num_local_heads * self.v_head_dim))
+
+        return self.o_proj(attn_out)[0]

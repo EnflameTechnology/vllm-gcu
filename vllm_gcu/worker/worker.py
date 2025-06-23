@@ -11,7 +11,6 @@ import torch_gcu  # noqa: F401
 
 from vllm.config import VllmConfig, set_current_vllm_config
 from vllm.distributed import (
-    ensure_kv_transfer_initialized,
     ensure_model_parallel_initialized,
     get_dp_group,
     get_pp_group,
@@ -20,6 +19,7 @@ from vllm.distributed import (
     init_distributed_environment,
     set_custom_all_reduce,
 )
+from vllm.distributed.kv_transfer import ensure_kv_transfer_initialized
 from vllm.logger import init_logger
 from vllm.model_executor import set_random_seed
 from vllm.utils import GiB_bytes, memory_profiling, MemorySnapshot
@@ -45,7 +45,7 @@ class GCUWorker(Worker):
     ) -> None:
         import vllm_gcu.kernels  # noqa: F401
         import vllm_gcu.patch  # noqa: F401
-        import vllm_gcu.compilation  # noqa: F40
+        import vllm_gcu.compilation  # noqa: F401
 
         if gcu_envs.VLLM_GCU_RANK_LOG_PATH:
             # before init dist, since we want to split eccl init logs

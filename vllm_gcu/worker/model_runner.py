@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Set, Tuple, Type, Union
 
 import numpy as np
+import itertools
 import torch
 import torch.distributed
 import vllm.envs as envs
@@ -19,7 +20,8 @@ from vllm.attention import AttentionMetadata, get_attn_backend
 from vllm.attention.backends.abstract import AttentionState
 from vllm.attention.backends.utils import CommonAttentionState
 from vllm.config import CompilationLevel, VllmConfig, set_current_vllm_config
-from vllm.distributed import get_dp_group, get_kv_transfer_group, get_pp_group
+from vllm.distributed import get_dp_group, get_pp_group
+from vllm.distributed.kv_transfer import get_kv_transfer_group
 from vllm.distributed.parallel_state import (
     get_tensor_model_parallel_rank,
     graph_capture,
@@ -31,7 +33,7 @@ from vllm.lora.layers import LoRAMapping
 from vllm.lora.request import LoRARequest
 from vllm.lora.worker_manager import LRUCacheWorkerLoRAManager
 from vllm.model_executor import SamplingMetadata, SamplingMetadataCache
-from vllm.model_executor.layers.sampler import SamplerOutput
+from vllm.model_executor.layers.sampler import SamplerOutput, get_sampler
 from vllm.model_executor.model_loader import get_model
 from vllm.model_executor.model_loader.tensorizer import TensorizerConfig
 from vllm.model_executor.models import supports_lora, supports_multimodal
@@ -105,7 +107,6 @@ class GCUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
         input_registry: InputRegistry = INPUT_REGISTRY,
         mm_registry: MultiModalRegistry = MULTIMODAL_REGISTRY,
     ):
-
         ModelRunnerBase.__init__(self, vllm_config)
         model_config = self.model_config
         cache_config = self.cache_config
@@ -124,7 +125,7 @@ class GCUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
             self.vllm_config.compilation_config.max_capture_size
         )
 
-        self.graph_runners: List[Dict[int, GCUGraphRunner]] = [
+        self.graph_runners: List[Dict[Tuple[int, bool], GCUGraphRunner]] = [
             {} for _ in range(self.parallel_config.pipeline_parallel_size)
         ]
         self.graph_memory_pool: Optional[Tuple[int, int]] = (
@@ -174,14 +175,13 @@ class GCUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
         # Multi-modal data support
         self.input_registry = input_registry
         self.mm_registry = mm_registry
-        self.multi_modal_input_mapper = mm_registry.create_input_mapper(model_config)
-        self.mm_registry.init_mm_limits_per_prompt(self.model_config)
 
         # Lazy initialization
         self.model: nn.Module  # Set after load_model
         # Set after load_model.
         self.lora_manager: Optional[LRUCacheWorkerLoRAManager] = None
         self.prompt_adapter_manager: LRUCacheWorkerPromptAdapterManager = None
+        self.sampler = get_sampler()
 
         set_cpu_offload_max_bytes(int(self.cache_config.cpu_offload_gb * 1024**3))
 
@@ -210,9 +210,9 @@ class GCUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
             time_before_load = time.perf_counter()
             self.model = get_model(vllm_config=self.vllm_config)
             if self.lora_config:
-                assert supports_lora(
-                    self.model
-                ), f"{self.model.__class__.__name__} does not support LoRA yet."
+                assert supports_lora(self.model), (
+                    f"{self.model.__class__.__name__} does not support LoRA yet."
+                )
 
                 if supports_multimodal(self.model):
                     logger.warning(
@@ -263,7 +263,6 @@ class GCUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
             self.vllm_config.compilation_config.level == CompilationLevel.DYNAMO_AS_IS
             and supports_dynamo()
         ):
-
             backend = self.vllm_config.compilation_config.init_backend(self.vllm_config)
 
             if backend == "topsgraph":
@@ -370,6 +369,30 @@ class GCUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
         max_num_seqs = self.scheduler_config.max_num_seqs
         self._dummy_run(max_num_batched_tokens, max_num_seqs)
 
+    def _add_dummy_loras(self, num_loras: int) -> list[LoRARequest]:
+        assert num_loras > 0
+        assert self.lora_manager is not None
+
+        dummy_lora_requests: list[LoRARequest] = []
+        with self.lora_manager.dummy_lora_cache():
+            for idx in range(num_loras):
+                lora_id = idx + 1
+                dummy_lora_request = LoRARequest(
+                    lora_name=f"warmup_{lora_id}",
+                    lora_int_id=lora_id,
+                    lora_path="/not/a/real/path",
+                )
+                self.lora_manager.add_dummy_lora(
+                    dummy_lora_request, rank=LORA_WARMUP_RANK
+                )
+                dummy_lora_requests.append(dummy_lora_request)
+        return dummy_lora_requests
+
+    def _remove_dummy_loras(self):
+        # Remove dummy loras.
+        assert self.lora_manager is not None
+        self.remove_all_loras()
+
     def _dummy_run(self, max_num_batched_tokens: int, max_num_seqs: int = 1) -> None:
         with self.set_in_profile_run():
             # Enable top-k sampling to reflect the accurate memory usage.
@@ -382,23 +405,12 @@ class GCUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
             dummy_lora_requests: List[LoRARequest] = []
             dummy_lora_requests_per_seq: List[LoRARequest] = []
             if self.lora_config:
-                assert self.lora_manager is not None
-                with self.lora_manager.dummy_lora_cache():
-                    for idx in range(self.lora_config.max_loras):
-                        lora_id = idx + 1
-                        dummy_lora_request = LoRARequest(
-                            lora_name=f"warmup_{lora_id}",
-                            lora_int_id=lora_id,
-                            lora_path="/not/a/real/path",
-                        )
-                        self.lora_manager.add_dummy_lora(
-                            dummy_lora_request, rank=LORA_WARMUP_RANK
-                        )
-                        dummy_lora_requests.append(dummy_lora_request)
-                    dummy_lora_requests_per_seq = [
-                        dummy_lora_requests[idx % len(dummy_lora_requests)]
-                        for idx in range(max_num_seqs)
-                    ]
+                dummy_lora_requests = self._add_dummy_loras(self.lora_config.max_loras)
+                assert len(dummy_lora_requests) == self.lora_config.max_loras
+                dummy_lora_requests_per_seq = [
+                    dummy_lora_requests[idx % len(dummy_lora_requests)]
+                    for idx in range(max_num_seqs)
+                ]
 
             # Profile memory usage with max_num_sequences sequences and the
             # total number of tokens equal to max_num_batched_tokens.
@@ -489,9 +501,7 @@ class GCUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
             self.execute_model(model_input, kv_caches, intermediate_tensors)
             torch.gcu.synchronize()
             if self.lora_config:
-                # Remove dummy loras.
-                assert self.lora_manager is not None
-                self.remove_all_loras()
+                self._remove_dummy_loras()
             return
 
     def remove_all_loras(self):
@@ -599,6 +609,11 @@ class GCUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
         input_positions = torch.zeros(
             max_batch_size, dtype=torch.long, device=self.device
         )
+        inputs_embeds = torch.zeros(
+            (max_batch_size, self.model_config.get_hidden_size()),
+            dtype=self.model_config.dtype,
+            device=self.device,
+        )
         if self.model_config.uses_mrope:
             input_positions = torch.tile(input_positions, (3, 1)).gcu(
                 device=self.device
@@ -621,22 +636,38 @@ class GCUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
                 device=self.device,
             )
 
-        with self.attn_state.graph_capture(max_batch_size), graph_capture(
-            self.device
-        ) as graph_capture_context:
+        dummy_lora_id: Optional[int] = None
+        dummy_lora_request: LoRARequest = []
+        if self.lora_config:
+            # The goal is to capture the LoRA kernels in cuda graphs.
+            # for this purpose, as single dummy lora is sufficient.
+            dummy_lora_requests = self._add_dummy_loras(num_loras=1)
+            assert len(dummy_lora_requests) == 1
+            dummy_lora_request = dummy_lora_requests[0]
+            dummy_lora_id = dummy_lora_request.lora_int_id
+
+        with (
+            self.attn_state.graph_capture(max_batch_size),
+            graph_capture(self.device) as graph_capture_context,
+        ):
             # NOTE: Capturing the largest batch size first may help reduce the
             # memory usage of GCU graph.
             for virtual_engine in range(self.parallel_config.pipeline_parallel_size):
                 # Only rank 0 should print progress bar during capture
                 gcugraph_capture_sizes = (
-                    tqdm(
-                        self.vllm_config.compilation_config.cudagraph_capture_sizes,
-                        desc="Capturing GCU graph shapes",
-                    )
-                    if get_tensor_model_parallel_rank() == 0
-                    else self.vllm_config.compilation_config.cudagraph_capture_sizes
+                    self.vllm_config.compilation_config.cudagraph_capture_sizes
                 )
-                for batch_size in gcugraph_capture_sizes:
+                cudagraph_inputs_embeds = (True, False)
+                compilation_cases = itertools.product(
+                    gcugraph_capture_sizes,
+                    cudagraph_inputs_embeds,
+                )
+                # Only rank 0 should print progress bar during capture
+                if get_tensor_model_parallel_rank() == 0:
+                    compilation_cases = tqdm(
+                        list(compilation_cases), desc="Capturing CUDA graph shapes"
+                    )
+                for batch_size, use_inputs_embeds in compilation_cases:
                     attn_metadata = self.attn_state.graph_capture_get_metadata_for_batch(
                         batch_size,
                         is_encoder_decoder_model=self.model_config.is_encoder_decoder,
@@ -646,12 +677,12 @@ class GCUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
                     if self.lora_config:
                         lora_mapping = LoRAMapping(
                             **dict(
-                                index_mapping=[0] * batch_size,
-                                prompt_mapping=[0] * batch_size,
+                                index_mapping=[dummy_lora_id] * batch_size,
+                                prompt_mapping=[dummy_lora_id] * batch_size,
                                 is_prefill=False,
                             )
                         )
-                        self.set_active_loras(set(), lora_mapping)
+                        self.set_active_loras(set([dummy_lora_request]), lora_mapping)
 
                     if self.prompt_adapter_config:
                         prompt_adapter_mapping = PromptAdapterMapping(
@@ -668,6 +699,9 @@ class GCUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
 
                     capture_inputs = {
                         "input_ids": input_tokens[:batch_size],
+                        "inputs_embeds": inputs_embeds[:batch_size]
+                        if use_inputs_embeds
+                        else None,
                         "positions": input_positions[..., :batch_size],
                         "intermediate_inputs": (
                             intermediate_inputs[:batch_size]
@@ -704,7 +738,10 @@ class GCUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
                         with set_current_vllm_config(self.vllm_config):
                             graph_runner.capture(**capture_inputs)
                     self.graph_memory_pool = graph_runner.graph.pool()
-                    self.graph_runners[virtual_engine][batch_size] = graph_runner
+                    self.graph_runners[virtual_engine][(batch_size, use_inputs_embeds)] = graph_runner
+
+        if self.lora_config:
+            self._remove_dummy_loras()
 
         end_time = time.perf_counter()
         end_free_gpu_memory = torch.gcu.mem_get_info()[0]
@@ -901,7 +938,8 @@ class GCUModelRunner(GCUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
                 graph_batch_size = model_input.input_tokens.shape[0]
             else:
                 graph_batch_size = 0
-            model_executable = self.graph_runners[virtual_engine][graph_batch_size]
+            use_inputs_embeds = model_input.inputs_embeds is not None
+            model_executable = self.graph_runners[virtual_engine][(graph_batch_size, use_inputs_embeds)]
             if previous_hidden_states is not None:
                 previous_hidden_states = torch.cat(
                     [
@@ -971,6 +1009,7 @@ class GCUModelRunner(GCUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
                             if model_input.input_tokens is not None
                             else torch.tensor([], dtype=torch.int64, device="gcu")
                         ),
+                        inputs_embeds=model_input.inputs_embeds,
                         positions=(
                             model_input.input_positions
                             if model_input.input_positions is not None
@@ -1050,7 +1089,7 @@ class GCUModelRunner(GCUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
             model_input.sampling_metadata.categorized_sample_indices = {
                 i: tensor.cpu() for i, tensor in categorized_sample_indices.items()
             }
-        output: SamplerOutput = self.model.sample(
+        output: SamplerOutput = self.sampler(
             logits=logits,
             sampling_metadata=model_input.sampling_metadata,
         )
@@ -1164,7 +1203,6 @@ class GCUModelRunner(GCUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
 
 
 class GCUGraphRunner(nn.Module):
-
     def __init__(
         self,
         model: nn.Module,
@@ -1270,6 +1308,7 @@ class GCUGraphRunner(nn.Module):
     def forward(
         self,
         input_ids: torch.Tensor,
+        inputs_embeds: Optional[torch.Tensor],
         positions: torch.Tensor,
         intermediate_tensors: Optional[IntermediateTensors],
         **kwargs,
@@ -1290,6 +1329,11 @@ class GCUGraphRunner(nn.Module):
 
             self.attn_state.prepare_graph_input_buffers(
                 self.input_buffers, attn_metadata, self._is_encoder_decoder_model
+            )
+
+        if inputs_embeds is not None:
+            self.input_buffers["inputs_embeds"][: inputs_embeds.shape[0]].copy_(
+                inputs_embeds, non_blocking=True
             )
 
         if "seqlen_agnostic_capture_inputs" in self.input_buffers:

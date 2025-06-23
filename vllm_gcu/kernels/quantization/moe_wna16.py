@@ -553,9 +553,20 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
         custom_routing_function: Optional[Callable] = None,
         scoring_func: str = "softmax",
         e_score_correction_bias: Optional[torch.Tensor] = None,
+        apply_router_weight_on_input: bool = False,
         activation: str = "silu",
+        enable_eplb: bool = False,
+        expert_load_view: Optional[torch.Tensor] = None,
+        logical_to_physical_map: Optional[torch.Tensor] = None,
+        logical_replica_count: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        if enable_eplb:
+            raise NotImplementedError(
+                "EPLB not supported for `MoeWNA16GCUMethod` yet.")
+
         from vllm.model_executor.layers.fused_moe import fused_experts
+
+        activation += f"_{layer.layer_name}"
 
         topk_weights, topk_ids = FusedMoE.select_experts(
             hidden_states=x,
@@ -583,6 +594,7 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
             use_int4_w4a16=weight_bits == 4,
             use_int8_w8a16=weight_bits == 8,
             global_num_experts=global_num_experts,
+            apply_router_weight_on_input=apply_router_weight_on_input,
             expert_map=expert_map,
             w1_scale=layer.w13_scales,
             w2_scale=layer.w2_scales,

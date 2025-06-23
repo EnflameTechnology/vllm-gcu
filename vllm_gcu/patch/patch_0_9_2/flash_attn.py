@@ -1,6 +1,7 @@
 from unittest.mock import patch
 import vllm.v1.attention.backends.flash_attn
 from vllm_gcu.kernels._custom_ops import merge_attn_states
+from vllm._custom_ops import reshape_and_cache_flash
 try:
     from flash_attn.vllm_flash_attn import flash_attn_varlen_func, flash_attn_with_kvcache
 except ImportError:
@@ -27,3 +28,4 @@ patch("vllm.v1.attention.backends.flash_attn.merge_attn_states", merge_attn_stat
 
 
 setattr(vllm.v1.attention.backends.flash_attn, "flash_attn_varlen_func", flash_attn_varlen_func)
+setattr(vllm.v1.attention.backends.flash_attn, "reshape_and_cache_flash", reshape_and_cache_flash)
