@@ -19,7 +19,7 @@ from vllm.compilation.fusion import (
 )
 from vllm.compilation.multi_output_match import MultiOutputMatch
 from vllm.compilation.vllm_inductor_pass import VllmInductorPass
-from vllm.config import CompilationConfig
+from vllm.config import PassConfig
 from vllm.logger import init_logger
 from vllm.platforms import current_platform
 from vllm.utils import direct_register_custom_op
@@ -728,7 +728,7 @@ class SiluMulPerTokenGroupQuantPattern(FusedQuantPattern):
         ):
             at = auto_functionalized(
                 SILU_MUL_OP,
-                out=result_silu_mul,
+                result=result_silu_mul,
                 input=input,
             )
             at1 = auto_functionalized(
@@ -1179,16 +1179,43 @@ def add_debug_dump(graph):
             new_node.args = (node,) + new_node.args[1:]
 
 
+def fix_copy_pass(graph):
+    for node in graph.nodes:
+        if node.op == 'call_function' and node.target == torch.ops.aten.copy_.default:
+            input_tensor = node.args[0]
+            copy_value = node.args[1]
+
+            with graph.inserting_before(node):
+                new_node = graph.call_method("copy_", (input_tensor, copy_value), {})
+
+            node.replace_all_uses_with(new_node)
+
+            graph.erase_node(node)
+
+
+def fallback_prims(graph):
+    for node in graph.nodes:
+        if node.op == "call_function" and node.target == torch.ops.prims.convert_element_type.default:
+            input_tensor = node.args[0]
+            target_dtype = node.args[1]
+
+            with graph.inserting_after(node):
+                new_node = graph.call_function(torch.ops.aten.to.dtype, (input_tensor, target_dtype), {})
+
+            node.replace_all_uses_with(new_node)
+            graph.erase_node(node)
+
+
 class GCUFusionPass(FusionPass):
     @classmethod
-    def instance(cls, config: CompilationConfig.PassConfig):
+    def instance(cls, config: PassConfig):
         if cls._instance is None:
             cls._instance = GCUFusionPass(config)
         else:
             cls._instance.config = config
         return cls._instance
 
-    def __init__(self, config: CompilationConfig.PassConfig):
+    def __init__(self, config: PassConfig):
         assert (
             self.__class__._instance is None
         ), "GCUFusionPass singleton instance already exists"
@@ -1231,11 +1258,6 @@ class GCUFusionPass(FusionPass):
                 FusedAddRMSNormPerTokenGroupQuantPattern(
                     epsilon, 128, FP8_DTYPE
                 ).register(self.patterns, self.record_match)
-
-                SiluMulPerTokenGroupQuantPattern(128, FP8_DTYPE).register(self.patterns)
-                SiluMulPadPerTokenGroupQuantPattern(128, FP8_DTYPE).register(
-                    self.patterns
-                )
             else:
                 RMSNormStaticQuantPattern(epsilon, torch.int8).register(self.patterns)
 
@@ -1248,6 +1270,10 @@ class GCUFusionPass(FusionPass):
                 )
 
             torch._inductor.pattern_matcher._seen_patterns.clear()
+
+        if current_platform.supports_fp8():
+            SiluMulPerTokenGroupQuantPattern(128, FP8_DTYPE).register(self.patterns)
+            SiluMulPadPerTokenGroupQuantPattern(128, FP8_DTYPE).register(self.patterns)
 
     def __call__(self, graph):
         self.begin()
@@ -1264,6 +1290,14 @@ class GCUFusionPass(FusionPass):
         graph.eliminate_dead_code()
         self.dump_graph(graph, "after_fusion")
 
+        # [TODO] add defunctionalize for rope
+
+        fix_copy_pass(graph)
+        graph.eliminate_dead_code()
+
+        fallback_prims(graph)
+        graph.eliminate_dead_code()
+
         if gcu_envs.VLLM_GCU_ENABLE_COMPILE_DUMP:
             logger.debug("Add dump node")
             add_debug_dump(graph)
@@ -1272,3 +1306,11 @@ class GCUFusionPass(FusionPass):
 
         self.matches.clear()
         self.end_and_log()
+
+
+class GCUActivationQuantFusionPass(VllmInductorPass):
+    def __init__(self, config):
+        super().__init__(config)
+
+    def __call__(self, graph: torch.fx.Graph):
+        return

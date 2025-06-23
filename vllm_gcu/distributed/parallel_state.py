@@ -4,8 +4,6 @@ import torch
 import torch_gcu
 from torch.distributed import ProcessGroup
 from vllm.distributed.parallel_state import GroupCoordinator
-from vllm.distributed.parallel_state import all_reduce
-from vllm.utils import vllm_lib
 
 from vllm_gcu.distributed.pyeccl import PyEcclCommunicator
 
@@ -112,7 +110,3 @@ class GroupWrapper:
         return torch.distributed.all_to_all(
             output, input, output_split_sizes, input_split_sizes
         )
-
-vllm_lib.impl(
-    "all_reduce", all_reduce, dispatch_key="PrivateUse1"
-)

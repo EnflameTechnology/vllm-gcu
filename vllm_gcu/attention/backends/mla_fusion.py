@@ -1,17 +1,13 @@
 #!/usr/bin/env python
 # coding=utf-8
-import itertools
 from typing import Any, Dict, List, Optional, Type
 
 import torch
 
-from vllm.attention.backends.abstract import AttentionType
 from vllm.attention.backends.mla.common import (
-    MLACommonBackend,
-    MLACommonImpl,
     MLACommonMetadata,
-    MLACommonMetadataBuilder,
 )
+from vllm.model_executor.layers.rotary_embedding import RotaryEmbedding
 from vllm.model_executor.custom_op import CustomOp
 from vllm.platforms import current_platform
 
@@ -132,7 +128,9 @@ class GCUMLAFusionImpl(GCUMLAImpl):
         blocksparse_params: Optional[Dict[str, Any]],
         logits_soft_cap: Optional[float],
         attn_type: str,
-        kv_a_layernorm: Optional[torch.nn.Module],
+        kv_sharing_target_layer_name: Optional[str] = None,
+        rotary_emb: Optional[RotaryEmbedding] = None,
+        kv_a_layernorm: Optional[torch.nn.Module] = None,
         **kwargs,
     ) -> None:
         super().__init__(
@@ -146,8 +144,10 @@ class GCUMLAFusionImpl(GCUMLAImpl):
             blocksparse_params,
             logits_soft_cap,
             attn_type,
+            kv_sharing_target_layer_name,
             **kwargs,
         )
+        self.rotary_emb = rotary_emb
         self.kv_a_layernorm = kv_a_layernorm
 
         self.rope_with_kvcache = RopeWithKVCache(
@@ -173,20 +173,17 @@ class GCUMLAFusionImpl(GCUMLAImpl):
         layer,
         hidden_states_or_q_c,
         kv_c_and_k_pe,
-        place_holder,
+        input_positions,
         kv_cache,
         attn_metadata,
         output=None,
+        output_scale=None,
     ):
         if attn_metadata is None:
             if output is not None:
                 return output
             else:
-                return torch.empty(
-                    [0, self.o_proj.output_size],
-                    dtype=hidden_states_or_q_c.dtype,
-                    device=hidden_states_or_q_c.device,
-                )
+                return torch.empty_like(hidden_states_or_q_c)
 
         if attn_metadata.is_profile_run and \
                 attn_metadata.context_chunk_workspace is not None:
@@ -202,16 +199,13 @@ class GCUMLAFusionImpl(GCUMLAImpl):
 
         has_decode = attn_metadata.decode_metadata is not None
         has_prefill = attn_metadata.prefill_metadata is not None
-        assert hasattr(attn_metadata, "input_positions")
         num_prefill_tokens: int = attn_metadata.num_prefill_tokens
 
-        q = self.q_proj(hidden_states_or_q_c)[0].view(-1, self.num_heads, self.qk_head_dim)
+        q = hidden_states_or_q_c.view(-1, self.num_heads, self.qk_head_dim)
         decode_q = q[num_prefill_tokens:]
         prefill_q = q[:num_prefill_tokens]
-        decode_input_positions = \
-            attn_metadata.input_positions[num_prefill_tokens:]
-        prefill_input_positions = \
-            attn_metadata.input_positions[:num_prefill_tokens]
+        decode_input_positions = input_positions[num_prefill_tokens:]
+        prefill_input_positions = input_positions[:num_prefill_tokens]
         decode_kv_c_and_k_pe = kv_c_and_k_pe[num_prefill_tokens:]
         prefill_kv_c_and_k_pe = kv_c_and_k_pe[:num_prefill_tokens]
         decode_slot_mapping = attn_metadata.slot_mapping[num_prefill_tokens:]
@@ -246,7 +240,7 @@ class GCUMLAFusionImpl(GCUMLAImpl):
                 dtype=decode_q.dtype,
                 device=decode_q.device,
             )
-            decode_ql_nope = self._k_up_proj(decode_q_concat[...,:self.kv_lora_rank],decode_q_nope)
+            # decode_ql_nope = self._k_up_proj(decode_q_concat[...,:self.kv_lora_rank],decode_q_nope)
             self.rope_with_kvcache(
                 decode_q_concat[...,self.kv_lora_rank:],
                 None,
@@ -312,5 +306,4 @@ class GCUMLAFusionImpl(GCUMLAImpl):
             out_scales=None,
         )
 
-        x = self._v_up_proj(o)
-        return self.o_proj(x)[0]
+        return self._v_up_proj(o)

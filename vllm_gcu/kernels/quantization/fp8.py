@@ -1,8 +1,9 @@
-from typing import List, Optional
+from typing import List, Optional, Callable
 
 import torch
 from vllm.model_executor.layers.linear import LinearBase, UnquantizedLinearMethod
-from vllm.model_executor.layers.quantization.fp8 import Fp8Config, Fp8LinearMethod
+from vllm.model_executor.layers.fused_moe import FusedMoE
+from vllm.model_executor.layers.quantization.fp8 import Fp8Config, Fp8LinearMethod, Fp8MoEMethod
 from vllm.model_executor.layers.quantization.utils.quant_utils import is_layer_skipped
 from vllm.platforms import current_platform
 
@@ -22,6 +23,8 @@ class Fp8GCUConfig(Fp8Config):
             if is_layer_skipped(prefix, self.ignored_layers):
                 return UnquantizedLinearMethod()
             return Fp8GCULinearMethod(self)
+        elif isinstance(layer, FusedMoE):
+            return Fp8GCUMoEMethod(self)
         return super().get_quant_method(layer, prefix)
 
     @classmethod
@@ -60,6 +63,53 @@ class Fp8GCULinearMethod(Fp8LinearMethod):
             )
         else:
             return super().apply(layer, x, bias)
+
+
+class Fp8GCUMoEMethod(Fp8MoEMethod):
+    def apply(
+        self,
+        layer: torch.nn.Module,
+        x: torch.Tensor,
+        router_logits: torch.Tensor,
+        top_k: int,
+        renormalize: bool,
+        use_grouped_topk: bool = False,
+        topk_group: Optional[int] = None,
+        num_expert_group: Optional[int] = None,
+        global_num_experts: int = -1,
+        expert_map: Optional[torch.Tensor] = None,
+        custom_routing_function: Optional[Callable] = None,
+        scoring_func: str = "softmax",
+        e_score_correction_bias: Optional[torch.Tensor] = None,
+        apply_router_weight_on_input: bool = False,
+        activation: str = "silu",
+        enable_eplb: bool = False,
+        expert_load_view: Optional[torch.Tensor] = None,
+        logical_to_physical_map: Optional[torch.Tensor] = None,
+        logical_replica_count: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        activation += f"_{layer.layer_name}"
+        return super().apply(
+            layer,
+            x,
+            router_logits,
+            top_k,
+            renormalize,
+            use_grouped_topk,
+            topk_group,
+            num_expert_group,
+            global_num_experts,
+            expert_map,
+            custom_routing_function,
+            scoring_func,
+            e_score_correction_bias,
+            apply_router_weight_on_input,
+            activation,
+            enable_eplb,
+            expert_load_view,
+            logical_to_physical_map,
+            logical_replica_count,
+        )
 
 
 def apply_w8a8_block_fp8_linear(
