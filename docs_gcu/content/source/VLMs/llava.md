@@ -12,7 +12,7 @@
 #### requirements
 
 ```shell
-python3 -m pip install opencv-python==4.11.0.86 opencv-python-headless==4.11.0.86
+python3 -m pip install opencv-python==4.11.0.86 opencv-python-headless==4.11.0.86 datasets==3.5.0
 ```
 
 #### 批量离线推理
