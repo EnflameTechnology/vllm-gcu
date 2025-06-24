@@ -10,7 +10,6 @@
    模型                    FP16       BF16       W4A16 GPTQ  W8A16 GPTQ   W4A16 AWQ    W8A16     W8A8 INT8    INT8 KV
    ==================   =========== =========== =========== =========== =========== =========== =========== ============
    Baichuan2               Y            .          .            Y             Y         .           Y           Y
-   ChatGLM2                Y            .          .            Y             .         .           .           .
    ChatGLM3                Y            .          .            Y             .         .           .           .
    DBRX                    Y            .          .            Y             .         .           .           .
    DeepSeek-MoE            .            .          .            .             .         .           Y           .
