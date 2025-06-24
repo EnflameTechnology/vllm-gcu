@@ -124,6 +124,7 @@ class GCUMLAImpl(MLACommonImpl[MLACommonMetadata]):
         attn_metadata,
         output=None,
     ):
+        # [TODO]: remove in v0.9.1
         if output is not None:
             output.fill_(0)
 

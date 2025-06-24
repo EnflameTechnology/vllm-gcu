@@ -8,15 +8,22 @@ except ImportError:
     flash_attn_with_kvcache = None
 
 
-def get_flash_attn_version():
+def get_flash_attn_version(requires_alibi: bool=False):
     return 2
 
 
+def flash_attn_supports_fp8() -> bool:
+    return True
+
+
 patch("vllm.attention.backends.flash_attn.get_flash_attn_version", get_flash_attn_version).start()
+patch("vllm.attention.backends.flash_attn.flash_attn_supports_fp8", flash_attn_supports_fp8).start()
 patch("vllm.attention.backends.flash_attn.flash_attn_varlen_func", flash_attn_varlen_func).start()
 patch("vllm.attention.backends.flash_attn.flash_attn_with_kvcache", flash_attn_with_kvcache).start()
 
 patch("vllm.v1.attention.backends.flash_attn.get_flash_attn_version", get_flash_attn_version).start()
+patch("vllm.v1.attention.backends.flash_attn.flash_attn_supports_fp8", flash_attn_supports_fp8).start()
 patch("vllm.v1.attention.backends.flash_attn.merge_attn_states", merge_attn_states).start()
+
 
 setattr(vllm.v1.attention.backends.flash_attn, "flash_attn_varlen_func", flash_attn_varlen_func)
