@@ -1367,6 +1367,12 @@ python3 -m pip install transformers==4.51.3
 
 将上述url设定的路径下的内容全部下载到`QWen3-30B-A3B-AWQ`文件夹中。
 
+注：需要安装以下依赖：
+
+```shell
+python3 -m pip install transformers==4.51.3
+```
+
 #### 批量离线推理
 ```shell
 python3 -m vllm_utils.benchmark_test \
@@ -1428,6 +1434,12 @@ python3 -m vllm_utils.benchmark_serving \
 *  commit id: `f8fa721f`
 
 将上述url设定的路径下的内容全部下载到`Qwen3-32B-AWQ`文件夹中。
+
+注：需要安装以下依赖：
+
+```shell
+python3 -m pip install transformers==4.51.3
+```
 
 #### 批量离线推理
 ```shell
@@ -1553,6 +1565,12 @@ python3 -m vllm_utils.benchmark_serving \
 *  commit id: `56eac61f`
 
 将上述url设定的路径下的内容全部下载到`Qwen3-235B-A22B-AWQ`文件夹中。
+
+注：需要安装以下依赖：
+
+```shell
+python3 -m pip install transformers==4.52.3
+```
 
 #### 批量离线推理
 ```shell

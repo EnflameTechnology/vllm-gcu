@@ -143,6 +143,12 @@ python3 -m vllm_utils.benchmark_test --perf \
 
 将上述url设定的路径下的内容全部下载到`GLM-Z1-32B-0414-GPTQ-Int4`文件夹中。
 
+注：需要安装以下依赖：
+
+```shell
+python3 -m pip install transformers==4.51.3
+```
+
 #### 批量离线推理
 
 ```shell
