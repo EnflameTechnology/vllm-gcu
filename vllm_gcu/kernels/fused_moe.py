@@ -417,6 +417,10 @@ def fused_experts_impl(
         dtype=cache2_dtype,
     )
 
+    shared_output = None
+    if shared_experts is not None:
+        shared_output = shared_experts(hidden_states)
+
     if inplace:
         out_hidden_states = hidden_states
     else:
@@ -540,8 +544,7 @@ def fused_experts_impl(
             False,
         )
 
-    if shared_experts is not None:
-        shared_output = shared_experts(hidden_states)
+    if shared_output is not None:
         out_hidden_states.mul_(routed_scaling_factor)
         out_hidden_states.add_(shared_output)
 
