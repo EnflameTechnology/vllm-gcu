@@ -320,6 +320,10 @@ class GCUPlatform(Platform):
 
         # Disable usage status for security
         envs.VLLM_NO_USAGE_STATS = "1"
+        if gcu_envs.VLLM_GCU_DEEPSEEK_FUSION:
+            logger.info('Deepseek fusion ops enabled.')
+        if gcu_envs.VLLM_GCU_ENABLE_PARALLEL_COMPUTE:
+            logger.info('Overlap shared experts with dispatch enabled.')
 
     @classmethod
     def verify_model_arch(cls, model_arch: str) -> None:
