@@ -1100,8 +1100,7 @@ python3 -m vllm.entrypoints.openai.api_server \
  --disable-log-requests \
  --block-size=64 \
  --dtype=float16 \
- --device gcu \
- --trust-remote-code
+ --device gcu
 
 
 # 启动客户端
@@ -1396,8 +1395,9 @@ python3 -m vllm.entrypoints.openai.api_server \
  --block-size=64 \
  --dtype=bfloat16 \
  --device gcu \
- --enable-chunked-prefil \
- --quantization=moe_wna16_gcu
+ --enable-chunked-prefill \
+ --quantization=moe_wna16_gcu \
+ --trust-remote-code
 
 
 # 启动客户端
@@ -1456,7 +1456,8 @@ python3 -m vllm.entrypoints.openai.api_server \
  --block-size=64 \
  --dtype=bfloat16 \
  --device gcu \
- --enable-chunked-prefil
+ --enable-chunked-prefill \
+ --trust-remote-code
 
 
 # 启动客户端
@@ -1521,7 +1522,7 @@ python3 -m vllm.entrypoints.openai.api_server \
  --block-size=64 \
  --dtype=bfloat16 \
  --device gcu \
- --enable-chunked-prefil
+ --enable-chunked-prefill
 
 
 # 启动客户端

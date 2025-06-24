@@ -16,7 +16,7 @@
 python3 -m pip install transformers==4.52.4 beir==2.1.0
 ```
 
-#### 离线推理
+#### 在线推理
 
 ```shell
 
