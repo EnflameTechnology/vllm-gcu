@@ -166,6 +166,13 @@ class Qwen2VLImageInput(VLMInput):
                 )
         return prompt
 
+    def dataset_pred_post_process(self,
+                                  dataset_name: str,
+                                  pred: str):
+        if dataset_name == "MMMU":
+            pred = pred.strip('()')
+        return pred
+
 class Qwen2VLQvQImageInput(Qwen2VLImageInput):
     def dataset_pred_post_process(self,
                                   dataset_name: str,
