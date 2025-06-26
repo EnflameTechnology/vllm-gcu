@@ -49,60 +49,6 @@ python3 -m vllm_utils.benchmark_test --perf \
 * chatglm3 32k模型运行时需要添加环境变量：
   * `export PYTORCH_GCU_ALLOC_CONF=backend:topsMallocAsync`
 
-#### 基于OpenCompass进行mmlu数据集评测
-
-1. 安装OpenCompass
-
-执行 [OpenCompass的安装步骤](https://github.com/open-compass/opencompass/blob/main/README_zh-CN.md#%EF%B8%8F-%E5%AE%89%E8%A3%85)
-
-注：建议使用OpenCompass0.3.1版本。如果安装依赖时安装了和torch_gcu不一致的版本，请重新手动安装。
-
-注：需要安装以下依赖：
-
-```shell
-python3 -m pip install opencv-python==4.9.0.80
-python3 -m pip install huggingface-hub==0.25.2
-# for x86_64
-python3 -m pip install torchvision==0.21.0+cpu -i https://download.pytorch.org/whl/cpu
-# for aarch64
-python3 -m pip install torchvision==0.21.0
-# for x86_64 and python_version>=3.10
-python3 -m pip install importlib-metadata==8.5.0
-# for aarch64 and python_version>=3.10
-python3 -m pip install importlib-metadata==4.6.4
-```
-
-2. 准备config文件
-
-将下面的配置信息存为一个python文件，放入OpenCompass中如下路径`configs/models/chatglm/vllm_chatglm3_6b.py`
-
-```python
-from opencompass.models import VLLM
-
-models = [
-    dict(
-        type=VLLM,
-        abbr='chatglm3-6b-vllm',
-        path='/path/to/chatglm3-6b',
-        max_out_len=100,
-        max_seq_len=4096,
-        batch_size=32,
-        generation_kwargs=dict(temperature=0),
-        run_cfg=dict(num_gpus=0, num_procs=1),
-        model_kwargs=dict(device='gcu', enforce_eager=True)
-    )
-]
-
-```
-
-执行以下命令
-
-```
-python3 run.py \
- --models=vllm_chatglm3_6b \
- --datasets=mmlu_gen
-```
-
 ### chatglm3-6b-w8a16_gptq
 
 本模型推理及性能测试需要1张enflame gcu。
@@ -130,10 +76,10 @@ chatglm_w8a16_gptq/
 ```shell
 python3 -m vllm_utils.benchmark_test \
  --model=[path of chatglm_w8a16_gptq] \
- --demo=tc \
+ --demo=te \
  --dtype=float16 \
  --quantization=gptq \
  --output-len=256 \
- --trust-remote-code
+ --disable-log-stats
 ```
 
