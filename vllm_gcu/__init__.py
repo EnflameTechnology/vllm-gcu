@@ -16,6 +16,15 @@ def register_platform_plugins() -> Optional[str]:
     return "vllm_gcu.gcu.GCUPlatform"
 
 
+def tops_device_count():
+    import torch_gcu  # noqa
+
+    return torch_gcu._C._gcu_getDeviceCount()
+
+
+patch("vllm.utils.cuda_device_count_stateless", tops_device_count).start()
+
+
 VLLM_GCU_LOGGING_PREFIX = "(Module: VLLM_GCU)"
 _FORMAT = (
     f"{VLLM_GCU_LOGGING_PREFIX} %(levelname)s %(asctime)s "
