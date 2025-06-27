@@ -5,7 +5,8 @@ import torch
 import torch_gcu
 
 from vllm.logger import init_logger
-from vllm.distributed.communication_op import broadcast_tensor_dict
+from vllm.distributed.communication_op import (broadcast_tensor_dict, tensor_model_parallel_gather, get_tp_group)
+from vllm.distributed.parallel_state import model_parallel_is_initialized
 from vllm.config import ParallelConfig, SpeculativeConfig, VllmConfig
 from vllm.sequence import (VLLM_INVALID_TOKEN_ID,
                            CompletionSequenceGroupOutput, ExecuteModelRequest,
@@ -15,6 +16,9 @@ from vllm.model_executor.layers.rejection_sampler import RejectionSampler
 from vllm.model_executor.layers.sampler import SamplerOutput
 from vllm.model_executor.layers.spec_decode_base_sampler import (
     SpecDecodeBaseSampler, SpecDecodeStochasticBaseSampler)
+from vllm.spec_decode.interfaces import SpeculativeScorer
+from vllm.spec_decode.mqa_scorer import MQAScorer
+from vllm.spec_decode.batch_expansion import BatchExpansionTop1Scorer
 from vllm.model_executor.layers.typical_acceptance_sampler import (
     TypicalAcceptanceSampler)
 from vllm.spec_decode.target_model_runner import TargetModelRunner
@@ -29,6 +33,7 @@ from vllm.spec_decode.util import nvtx_range
 from vllm.utils import resolve_obj_by_qualname
 
 from .smaller_tp_proposer_worker import SmallerTpProposerGCUWorker
+from .utils import patch_data_parallel_group
 from .metrics import AsyncMetricsGCUCollector
 
 logger = init_logger(__name__)
@@ -248,6 +253,54 @@ class SpecDecodeGCUWorker(SpecDecodeWorker):
             enable_lm_head_weight_load=enable_lm_head_weight_load,
             num_spec_prefill_steps=num_spec_prefill_steps
         )
+
+    def init_device(self) -> None:
+        """Initialize both scorer and proposer models.
+        """
+        # The scorer worker model is initialized first in case the proposer
+        # model has a smaller TP degree than the target worker.
+        self.scorer_worker.init_device()
+        with patch_data_parallel_group():
+            self.proposer_worker.init_device()
+
+        # NOTE(cade): load_model is not part of the WorkerBase interface.
+        self.scorer_worker.load_model()
+        self.proposer_worker.load_model()
+
+        if self._enable_lm_head_weight_load:
+            # NOTE(Shangming): gather lm_head weight when tp enabled
+            target_lm_head_weight: torch.Tensor = tensor_model_parallel_gather(
+                self.scorer_worker.model_runner.model_runner.model.lm_head.\
+                    weight.data,
+                    dim=0,
+            )
+
+            self.proposer_worker.maybe_load_lm_head_weight(
+                target_lm_head_weight)
+
+        self._metrics.init_tensors(self.rank, device_type=self.device)
+        if model_parallel_is_initialized():
+            self.spec_decode_sampler.init_tensors(get_tp_group().local_rank,
+                                                  device_type=self.device)
+        else:
+            self.spec_decode_sampler.init_tensors(self.rank,
+                                                  device_type=self.device)
+
+        scorer_cls: Type[SpeculativeScorer]
+        if self.disable_mqa_scorer:
+            scorer_cls = BatchExpansionTop1Scorer
+            logger.info("[Speculative Decoding] Use batch "
+                        "expansion for scoring proposals.")
+        else:
+            scorer_cls = MQAScorer
+            logger.info(
+                "[Speculative Decoding] Use MQA scorer for scoring proposals.")
+
+        self.scorer = scorer_cls(scorer_worker=self.scorer_worker,
+                                 device=self.device,
+                                 vocab_size=self._vocab_size)
+
+        self._configure_model_sampler_for_spec_decode()
 
     @torch.inference_mode()
     def execute_model(
