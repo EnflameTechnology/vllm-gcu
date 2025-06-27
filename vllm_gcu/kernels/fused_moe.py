@@ -700,17 +700,6 @@ def ep_fused_experts_impl(
             dim=1,
         )
 
-        if hidden_states.numel() == 0:
-            send_packed_sorted = torch.empty(
-                [1, send_packed.shape[-1]],
-                dtype=send_packed.dtype,
-                device=send_packed.device,
-            )
-        else:
-            send_packed_sorted = torch_gcu.gcu.efficient.gcu_index(
-                send_packed, [ep_token_indices]
-            )
-            # send_packed_sorted = send_packed[ep_token_indices.to(torch.int64)]
         enable_parallel_compute = gcu_envs.VLLM_GCU_ENABLE_PARALLEL_COMPUTE
         parallel_compute_context = (
             torch.gcu.ParallelCompute(2, 10)
@@ -737,6 +726,17 @@ def ep_fused_experts_impl(
             )
 
             sp_split_size = torch.empty_like(ep_split_size)
+            if hidden_states.numel() == 0:
+                send_packed_sorted = torch.empty(
+                    [1, send_packed.shape[-1]],
+                    dtype=send_packed.dtype,
+                    device=send_packed.device,
+                )
+            else:
+                send_packed_sorted = torch_gcu.gcu.efficient.gcu_index(
+                    send_packed, [ep_token_indices]
+                )
+                # send_packed_sorted = send_packed[ep_token_indices.to(torch.int64)]
             with parallel_compute_context:
                 work = all_to_all_v2(
                     recv_packed,
@@ -763,6 +763,18 @@ def ep_fused_experts_impl(
             cpu_ep_split_size = ep_split_size.cpu().tolist()
             cpu_recv_token_total = recv_token_total[0].item()
             cpu_send_token_total = send_token_total[0].item()
+            if hidden_states.numel() == 0:
+                send_packed_sorted = torch.empty(
+                    [1, send_packed.shape[-1]],
+                    dtype=send_packed.dtype,
+                    device=send_packed.device,
+                )
+            else:
+                ep_token_indices = ep_token_indices[:cpu_send_token_total]
+                send_packed_sorted = torch_gcu.gcu.efficient.gcu_index(
+                    send_packed, [ep_token_indices]
+                )
+                # send_packed_sorted = send_packed[ep_token_indices.to(torch.int64)]
 
             recv_packed = torch.empty(
                 (
