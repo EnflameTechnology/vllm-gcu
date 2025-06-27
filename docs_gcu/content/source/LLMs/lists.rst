@@ -13,26 +13,22 @@
    ChatGLM3                Y            .          .            Y             .         .           .           .
    DBRX                    Y            .          .            Y             .         .           .           .
    DeepSeek-MoE            .            .          .            .             .         .           Y           .
-   DeepSeek-V2-Lite        .            Y          .            .             .         .           .           .
    DeepSeek-V3             .            .          .            .             Y         .           .           .
    DeepSeek-Prover-V2      .            Y          .            .             .         .           .           .
    Gemma                   Y            .          .            .             .         .           .           .
    codegemma               Y            .          .            .             .         .           .           .
-   InternLM2               Y            Y          Y            .             .         .           .           .
+   InternLM2               .            .          Y            .             .         .           .           .
    LLaMA2                  Y            .          .            Y             Y         Y           Y           Y
    LLaMA3                  Y            .          Y            Y             .         .           .           .
    LLaMA3.1                Y            .          Y            .             .         .           .           .
-   Mixtral                 .            Y          .            Y             .         .           .           .
+   Mixtral                 .            Y          .            .             .         .           .           .
    Qwen1.5                 Y            .          Y            Y             .         .           Y           .
-   Qwen2                   Y            Y          Y            Y             Y         .           Y           Y
-   Qwen2.5                 .            .          .            Y             .         .           .           .
+   Qwen2                   .            .          .            Y             .         .           .           .
+   Qwen2.5                 .            Y          .            Y             .         .           .           .
    Qwen3                   .            Y          .            .             Y         .           .           .
    Qwen3-MoE               .            Y          .            .             Y         .           .           .
-   StarCoder2              Y            .          .            Y             .         .           .           .
-   SUS-Chat                .            .          .            Y             .         .           .           .
    WizardCoder             Y            .          .            .             .         .           .           .
    Yi                      .            .          .            Y             .         .           .           .
-   Yi-1.5                  .            .          Y            .             .         .           .           .
    gte-Qwen2               Y            .          .            .             .         .           .           .
    jina-reranker-v2        .            Y          .            .             .         .           .           .
    ==================   =========== =========== =========== =========== =========== =========== =========== ============

@@ -17,14 +17,16 @@
    CodeGeeX2           Y            .          .            .             .         .           .           .
    CodeGeeX4           .            Y          .            .             .         .           .           .
    codellama           Y            .          .            Y             .         .           .           .
+   DeepSeek-V2-Lite        .            Y          .            .             .         .           .           .
    DeepSeek            Y            .          .            .             .         .           .           .
    DeepSeek-Coder      Y            .          .            .             .         .           .           .
    DeepSeek-MoE        Y            .          Y            .             .         .           .           .
-   gemma               .            .          .            Y             .         .           .           .
+   gemma               Y            .          .            Y             .         .           .           .
    gpt-j               Y            .          .            .             .         .           .           .
    gpt-neox            Y            .          .            .             .         .           .           .
    iFlytekSpark        Y            .          .            .             .         .           .           .
    internlm            Y            .          .            Y             .         .           .           .
+   internlm2           Y            .          .            .             .         .           .           .
    llama               Y            .          .            .             .         .           .           .
    llama2              Y            .          Y            Y             .         .           .           .
    llama3.1            .            .          .            .             Y         .           .           .
@@ -34,12 +36,16 @@
    opt                 Y            .          .            .             .         .           .           .
    Orion               Y            .          .            .             .         .           .           .
    Qwen                Y            Y          .            Y             .         .           .           .
-   Qwen1.5             Y            Y          .            Y             .         .           .           .
+   Qwen1.5             Y            Y          .            Y             Y         .           .           Y
    Qwen1.5-MoE         .            Y          .            .             .         .           .           .
+   Qwen2               Y            Y          Y            Y             Y         .           Y           Y
+   Qwen2-Moe           .            Y          .            .             .         .           .           .
    Qwen2.5             Y            Y          .            .             .         .           .           .
    starcoder           Y            .          .            .             .         .           .           .
+   StarCoder2          Y            .          .            Y             .         .           .           .
+   SUS-Chat            .            .          .            Y             .         .           .           .
    vicuna              Y            .          .            .             .         .           .           .
    XuanYuan            Y            .          .            .             .         .           .           .
-   Yi                  Y            Y          .            .             .         .           .           .
+   Yi                  Y            Y          Y            .             .         .           .           .
    Ziya-Coding         Y            .          .            Y             .         .           .           .
    ================  =========== =========== =========== =========== =========== =========== =========== ============
