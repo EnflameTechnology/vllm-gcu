@@ -238,6 +238,12 @@ class GCUPlatform(Platform):
                 "vllm_gcu.scheduler.PriorityScheduler"  # priority to preempt
             )
 
+        if vllm_config.additional_config is None:
+            # make sure additional_config is not None
+            vllm_config.additional_config = AdditionalConfig({})
+        else:
+            vllm_config.additional_config = AdditionalConfig(vllm_config.additional_config)
+
         if compilation_config:
             if compilation_config.level > 0:
                 compilation_config.backend = "topsgraph"
@@ -289,10 +295,6 @@ class GCUPlatform(Platform):
             model_config.enable_sleep_mode = False
             if envs.VLLM_USE_V1:
                 model_config.use_async_output_proc = True
-
-        if vllm_config.additional_config is None:
-            # make sure additional_config is not None
-            vllm_config.additional_config = AdditionalConfig({})
 
         additional_config = vllm_config.additional_config
         enable_chunked_prefill = additional_config.get("enable_chunked_prefill", False)
