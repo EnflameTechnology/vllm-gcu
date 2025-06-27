@@ -16,8 +16,6 @@
    llama
    mistral
    qwen
-   starcoder
-   sus-chat
    wizardcoder
    xuanyuan
    yi

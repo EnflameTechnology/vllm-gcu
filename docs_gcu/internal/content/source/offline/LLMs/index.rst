@@ -26,6 +26,7 @@
    orion
    qwen
    starcoder
+   sus-chat
    vicuna
    xuanyuan
    yi

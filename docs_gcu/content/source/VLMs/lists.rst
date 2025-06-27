@@ -11,7 +11,7 @@
    =============== =============== =============== =============== ===============
    LLaVa               Y                .                 .               .
    GLM-4V              .                Y                 .               .
-   DeepSeek-VL         .                Y                 .               .
+   DeepSeek-VL2        .                Y                 .               .
    InternVL2           .                Y                 .               .
    InternVL2.5         .                Y                 .               .
    LLaVa-Next          Y                .                 .               .

@@ -256,3 +256,29 @@ python3 -m vllm_utils.benchmark_test --perf \
 *  本模型支持的`max-model-len`为16k；
 *  `input-len`、`output-len`和`num-prompts`可按需调整；
 *  配置 `output-len`为1时,输出内容中的`latency`即为time_to_first_token_latency;
+
+### DeepSeek-V2-Lite-Chat
+本模型推理及性能测试需要1张enflame gcu。
+
+#### 模型下载
+*  url: [DeepSeek-V2-Lite-Chat](https://www.modelscope.cn/models/deepseek-ai/deepseek-v2-lite-chat/files)
+
+*  branch: `master`
+
+*  commit id: `d174ca84`
+
+将上述url设定的路径下的内容全部下载到`deepseek-v2-lite-chat`文件夹中。
+
+#### 批量离线推理
+```shell
+python3 -m vllm_utils.benchmark_test \
+ --model=[path of DeepSeek-V2-Lite-Chat] \
+ --tensor-parallel-size=1 \
+ --max-model-len=8192 \
+ --output-len=512 \
+ --demo=dch \
+ --dtype=bfloat16 \
+ --template=default \
+ --device=gcu \
+ --trust-remote-code
+```

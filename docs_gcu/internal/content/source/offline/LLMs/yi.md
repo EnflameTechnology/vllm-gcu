@@ -224,3 +224,50 @@ python3 -m vllm_utils.benchmark_test --perf \
 *  `input-len`、`output-len`和`num-prompts`可按需调整；
 
 *  配置 `output-len`为1时,输出内容中的`latency`即为time_to_first_token_latency;
+
+### Yi-1.5-34B-Chat-GPTQ
+
+本模型推理及性能测试需要两张enflame gcu。
+
+#### 模型下载
+
+*  url: [Yi-1.5-34B-Chat-GPTQ](https://www.modelscope.cn/models/AI-ModelScope/Yi-1.5-34B-Chat-GPTQ/files)
+
+*  branch: `master`
+
+*  commit id: `97535d73`
+
+#### 批量离线推理
+```shell
+python3 -m vllm_utils.benchmark_test \
+    --demo="te" \
+    --model [path of Yi-1.5-34B-Chat-GPTQ] \
+    --output-len=256 \
+    --dtype=float16 \
+    --tensor-parallel-size 2 \
+    --device gcu \
+    --max-model-len=4096
+```
+
+#### 性能测试
+```shell
+python3 -m vllm_utils.benchmark_test --perf \
+    --model [path of Yi-1.5-34B-Chat-GPTQ] \
+    --tensor-parallel-size 2 \
+    --dtype float16 \
+    --quantization gptq \
+    --trust-remote-code \
+    --num-prompts 8 \
+    --max-model-len 4096 \
+    --input-len 512 \
+    --output-len 512 \
+    --device gcu \
+    --block-size=64
+```
+注：
+*  本模型支持的`max-model-len`为4096；
+
+*  `input-len`、`output-len`和`num-prompts`可按需调整；
+
+*  配置 `output-len`为1时,输出内容中的`latency`即为time_to_first_token_latency;
+
