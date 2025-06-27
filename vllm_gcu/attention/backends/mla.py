@@ -504,7 +504,7 @@ class GCUMLAImpl(MLACommonImpl[MLACommonMetadata]):
         for i in range(iters):
             toks = prefill_metadata.context_chunk_seq_tot[i]
 
-            torch.ops._C.gather_cache(
+            torch.ops._C_cache_ops.gather_cache(
                 src_cache=kv_c_and_k_pe_cache,
                 dst=workspace,
                 block_table=prefill_metadata.block_tables,
