@@ -418,7 +418,7 @@ def fused_experts_impl(
     )
 
     shared_output = None
-    if shared_experts is not None:
+    if shared_experts is not None and hidden_states.shape[0] > 0:
         shared_output = shared_experts(hidden_states)
 
     if inplace:
@@ -747,7 +747,7 @@ def ep_fused_experts_impl(
                     flag=1,
                     async_op=enable_parallel_compute,
                 )
-                if shared_experts is not None:
+                if shared_experts is not None and hidden_states_ori.shape[0] > 0:
                     shared_output = shared_experts(hidden_states_ori)
                 if enable_parallel_compute:
                     work.wait()
