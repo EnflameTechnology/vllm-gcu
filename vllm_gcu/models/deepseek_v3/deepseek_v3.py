@@ -555,7 +555,8 @@ class DeepseekV2MLAAttention(nn.Module):
             self.q_proj_outside = True
 
         if self.q_proj_outside:
-            q_proj = nn.Identity()
+            from functools import partial
+            q_proj = partial(torch.unsqueeze, dim=0)
         else:
             q_proj = self.q_proj if self.q_lora_rank is None else self.q_b_proj
 
@@ -597,7 +598,7 @@ class DeepseekV2MLAAttention(nn.Module):
 
         if self.q_proj_outside:
             q_proj = self.q_proj if self.q_lora_rank is None else self.q_b_proj
-            hidden_states_or_q_c = q_proj(hidden_states_or_q_c)[0].unsqueeze(0)
+            hidden_states_or_q_c = q_proj(hidden_states_or_q_c)[0]
 
         kv_c, k_pe = self.kv_a_proj_with_mqa(hidden_states)[0].split(
             [self.kv_lora_rank, self.qk_rope_head_dim], dim=-1
