@@ -847,7 +847,13 @@ class GCUModelRunner(GCUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
                 model_input.prompt_adapter_requests, model_input.prompt_adapter_mapping
             )
 
-        self.attn_state.begin_forward(model_input)
+        # TODO: draft runner also do this
+        if model_input.attn_metadata is not None:
+            self.attn_state.begin_forward(model_input)
+        else:
+            #TODO: not safe actually, it usually takes attn metadata,
+            # but may also change model input
+            pass
 
         # Currently gcu graph is only supported by the decode phase.
         if model_input.attn_metadata is not None:
