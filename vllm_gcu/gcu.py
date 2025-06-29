@@ -79,7 +79,7 @@ class GCUPlatform(Platform):
         elif selected_backend == _Backend.XFORMERS:
             return "vllm_gcu.attention.backends.xformers.GCUXFormersBackend"
         elif selected_backend == _Backend.FLASH_ATTN:
-            if cls.get_device_capability() == 130:
+            if cls.get_device_capability().to_int() == 130:
                 return "vllm_gcu.attention.backends.flash_attn.FlashAttentionBackend"
             return "vllm.attention.backends.flash_attn.FlashAttentionBackend"
             # return "vllm_gcu.attention.backends.flash_attn.FlashAttentionBackend"
@@ -224,7 +224,7 @@ class GCUPlatform(Platform):
 
             if (
                 cache_config.cache_dtype.startswith("fp8")
-                and cls.get_device_capability() == 130
+                and cls.get_device_capability().to_int() == 130
             ):
                 cache_config.cache_dtype = "int8"
 
