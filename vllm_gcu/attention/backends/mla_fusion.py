@@ -212,6 +212,10 @@ class GCUMLAFusionImpl(GCUMLAImpl):
             attn_metadata.input_positions[num_prefill_tokens:]
         prefill_input_positions = \
             attn_metadata.input_positions[:num_prefill_tokens]
+        decode_kv_c_and_k_pe = kv_c_and_k_pe[num_prefill_tokens:]
+        prefill_kv_c_and_k_pe = kv_c_and_k_pe[:num_prefill_tokens]
+        decode_slot_mapping = attn_metadata.slot_mapping[num_prefill_tokens:]
+        prefill_slot_mapping = attn_metadata.slot_mapping[:num_prefill_tokens]
 
         if has_prefill:
             prefill_q_pe = prefill_q[..., self.qk_nope_head_dim:]
@@ -227,9 +231,9 @@ class GCUMLAFusionImpl(GCUMLAImpl):
                 prefill_q_pe,
                 prefill_k_pe,
                 prefill_q_pe,
-                kv_c_and_k_pe,
+                prefill_kv_c_and_k_pe,
                 kv_cache,
-                attn_metadata.slot_mapping.flatten(),
+                prefill_slot_mapping.flatten(),
                 prefill_input_positions,
                 layer._k_scale
             )
@@ -247,9 +251,9 @@ class GCUMLAFusionImpl(GCUMLAImpl):
                 decode_q_concat[...,self.kv_lora_rank:],
                 None,
                 decode_q_pe,
-                kv_c_and_k_pe,
+                decode_kv_c_and_k_pe,
                 kv_cache,
-                attn_metadata.slot_mapping.flatten(),
+                decode_slot_mapping.flatten(),
                 decode_input_positions,
                 layer._k_scale,
             )
