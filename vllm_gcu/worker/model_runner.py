@@ -859,7 +859,6 @@ class GCUModelRunner(GCUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
         if model_input.attn_metadata is not None:
             prefill_meta = model_input.attn_metadata.prefill_metadata
             decode_meta = model_input.attn_metadata.decode_metadata
-
         else:
             prefill_meta = 1  # bypass graph
             decode_meta = None
@@ -1236,15 +1235,24 @@ class GCUGraphRunner(nn.Module):
         torch.gcu.synchronize()
 
         # Save the input and output buffers.
-        self.input_buffers = {
-            "input_ids": input_ids,
-            "positions": positions,
-            "kv_caches": kv_caches,
-            **self.attn_state.get_graph_input_buffers(
-                attn_metadata, self._is_encoder_decoder_model
-            ),
-            **kwargs,
-        }
+        if attn_metadata.num_decode_tokens > 0:
+            self.input_buffers = {
+                "input_ids": input_ids,
+                "positions": positions,
+                "kv_caches": kv_caches,
+                **self.attn_state.get_graph_input_buffers(
+                    attn_metadata, self._is_encoder_decoder_model
+                ),
+                **kwargs,
+            }
+        else:
+            self.input_buffers = {
+                "input_ids": input_ids,
+                "positions": positions,
+                "kv_caches": kv_caches,
+                **kwargs,
+            }
+
         if intermediate_inputs is not None:
             self.input_buffers.update(intermediate_inputs.tensors)
         if get_pp_group().is_last_rank:
@@ -1268,14 +1276,15 @@ class GCUGraphRunner(nn.Module):
                 positions, non_blocking=True
             )
 
-        if self.backend_name != "NO_ATTENTION":
-            self.input_buffers["slot_mapping"].copy_(
-                attn_metadata.slot_mapping, non_blocking=True
-            )
+        if attn_metadata is not None:
+            if self.backend_name != "NO_ATTENTION":
+                self.input_buffers["slot_mapping"].copy_(
+                    attn_metadata.slot_mapping, non_blocking=True
+                )
 
-        self.attn_state.prepare_graph_input_buffers(
-            self.input_buffers, attn_metadata, self._is_encoder_decoder_model
-        )
+            self.attn_state.prepare_graph_input_buffers(
+                self.input_buffers, attn_metadata, self._is_encoder_decoder_model
+            )
 
         if "seqlen_agnostic_capture_inputs" in self.input_buffers:
             self.model.copy_inputs_before_cuda_graphs(self.input_buffers, **kwargs)
