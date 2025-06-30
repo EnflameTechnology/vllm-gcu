@@ -603,7 +603,7 @@ class GCUMLAImpl(MLACommonImpl[MLACommonMetadata]):
         original_query = q
 
         attn_bias = BlockDiagonalCausalMask.from_seqlens(
-            attn_metadata.seq_lens, device="gcu"
+            prefill_metadata.seq_lens, device="gcu"
         )
 
         kv_nope = self.kv_b_proj(kv_c_normed)[0].view(
