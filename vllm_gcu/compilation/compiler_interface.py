@@ -167,6 +167,7 @@ class CustomInductorAdaptor(InductorAdaptor):
         elif is_torch_equal_or_newer("2.6"):
             # function renamed in 2.6
             original_load_name = None
+            import vllm_gcu.patch.torch_2_6_0.refs_pad
 
             def hijacked_compile_fx_inner(*args, **kwargs):
                 with version(), lowering():
