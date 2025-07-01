@@ -296,6 +296,7 @@ class GCUPlatform(Platform):
                         ]
                     )
             if vllm_config.parallel_config.data_parallel_size > 1:
+                compilation_config.compile_sizes.append(0)
                 compilation_config.cudagraph_capture_sizes.append(0)  # capture 0 graph
 
         if model_config:
