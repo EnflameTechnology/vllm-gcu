@@ -1,6 +1,8 @@
 import sys
 from unittest.mock import patch
 
+HAS_COMPLETION_PATCHED = False
+HAS_CHAT_PATCHED = False
 
 def decorator(f):
     def inner(*args, **kwargs):
@@ -34,23 +36,29 @@ def decorator(f):
 
 
 def completion(request):
-    g = getattr(request.app.state.openai_serving_completion, "create_completion")
-    setattr(
-        request.app.state.openai_serving_completion,
-        "create_completion",
-        decorator(g),
-    )
+    global HAS_COMPLETION_PATCHED
+    if not HAS_COMPLETION_PATCHED:
+        g = getattr(request.app.state.openai_serving_completion, "create_completion")
+        setattr(
+            request.app.state.openai_serving_completion,
+            "create_completion",
+            decorator(g),
+        )
+        HAS_COMPLETION_PATCHED = True
 
     return request.app.state.openai_serving_completion
 
 
 def chat(request):
-    g = getattr(request.app.state.openai_serving_chat, "create_chat_completion")
-    setattr(
-        request.app.state.openai_serving_chat,
-        "create_chat_completion",
-        decorator(g),
-    )
+    global HAS_CHAT_PATCHED
+    if not HAS_CHAT_PATCHED:
+        g = getattr(request.app.state.openai_serving_chat, "create_chat_completion")
+        setattr(
+            request.app.state.openai_serving_chat,
+            "create_chat_completion",
+            decorator(g),
+        )
+        HAS_CHAT_PATCHED = True
 
     return request.app.state.openai_serving_chat
 
