@@ -859,9 +859,11 @@ class GCUModelRunner(GCUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
         if model_input.attn_metadata is not None:
             prefill_meta = model_input.attn_metadata.prefill_metadata
             decode_meta = model_input.attn_metadata.decode_metadata
+            use_cuda_graph = prefill_meta is None and decode_meta.use_cuda_graph
         else:
-            prefill_meta = 1  # bypass graph
+            prefill_meta = None
             decode_meta = None
+            use_cuda_graph = not self.vllm_config.model_config.enforce_eager
 
         parallel_config = self.vllm_config.parallel_config
         additional_config = self.vllm_config.additional_config
@@ -893,9 +895,11 @@ class GCUModelRunner(GCUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
         # virtual engines share the same kv cache.
         virtual_engine = model_input.virtual_engine
         previous_hidden_states = kwargs.get("previous_hidden_states")
-        if prefill_meta is None and decode_meta.use_cuda_graph:
-            assert model_input.input_tokens is not None
-            graph_batch_size = model_input.input_tokens.shape[0]
+        if prefill_meta is None and use_cuda_graph:
+            if model_input.input_tokens is not None:
+                graph_batch_size = model_input.input_tokens.shape[0]
+            else:
+                graph_batch_size = 0
             model_executable = self.graph_runners[virtual_engine][graph_batch_size]
             if previous_hidden_states is not None:
                 previous_hidden_states = torch.cat(
@@ -1275,7 +1279,6 @@ class GCUGraphRunner(nn.Module):
             self.input_buffers["positions"][: positions.shape[0]].copy_(
                 positions, non_blocking=True
             )
-
         if attn_metadata is not None:
             if self.backend_name != "NO_ATTENTION":
                 self.input_buffers["slot_mapping"].copy_(
