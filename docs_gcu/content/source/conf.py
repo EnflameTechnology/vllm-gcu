@@ -46,7 +46,7 @@ pdf_filename = 'vLLM-gcu用户使用手册.tex'  # 填写导出的pdf的tex文�
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
 # ones.
 
-extensions = ['myst_parser']
+extensions = ['myst_parser', 'sphinx_multiversion']
 source_suffix = ['.rst', '.md']
 smartquotes = False
 # extensions = [
@@ -110,6 +110,13 @@ html_logo = './_static/enflame_logo.png'
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = ['_static']
+#html_css_files = ['css/custom.css']
+html_sidebars = {
+    '**': [
+        'versioning.html',
+    ],
+}
+
 
 #################################################
 # 以下为lilian添加的
@@ -327,3 +334,7 @@ latex_additional_files = [
 ]
 
 latex_engine = 'xelatex'  # 默认为pdflatex
+
+
+smv_current_version = 'vllm_gcu'
+smv_branch_whitelist = r'^.*$'
