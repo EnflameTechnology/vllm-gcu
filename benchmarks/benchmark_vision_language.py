@@ -233,6 +233,7 @@ def main(args: argparse.Namespace):
             args.max_output_len,
             **input_kwargs,
         )
+        requests.stop_token_ids = None
     else:
         raise ValueError("Unsupported mode.")
 
