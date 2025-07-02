@@ -37,61 +37,6 @@ python3 -m vllm_utils.benchmark_test --perf \
 
 *  配置 `output-len`为1时,输出内容中的`latency`即为time_to_first_token_latency;
 
-### glm-4-9b-w8a16_gptq
-
-本模型推理及性能测试需要1张enflame gcu。
-
-#### 模型下载
-
-* 如需要下载权重，请联系商务人员开通[EGC](https://egc.enflame-tech.com/)权限进行下载
-
-- 下载 `glm-4-9b_W8A16.tar` 文件并解压，将压缩包内的内容全部拷贝到`chatglm_w8a16_gptq`文件夹中。
-- `chatglm_w8a16_gptq`目录结构如下所示：
-
-```shell
-chatglm_w8a16_gptq/
-├── config.json
-├── configuration_chatglm.py
-├── model.safetensors
-├── quantize_config.json
-├── tokenization_chatglm.py
-├── tokenizer_config.json
-├── tokenizer.model
-└── tops_quantize_info.json
-```
-
-#### 批量离线推理
-```shell
-python3 -m vllm_utils.benchmark_test \
- --model=[path of chatglm_w8a16_gptq] \
- --demo=tc \
- --dtype=float16 \
- --quantization=gptq \
- --output-len=256 \
- --max-model-len=8192
-```
-
-#### 性能测试
-
-```shell
-python3 -m vllm_utils.benchmark_test --perf \
- --model=[path of chatglm_w8a16_gptq] \
- --input-len=512 \
- --output-len=2048 \
- --num-prompts=16 \
- --block-size=64 \
- --dtype=float16 \
- --quantization=gptq \
- --trust-remote-code \
- --enforce-eager
-```
-
-注：
-*  glm-4-9b-w8a16_gptq模型支持的`max-model-len`为8192；
-
-*  `input-len`、`output-len`和`num-prompts`可按需调整；
-
-*  配置 `output-len`为1时,输出内容中的`latency`即为time_to_first_token_latency;
 
 ### GLM-Z1-32B-0414-GPTQ-Int4
 

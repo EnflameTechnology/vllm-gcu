@@ -59,65 +59,7 @@ python3 -m vllm_utils.benchmark_test \
 *  `input-len`、`output-len`和`num-prompts`可按需调整；
 *  配置 `output-len`为1时,输出内容中的`latency`即为time_to_first_token_latency;
 
-### Qwen1.5-32B-Chat-w8a16_gptq
 
-本模型推理及性能测试需要1张enflame gcu。
-
-#### 模型下载
-
-* 如需要下载权重，请联系商务人员开通[EGC](https://egc.enflame-tech.com/)权限进行下载
-
-- 下载`Qwen1.5-32B-Chat-w8a16_gptq.tar`文件并解压，将压缩包内的内容全部拷贝到`Qwen1.5-32B-Chat-w8a16_gptq`文件夹中。
-- `Qwen1.5-32B-Chat-w8a16_gptq`目录结构如下所示：
-
-```shell
-Qwen1.5-32B-Chat-w8a16_gptq
-  ├── config.json
-  ├── model.safetensors
-  ├── quantize_config.json
-  ├── tokenizer_config.json
-  ├── tokenizer.json
-  ├── tops_quantize_info.json
-  └── vocab.json
-```
-
-#### 批量离线推理
-```shell
-python3 -m vllm_utils.benchmark_test \
- --model=[path of Qwen1.5-32B-Chat-w8a16_gptq] \
- --demo=te \
- --dtype=float16 \
- --output-len=256 \
- --tensor-parallel-size=2 \
- --num-prompts=1 \
- --gpu-memory-utilization=0.9 \
- --block-size=64
-```
-
-#### serving模式
-```shell
-# 启动服务端
-python3 -m vllm.entrypoints.openai.api_server --model=[path of Qwen1.5-32B-Chat-w8a16_gptq]  \
- --tensor-parallel-size 2 \
- --max-model-len=4096  \
- --disable-log-requests  \
- --gpu-memory-utilization=0.9  \
- --block-size=64 \
- --dtype=float16 \
- --quantization gptq
-
-# 启动客户端
-python3 -m vllm_utils.benchmark_serving --backend=vllm  \
- --dataset-name=random  \
- --model=[path of Qwen1.5-32B-Chat-w8a16_gptq]  \
- --num-prompts=10  \
- --random-input-len=4   \
- --random-output-len=300  \
- --trust-remote-code
-```
-注：
-* 为保证输入输出长度固定，数据集使用随机数测试；
-* num-prompts, random-input-len和random-output-len可按需调整；
 
 ### Qwen1.5-110B-Chat-w8a16_gptq
 
@@ -178,51 +120,6 @@ python3 -m vllm_utils.benchmark_test --perf \
 
 *  配置 `output-len`为1时,输出内容中的`latency`即为time_to_first_token_latency;
 
-### Qwen1.5-32B-Chat-w4a16c8
-
-本模型推理及性能测试需要1张enflame gcu。
-
-#### 模型下载
-*  url: [Qwen1.5-32B-Chat-GPTQ-Int4](https://www.modelscope.cn/models/qwen/qwen1.5-32b-chat-gptq-int4 )
-
-*  branch: `main`
-
-*  commit id: `226cd6ec86d885563fb5c7c2c4560a035564f20f`
-
-* 另外需要下载int8_kv_cache.json, 联系商务人员开通[EGC](https://egc.enflame-tech.com/)权限进行下载
-- 将下载的`Qwen1.5-32B-Chat-GPTQ-Int4`和`int8_kv_cache.json`放入`Qwen1.5_32B_Chat_w4a16c8`文件夹中。
-
-#### 批量离线推理
-```shell
-python3 -m vllm_utils.benchmark_test \
- --model=[path of Qwen1.5_32B_Chat_w4a16c8] \
- --demo=te \
- --dtype=float16 \
- --quantization-param-path=[path of int8_kv_cache.json] \
- --kv-cache-dtype=int8 \
- --output-len=256 \
- --max-model-len=32768
-```
-
-#### 性能测试
-
-```shell
-python3 -m vllm_utils.benchmark_test --perf \
- --model=[path of Qwen1.5_32B_Chat_w4a16c8] \
- --input-len=1024 \
- --output-len=32 \
- --num-prompts=1 \
- --block-size=64 \
- --max-model-len=32768 \
- --dtype=float16 \
- --quantization-param-path=[path of int8_kv_cache.json] \
- --kv-cache-dtype=int8 \
- --gpu-memory-utilization=0.9
-```
-注：
-*  本模型支持的`max-model-len`为32768；
-*  `input-len`、`output-len`和`num-prompts`可按需调整；
-*  配置 `output-len`为1时,输出内容中的`latency`即为time_to_first_token_latency;
 
 ### Qwen2.5-32B-Instruct-GPTQ-Int8_w8a16
 
