@@ -121,6 +121,64 @@ python3 -m vllm_utils.benchmark_test --perf \
 *  配置 `output-len`为1时,输出内容中的`latency`即为time_to_first_token_latency;
 
 
+### Qwen2-72B-w8a8c8
+
+本模型推理及性能测试需要4张enflame gcu。
+
+* 如需要下载权重，请联系商务人员开通[EGC](https://egc.enflame-tech.com/)权限进行下载
+
+- 下载`Qwen2-72B-w8a8.tar`文件并解压，将压缩包内的内容全部拷贝到`Qwen2-72B-w8a8c8`文件夹中。
+- `Qwen2-72B-w8a8c8`目录结构如下所示：
+
+```shell
+Qwen2-72B-w8a8c8/
+
+```
+
+#### 批量离线推理
+```shell
+python3 -m vllm_utils.benchmark_test \
+ --model=[path of Qwen2-72B-w8a8c8] \
+ --max-model-len=32768 \
+ --demo=te \
+ --dtype=bfloat16 \
+ --tensor-parallel-size=4 \
+ --quantization-param-path=[path of Qwen2-72B-w8a8c8] \
+ --kv-cache-dtype=int8 \
+ --output-len=256
+```
+
+#### serving模式
+
+```shell
+# 启动服务端
+python3 -m vllm.entrypoints.openai.api_server \
+ --model=[path of Qwen2-72B-w8a8c8]  \
+ --max-model-len=32768  \
+ --tensor-parallel-size=4 \
+ --disable-log-requests  \
+ --gpu-memory-utilization=0.9  \
+ --block-size=64 \
+ --dtype=bfloat16 \
+ --kv-cache-dtype=int8 \
+ --quantization-param-path=[path of Qwen2-72B-w8a8c8]
+
+
+# 启动客户端
+python3 -m vllm_utils.benchmark_serving --backend=vllm  \
+ --dataset-name=random  \
+ --model=[path of Qwen2-72B-w8a8c8]  \
+ --num-prompts=1  \
+ --random-input-len=3000 \
+ --random-output-len=1000 \
+ --trust-remote-code
+```
+注：
+*  本模型支持的`max-model-len`为32768；
+*  `input-len`、`output-len`和`num-prompts`可按需调整；
+*  配置 `output-len`为1时,输出内容中的`latency`即为time_to_first_token_latency;
+
+
 ### Qwen2.5-32B-Instruct-GPTQ-Int8_w8a16
 
 #### 模型下载
