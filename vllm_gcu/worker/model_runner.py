@@ -18,7 +18,7 @@ from tqdm import tqdm
 from vllm.attention import AttentionMetadata, get_attn_backend
 from vllm.attention.backends.abstract import AttentionState
 from vllm.attention.backends.utils import CommonAttentionState
-from vllm.config import CompilationLevel, VllmConfig
+from vllm.config import CompilationLevel, VllmConfig, set_current_vllm_config
 from vllm.distributed import get_dp_group, get_kv_transfer_group, get_pp_group
 from vllm.distributed.parallel_state import (
     get_tensor_model_parallel_rank,
@@ -701,7 +701,8 @@ class GCUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
                     with set_forward_context(
                         attn_metadata, self.vllm_config, virtual_engine
                     ):
-                        graph_runner.capture(**capture_inputs)
+                        with set_current_vllm_config(self.vllm_config):
+                            graph_runner.capture(**capture_inputs)
                     self.graph_memory_pool = graph_runner.graph.pool()
                     self.graph_runners[virtual_engine][batch_size] = graph_runner
 
@@ -963,24 +964,25 @@ class GCUModelRunner(GCUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
             with set_forward_context(
                 model_input.attn_metadata, self.vllm_config, virtual_engine
             ):
-                hidden_or_intermediate_states = model_executable(
-                    input_ids=(
-                        model_input.input_tokens
-                        if model_input.input_tokens is not None
-                        else torch.tensor([], dtype=torch.int64, device="gcu")
-                    ),
-                    positions=(
-                        model_input.input_positions
-                        if model_input.input_positions is not None
-                        else torch.tensor([], dtype=torch.int64, device="gcu")
-                    ),
-                    intermediate_tensors=intermediate_tensors,
-                    **MultiModalKwargs.as_kwargs(
-                        multi_modal_kwargs, device=self.device
-                    ),
-                    **seqlen_agnostic_kwargs,
-                    **model_kwargs,
-                )
+                with set_current_vllm_config(self.vllm_config):
+                    hidden_or_intermediate_states = model_executable(
+                        input_ids=(
+                            model_input.input_tokens
+                            if model_input.input_tokens is not None
+                            else torch.tensor([], dtype=torch.int64, device="gcu")
+                        ),
+                        positions=(
+                            model_input.input_positions
+                            if model_input.input_positions is not None
+                            else torch.tensor([], dtype=torch.int64, device="gcu")
+                        ),
+                        intermediate_tensors=intermediate_tensors,
+                        **MultiModalKwargs.as_kwargs(
+                            multi_modal_kwargs, device=self.device
+                        ),
+                        **seqlen_agnostic_kwargs,
+                        **model_kwargs,
+                    )
 
         if (
             self.observability_config is not None
