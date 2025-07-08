@@ -26,32 +26,15 @@
 
 #### 1️⃣ 安装依赖组件（Docker 环境中）
 
-请首先参考《TopsRider 软件栈安装手册》完成基础环境部署。
-
-#### 2️⃣ 检查依赖是否已安装
-
-```bash
-python3 -m pip list | grep -E 'vllm|xformers|tops-extension|torch-gcu|torch|torchvision'
+请首先参考[《TopsRider 软件栈安装手册》](https://support.enflame-tech.com/onlinedoc_dev_3.4/2-install/sw_install/content/source/installation.html)完成基础环境部署。
 ```
 
-若已安装，输出类似如下：
-
-```
-vllm                            0.8.0
-vllm_gcu                        0.8.0+<version>
-torch                           2.6.0+cpu
-torch-gcu                       2.6.0+<version>
-torchvision                     0.21.0+cpu
-xformers                        <version>
-tops-extension                  <version>
-```
-
-#### 3️⃣ 安装方式（任选其一）
+#### 2️⃣ 安装方式（任选其一）
 
 ✅ **方式一：使用 TopsRider 安装**
 
 ```bash
-./Topsrider_xxx.run -y -C vllm-gcu
+./TopsRider_i3x_3.4.xxx.run -y -C vllm-gcu
 ```
 
 ✅ **方式二：使用 `.whl` 包手动安装**
@@ -65,7 +48,9 @@ python3 -m pip install torch_gcu-2.6.0+<version>*.whl
 python3 -m pip install tops_extension-<version>*.whl
 python3 -m pip install xformers-<version>*.whl
 
-# 安装 vllm_gcu
+# 编译 vllm_gcu
+python3 setup.py
+# 安装编译好的 vllm_gcu whl包
 python3 -m pip install vllm_gcu-0.8.0+<version>*.whl
 ```
 
