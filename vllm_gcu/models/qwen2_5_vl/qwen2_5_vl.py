@@ -73,6 +73,7 @@ from vllm.model_executor.layers.layernorm import RMSNorm
 
 from xformers import ops as xops
 from xformers.ops.fmha.attn_bias import BlockDiagonalMask
+from vllm_gcu.kernels import _custom_ops as ops
 
 logger = init_logger(__name__)
 
@@ -272,7 +273,7 @@ class Qwen2_5_VisionAttention(nn.Module):
             k = k.reshape([rotary_pos_emb.shape[0], -1])
             rotary_dim = cos.shape[0]
             positions = torch.arange(rotary_dim, device=q.device, dtype=torch.long)
-            from vllm_gcu.kernels import _custom_ops as ops
+
             ops.rotary_embedding(
                 positions,
                 q,
