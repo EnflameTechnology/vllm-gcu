@@ -223,7 +223,6 @@ class GCUXFormersMetadata(XFormersMetadata):
         num_queries: int,
         turn_prefills_into_decodes: bool = False,
     ):
-        from vllm_gcu.kernels import _custom_ops as ops
 
         # When using graph, the num_seqs is padded to the next captured
         # batch sized, but num_queries tracks the actual number of requests in

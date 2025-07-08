@@ -5,7 +5,7 @@ from typing import Optional, Tuple, Union
 
 import torch
 from vllm.model_executor.layers.layernorm import RMSNorm
-
+from vllm_gcu.kernels import _custom_ops as ops
 
 def forward_oot(
     self,
@@ -19,8 +19,6 @@ def forward_oot(
 
     if self.variance_size_override is not None:
         return self.forward_native(x, residual)
-
-    from vllm_gcu.kernels import _custom_ops as ops
 
     if residual is not None:
         ops.fused_add_rms_norm(

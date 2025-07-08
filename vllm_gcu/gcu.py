@@ -50,6 +50,11 @@ class GCUPlatform(Platform):
         "compressed-tensors",
     ]
 
+    def __init__(self):
+        # initialized in vllm/platforms/__init__.py,
+        # import here before engine args added to parser
+        import vllm_gcu.kernels  # noqa: F401
+
     def is_cuda_alike(self) -> bool:
         return True
 
