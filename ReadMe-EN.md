@@ -29,27 +29,35 @@
 
 ### 📦 Installation Steps
 
-#### 1️⃣ Install Dependencies (within Docker)
+#### 1️⃣ Install Dependencies (in host)
 
-Refer to the [TopsRider Installation Manual](https://support.enflame-tech.com/onlinedoc_dev_3.4/2-install/sw_install/content/source/installation.html) to set up the base environment.
+Refer to the [TopsRider Installation Manual](https://support.enflame-tech.com/onlinedoc_dev_3.4/2-install/sw_install/content/source/installation.html) to install **Enflame driver**.
+
+
+#### 2️⃣ Installation Options (Choose one, within Docker)
 
 **Python3.9+:** Make sure you have python3.9+ installed and the default python version is 3.9+
 
 ```bash
 # check default python version 
 python3 --version
+
 # install python3.9 if default python version < 3.9
 sudo apt update && sudo apt install python3.9 -y
+
 # switch default python to version 3.9
 sudo update-alternatives --config python3
-```
 
-#### 2️⃣ Installation Options (Choose one)
+# install pip for python3.9
+sudo apt update && sudo apt install python3.9-distutils -y
+curl -sS https://bootstrap.pypa.io/get-pip.py | sudo python3
+```
 
 ✅ **Option 1: Install via TopsRider**
 
 ```bash
-./TopsRider_i3x_3.4.xxx.run -y -C vllm-gcu
+sudo chmod +x ./TopsRider_i3x_3.4.xxx.run
+sudo ./TopsRider_i3x_3.4.xxx.run -y -C vllm-gcu
 ```
 
 ✅ **Option 2: Manual installation using `.whl` packages**
