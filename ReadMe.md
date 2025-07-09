@@ -25,13 +25,25 @@
 
 * **操作系统**: Ubuntu 20.04 / 22.04
 * **Python**: 3.9 \~ 3.12
-* **硬件**: 燧原 S60 GCU（已部署 TopsRider 软件栈）
+* **硬件**: 燧原 S60 GCU（已部署 TopsRider **i3x 3.4+** 软件栈）
 
 ### 📦 安装步骤
 
 #### 1️⃣ 安装依赖组件（Docker 环境中）
 
 请首先参考[《TopsRider 软件栈安装手册》](https://support.enflame-tech.com/onlinedoc_dev_3.4/2-install/sw_install/content/source/installation.html)完成基础环境部署。
+
+**Python3.9+：** 确保你已经安装了 Python 3.9 或更高版本，并且默认的 Python 版本是 3.9 及以上。
+
+```bash
+# 检查默认的 python 版本
+python3 --version
+
+# 如果默认的 python 版本小于 3.9，则安装 python3.9
+sudo apt update && sudo apt install python3.9 -y
+
+# 将默认的 python 版本切换为 3.9
+sudo update-alternatives --config python3
 ```
 
 #### 2️⃣ 安装方式（任选其一）

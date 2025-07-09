@@ -24,14 +24,25 @@
 ### 🔧 System Requirements
 
 * **OS**: Ubuntu 20.04 / 22.04
-* **Python**: 3.9 \~ 3.12
-* **Hardware**: Enflame S60 GCU (with TopsRider software stack installed)
+* **Python**: 3.9 \~ 3.12 (default python version `3.9+`)
+* **Hardware**: Enflame S60 GCU (with TopsRider **i3x 3.4+** software stack installed)
 
 ### 📦 Installation Steps
 
 #### 1️⃣ Install Dependencies (within Docker)
 
 Refer to the [TopsRider Installation Manual](https://support.enflame-tech.com/onlinedoc_dev_3.4/2-install/sw_install/content/source/installation.html) to set up the base environment.
+
+**Python3.9+:** Make sure you have python3.9+ installed and the default python version is 3.9+
+
+```bash
+# check default python version 
+python3 --version
+# install python3.9 if default python version < 3.9
+sudo apt update && sudo apt install python3.9 -y
+# switch default python to version 3.9
+sudo update-alternatives --config python3
+```
 
 #### 2️⃣ Installation Options (Choose one)
 
