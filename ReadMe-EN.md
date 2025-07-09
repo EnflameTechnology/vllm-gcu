@@ -24,7 +24,7 @@
 ### 🔧 System Requirements
 
 * **OS**: Ubuntu 20.04 / 22.04
-* **Python**: 3.9 \~ 3.12 (default python version `3.9+`)
+* **Python**: 3.10 \~ 3.12 (default python version `3.10+`)
 * **Hardware**: Enflame S60 GCU (with TopsRider **i3x 3.4+** software stack installed)
 
 ### 📦 Installation Steps
@@ -36,46 +36,53 @@ Refer to the [TopsRider Installation Manual](https://support.enflame-tech.com/on
 
 #### 2️⃣ Installation Options (Choose one, within Docker)
 
-**Python3.9+:** Make sure you have python3.9+ installed and the default python version is 3.9+
+**Python3.10+:** Make sure you have python3.10+ installed and the default python version is 3.10+
 
 ```bash
 # check default python version 
 python3 --version
 
-# install python3.9 if default python version < 3.9
-sudo apt update && sudo apt install python3.9 -y
+# install python3.10 if default python version < 3.10
+sudo apt update && sudo apt install python3.10 -y
 
-# switch default python to version 3.9
+# switch default python to version 3.10
+sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1
 sudo update-alternatives --config python3
 
-# install pip for python3.9
-sudo apt update && sudo apt install python3.9-distutils -y
+# install pip for python3.10
+sudo apt update && sudo apt install python3.10-distutils -y
 curl -sS https://bootstrap.pypa.io/get-pip.py | sudo python3
+
+# install setuptools
+python3 -m pip install setuptools
 ```
 
 ✅ **Option 1: Install via TopsRider**
 
 ```bash
+python3 -m pip install triton==3.2
 sudo chmod +x ./TopsRider_i3x_3.4.xxx.run
 sudo ./TopsRider_i3x_3.4.xxx.run -y -C vllm-gcu
 ```
 
-✅ **Option 2: Manual installation using `.whl` packages**
+✅ **Option 2: Build and install `.whl` package from source code**
 
 ```bash
 # Install dependencies
 python3 -m pip install vllm==0.8.0
+python3 -m pip install triton==3.2
 python3 -m pip install torch==2.6.0+cpu -i https://download.pytorch.org/whl/cpu
 python3 -m pip install torchvision==0.21.0 -i https://download.pytorch.org/whl/cpu
 python3 -m pip install torch_gcu-2.6.0+<version>*.whl
 python3 -m pip install tops_extension-<version>*.whl
 python3 -m pip install xformers-<version>*.whl
+sudo apt install python3.10-dev -y #depend on the python version
 
-# Build vllm_gcu
-python3 setup.py
+# build vllm_gcu .whl package
+python3 setup.py bdist_wheel
 
-# Install the vllm_gcu package you built
-python3 -m pip install vllm_gcu-0.8.0+<version>*.whl
+# install the built package
+python3 -m pip install ./dist/vllm_gcu-0.8.0+<version>*.whl
 ```
 
 ---

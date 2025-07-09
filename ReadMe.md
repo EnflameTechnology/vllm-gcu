@@ -24,7 +24,7 @@
 ### 🔧 系统与环境要求
 
 * **操作系统**: Ubuntu 20.04 / 22.04
-* **Python**: 3.9 \~ 3.12
+* **Python**: 3.10 \~ 3.12
 * **硬件**: 燧原 S60 GCU（已部署 TopsRider **i3x 3.4+** 软件栈）
 
 ### 📦 安装步骤
@@ -36,45 +36,53 @@
 
 #### 2️⃣ 安装方式（任选其一，Docker 环境中）
 
-**Python3.9+：** 确保你已经安装了 Python 3.9 或更高版本，并且默认的 Python 版本是 3.9 及以上。
+**Python3.10+：** 确保你已经安装了 Python 3.10 或更高版本，并且默认的 Python 版本是 3.10 及以上。
 
 ```bash
 # 检查默认的 python 版本
 python3 --version
 
-# 如果默认的 python 版本小于 3.9，则安装 python3.9
-sudo apt update && sudo apt install python3.9 -y
+# 如果默认的 python 版本小于 3.10，则安装 python3.10
+sudo apt update && sudo apt install python3.10 -y
 
-# 将默认的 python 版本切换为 3.9
+# 将默认的 python 版本切换为 3.10
+sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1
 sudo update-alternatives --config python3
 
-# 为 python3.9 安装pip
-sudo apt update && sudo apt install python3.9-distutils -y
+# 为 python3.10 安装pip
+sudo apt update && sudo apt install python3.10-distutils -y
 curl -sS https://bootstrap.pypa.io/get-pip.py | sudo python3
+
+# 安装setuptools
+python3 -m pip install setuptools
 ```
 
 ✅ **方式一：使用 TopsRider 安装**
 
 ```bash
+python3 -m pip install triton==3.2
 sudo chmod +x ./TopsRider_i3x_3.4.xxx.run
 sudo ./TopsRider_i3x_3.4.xxx.run -y -C vllm-gcu
 ```
 
-✅ **方式二：使用 `.whl` 包手动安装**
+✅ **方式二：从源代码编译并安装 `.whl` 包**
 
 ```bash
 # 安装依赖
 python3 -m pip install vllm==0.8.0
+python3 -m pip install triton==3.2
 python3 -m pip install torch==2.6.0+cpu -i https://download.pytorch.org/whl/cpu
 python3 -m pip install torchvision==0.21.0 -i https://download.pytorch.org/whl/cpu
 python3 -m pip install torch_gcu-2.6.0+<version>*.whl
 python3 -m pip install tops_extension-<version>*.whl
 python3 -m pip install xformers-<version>*.whl
+sudo apt install python3.10-dev -y #根据python版本选择
 
-# 编译 vllm_gcu
-python3 setup.py
+# 编译 vllm_gcu .whl安装包
+python3 setup.py bdist_wheel
+
 # 安装编译好的 vllm_gcu whl包
-python3 -m pip install vllm_gcu-0.8.0+<version>*.whl
+python3 -m pip install ./dist/vllm_gcu-0.8.0+<version>*.whl
 ```
 
 ---
