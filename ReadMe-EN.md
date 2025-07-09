@@ -123,7 +123,7 @@ Download to the folder named `Qwen2.5-32B-Instruct-GPTQ-Int8`.
 #### Batch Offline Inference
 
 ```bash
-python3 -m vllm_utils.benchmark_test \
+python3 -m vllm_utils.benchmark_throughput \
  --model=[Qwen2.5-32B-Instruct-GPTQ-Int8 folder path] \
  --tensor-parallel-size=2 \
  --max-model-len=32768 \
@@ -170,12 +170,12 @@ python3 -m vllm_utils.benchmark_serving \
 
 * **Offline Inference**: Demonstrates GCU's raw inference capability
 * **Performance Metrics**: Measures TPS / TTFT / latency
-* **Launch with**: `vllm_utils.benchmark_test` or `benchmark_vision_language`
+* **Launch with**: `vllm_utils.benchmark_throughput` or `benchmark_vision_language`
 
 View help:
 
 ```bash
-python3 -m vllm_utils.benchmark_test --help
+python3 -m vllm_utils.benchmark_throughput --help
 python3 -m vllm_utils.benchmark_vision_language --help
 ```
 

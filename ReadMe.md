@@ -119,7 +119,7 @@ python3 -m pip install ./dist/vllm_gcu-0.8.0+<version>*.whl
 
 #### 批量离线推理
 ```shell
-python3 -m vllm_utils.benchmark_test \
+python3 -m vllm_utils.benchmark_throughput \
  --model=[Qwen2.5-32B-Instruct-GPTQ-Int8文件夹] \
  --tensor-parallel-size=2 \
  --max-model-len=32768 \
@@ -167,12 +167,12 @@ python3 -m vllm_utils.benchmark_serving \
 
 * 离线推理：展示 GCU 并推理能力
 * 性能测试：统计 TPS / TTFT / latency 等指标
-* 启动方式：`vllm_utils.benchmark_test` / `benchmark_vision_language`
+* 启动方式：`vllm_utils.benchmark_throughput` / `benchmark_vision_language`
 
 查看参数帮助：
 
 ```bash
-python3 -m vllm_utils.benchmark_test --help
+python3 -m vllm_utils.benchmark_throughput --help
 python3 -m vllm_utils.benchmark_vision_language --help
 ```
 
