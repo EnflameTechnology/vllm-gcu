@@ -5,3 +5,4 @@ vllm_gcu.egg-info
 __pycache__
 *.h
 _C.abi3.so
+.vscode
