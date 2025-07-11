@@ -1,6 +1,6 @@
-## phi3v
+## Phi3v
 
-### phi-3-vision-128k-instruct
+### Phi-3-vision-128k-instruct
 
 #### 模型下载
 * url: [phi-3-vision-128k-instruct](https://huggingface.co/microsoft/Phi-3-vision-128k-instruct/tree/main)

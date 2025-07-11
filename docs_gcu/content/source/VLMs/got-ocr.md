@@ -1,4 +1,4 @@
-## got-ocr
+## GOT-OCR
 
 ### GOT-OCR-2.0-hf
 

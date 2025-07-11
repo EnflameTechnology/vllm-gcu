@@ -1,6 +1,6 @@
-## glm4
+## GLM4
 
-### glm-4-9b-chat
+### GLM-4-9b-chat
 
 #### 模型下载
 从huggingface上下载下列任意模型的预训练ckpt，路径记为[path of chatglmckpt]

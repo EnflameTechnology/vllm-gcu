@@ -1,6 +1,6 @@
-## jina
+## Jina
 
-### jina-reranker-v2-base-multilingual
+### Jina-reranker-v2-base-multilingual
 
 #### 模型下载
 *  url: [jina-reranker-v2-base-multilingual](https://huggingface.co/jinaai/jina-reranker-v2-base-multilingual/)

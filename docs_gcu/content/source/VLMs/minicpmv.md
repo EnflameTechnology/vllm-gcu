@@ -1,4 +1,4 @@
-## minicpmv
+## MiniCPM-V
 
 ### MiniCPM-V-2_6
 

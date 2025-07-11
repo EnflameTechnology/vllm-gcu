@@ -1,6 +1,6 @@
-## starcoder
+## Starcoder
 
-### starcoderbase
+### Starcoderbase
 
 本模型推理及性能测试需要1张enflame gcu。
 
@@ -47,7 +47,7 @@ python3 -m vllm_utils.benchmark_test --perf \
 *  `input-len`、`output-len`和`num-prompts`可按需调整；
 * 配置 `output-len`为1时,输出内容中的`latency`即为time_to_first_token_latency;
 
-### starcoder2-7b
+### Starcoder2-7b
 
 本模型推理及性能测试需要1张enflame gcu。
 
@@ -86,7 +86,7 @@ python3 -m vllm_utils.benchmark_test --perf \
 *  `input-len`、`output-len`和`num-prompts`可按需调整；
 * 配置 `output-len`为1时,输出内容中的`latency`即为time_to_first_token_latency;
 
-### starcoder2-15b
+### Starcoder2-15b
 
 本模型推理及性能测试需要1张enflame gcu。
 
@@ -125,7 +125,7 @@ python3 -m vllm_utils.benchmark_test --perf \
 *  `input-len`、`output-len`和`num-prompts`可按需调整；
 * 配置 `output-len`为1时,输出内容中的`latency`即为time_to_first_token_latency;
 
-### starcoder2-15b-w8a16_gptq
+### Starcoder2-15b-w8a16_gptq
 
 本模型推理及性能测试需要1张enflame gcu。
 

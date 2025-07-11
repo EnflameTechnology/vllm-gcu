@@ -1,6 +1,6 @@
-## llava-next
+## Llava-next
 
-### llama3-llava-next-8b-hf
+### Llama3-llava-next-8b-hf
 
 #### 模型下载
 * url: [llama3-llava-next-8b-hf](https://huggingface.co/llava-hf/llama3-llava-next-8b-hf)
@@ -46,7 +46,7 @@ python3 -m vllm_utils.benchmark_vision_language \
 * 默认为graph mode推理，若想使用eager mode，请添加`--enforce-eager`；
 * `--batch-size`、`--input-len`、`--input-vision-shape`、`--max-output-len`可按需调整；
 
-### llava-onevision-qwen2-72b-ov-chat-hf
+### Llava-onevision-qwen2-72b-ov-chat-hf
 
 #### 模型下载
 * url: [llava-onevision-qwen2-72b-ov-chat-hf](https://huggingface.co/llava-hf/llava-onevision-qwen2-72b-ov-chat-hf)

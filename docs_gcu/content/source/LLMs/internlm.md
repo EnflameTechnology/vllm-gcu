@@ -1,4 +1,4 @@
-## internlm
+## InternLM
 
 ### internlm2_5-7b-chat-w4a16-gptq
 

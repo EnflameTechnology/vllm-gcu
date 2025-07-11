@@ -40,6 +40,7 @@ python3 -m vllm_utils.multilora_inference --base-model=chatglm3-6b/ --device=gcu
             "lora_id":"1"}
     ]
   }
+
   ```
   * `chatglm3-6b-csc-chinese-lora`为lora模型的本地存储路径，下载自[chatglm3-6b-csc-chinese-lora](https://huggingface.co/shibing624/chatglm3-6b-csc-chinese-lora/tree/main);
   * `chatglm3-6b-csc-chinese-lora`在本轮推理时设置其`id`为1；

@@ -1,4 +1,4 @@
-## internvl
+## Internvl
 
 ### InternVL2-8B
 

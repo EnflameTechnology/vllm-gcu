@@ -1,6 +1,6 @@
-## llama
+## Llama
 
-### llama2-70b
+### Llama2-70b
 
 本模型推理及性能测试需要四张enflame gcu。
 
@@ -191,7 +191,7 @@ python3 -m vllm_utils.benchmark_test --perf \
 *  配置 `output-len`为1时,输出内容中的`latency`即为time_to_first_token_latency;
 
 
-### llama2-13b-w8a16_gptq
+### Llama2-13b-w8a16_gptq
 
 本模型推理及性能测试需要1张enflame gcu。
 
@@ -247,7 +247,7 @@ python3 -m vllm_utils.benchmark_test --perf \
 
 *  配置 `output-len`为1时,输出内容中的`latency`即为time_to_first_token_latency;
 
-### llama2-70b-w8a16_gptq
+### Llama2-70b-w8a16_gptq
 
 本模型推理及性能测试需要2张enflame gcu。
 
@@ -303,7 +303,7 @@ python3 -m vllm_utils.benchmark_test --perf \
 
 *  配置 `output-len`为1时,输出内容中的`latency`即为time_to_first_token_latency;
 
-### llama3-8b-w8a16_gptq
+### Llama3-8b-w8a16_gptq
 
 本模型推理及性能测试需要1张enflame gcu。
 
@@ -359,7 +359,7 @@ python3 -m vllm_utils.benchmark_test --perf \
 *  配置 `output-len`为1时,输出内容中的`latency`即为time_to_first_token_latency;
 
 
-### llama3-70b-w8a16_gptq
+### Llama3-70b-w8a16_gptq
 
 本模型推理及性能测试需要2张enflame gcu。
 
@@ -529,7 +529,7 @@ python3 -m vllm_utils.benchmark_test --perf \
 
 *  配置 `output-len`为1时,输出内容中的`latency`即为time_to_first_token_latency;
 
-### llama3-70b-w4a16
+### Llama3-70b-w4a16
 
 本模型推理及性能测试需要2张enflame gcu。
 
@@ -583,7 +583,7 @@ python3 -m vllm_utils.benchmark_test --perf \
 * 配置 `output-len`为1时,输出内容中的`latency`即为time_to_first_token_latency;
 
 
-### llama2-70b-w4a16c8
+### Llama2-70b-w4a16c8
 
 本模型推理及性能测试需要4张enflame gcu。
 
@@ -646,7 +646,7 @@ python3 -m vllm_utils.benchmark_test \
 *  `input-len`、`output-len`和`num-prompts`可按需调整；
 * 配置 `output-len`为1时,输出内容中的`latency`即为time_to_first_token_latency;
 
-### llama2-70b-w8a8c8
+### Llama2-70b-w8a8c8
 
 本模型推理及性能测试需要4张enflame gcu。
 
