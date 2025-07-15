@@ -292,6 +292,14 @@ class ECCLLibrary:
         self.ECCL_CHECK(self._funcs["ecclGetUniqueId"](ctypes.byref(unique_id)))
         return unique_id
 
+    def unique_id_from_bytes(self, data: bytes) -> ecclUniqueId:
+        if len(data) != 128:
+            raise ValueError(
+                f"Expected 128 bytes for ncclUniqueId, got {len(data)} bytes")
+        unique_id = ecclUniqueId()
+        ctypes.memmove(ctypes.addressof(unique_id.internal), data, 128)
+        return unique_id
+
     def ecclCommInitRank(
         self, world_size: int, unique_id: ecclUniqueId, rank: int
     ) -> ecclComm_t:

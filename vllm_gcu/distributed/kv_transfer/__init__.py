@@ -6,3 +6,8 @@ KVConnectorFactory.register_connector(
     "vllm_gcu.distributed.kv_transfer.connector",
     "Connector",
 )
+
+KVConnectorFactory.register_connector(
+    "P2pEcclConnector",
+    "vllm_gcu.distributed.kv_transfer.v1.p2p_eccl_connector",
+    "P2pEcclConnector")
