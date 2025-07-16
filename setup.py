@@ -341,7 +341,7 @@ setup(
         ]
     },
     python_requires=">=3.8",
-    install_requires=["python-multipart==0.0.20", "transformers==4.48.2"],
+    install_requires=["python-multipart==0.0.20", "transformers==4.51.1", "numpy<2.0"],
     ext_modules=ext_modules,
     cmdclass={
         "build_ext": VllmBuildExtension,
