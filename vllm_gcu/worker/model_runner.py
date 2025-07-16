@@ -657,7 +657,9 @@ class GCUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
                 gcugraph_capture_sizes = (
                     self.vllm_config.compilation_config.cudagraph_capture_sizes
                 )
-                cudagraph_inputs_embeds = (True, False)
+                cudagraph_inputs_embeds = ((
+                    True, False) if self.model_config.enable_prompt_embeds else
+                                           (False, ))
                 compilation_cases = itertools.product(
                     gcugraph_capture_sizes,
                     cudagraph_inputs_embeds,
