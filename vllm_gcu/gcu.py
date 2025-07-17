@@ -59,7 +59,7 @@ class GCUPlatform(Platform):
     ) -> str:
         if use_mla:
             if use_v1:
-                return "vllm_gcu.v1.attention.mla.GCUMLABackend"
+                return "vllm_gcu.attention.backends.mla_v1.GCUMLABackend"
             else:
                 if gcu_envs.VLLM_GCU_DEEPSEEK_FUSION:
                     return "vllm_gcu.attention.backends.mla_fusion.GCUMLAFusionBackend"
