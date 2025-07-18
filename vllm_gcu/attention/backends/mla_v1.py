@@ -28,7 +28,7 @@ logger = init_logger(__name__)
 class GCUMLABackend(MLACommonBackend):
     @staticmethod
     def get_name() -> str:
-        return "GCU_MLA_VLLM_V1"
+        return "TRITON_MLA_VLLM_V1"
 
     @staticmethod
     def get_metadata_cls() -> type["GCUMLAMetadata"]:
