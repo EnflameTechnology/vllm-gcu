@@ -9,7 +9,6 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import torch
 import torch_gcu
 import vllm.envs as envs
-from vllm.config import get_current_vllm_config
 from vllm.distributed.parallel_state import get_tp_group
 from vllm.forward_context import ForwardContext, get_forward_context
 
@@ -239,8 +238,7 @@ def inplace_fused_experts(
     a2_scale: Optional[torch.Tensor] = None,
     block_shape: Optional[List[int]] = None,
 ) -> None:
-    parallel_config = get_current_vllm_config().parallel_config
-    if parallel_config.enable_expert_parallel:
+    if expert_map is not None:
         impl = ep_fused_experts_impl
     else:
         impl = fused_experts_impl
@@ -294,8 +292,7 @@ def outplace_fused_experts(
     a2_scale: Optional[torch.Tensor] = None,
     block_shape: Optional[List[int]] = None,
 ) -> torch.Tensor:
-    parallel_config = get_current_vllm_config().parallel_config
-    if parallel_config.enable_expert_parallel:
+    if expert_map is not None:
         impl = ep_fused_experts_impl
     else:
         impl = fused_experts_impl
@@ -367,8 +364,8 @@ def fused_experts_impl(
         layer_name = None
 
     shared_experts = None
+    forward_context: ForwardContext = get_forward_context()
     if layer_name is not None:
-        forward_context: ForwardContext = get_forward_context()
         layer = forward_context.no_compile_layers[layer_name]
 
         shared_experts = getattr(layer, "shared_experts", None)
@@ -634,12 +631,6 @@ def ep_fused_experts_impl(
 
     assert activation == "silu", f"not support activation: {activation}"
 
-    parallel_config = get_current_vllm_config().parallel_config
-    scheduler_config = get_current_vllm_config().scheduler_config
-    spec_config = get_current_vllm_config().speculative_config
-
-    assert parallel_config.enable_expert_parallel
-
     if layer_name is not None:
         forward_context: ForwardContext = get_forward_context()
         layer = forward_context.no_compile_layers[layer_name]
@@ -680,10 +671,17 @@ def ep_fused_experts_impl(
             ), "FP8 only support DeepSeek V3 with same group_n and group_k"
             if a1_scale is None:
                 hidden_states, a1_scale = ops.per_token_group_quant_fp8(hidden_states, block_k)
-    if parallel_config.enable_expert_parallel:
-        all_dp_in_decode = get_current_vllm_config().additional_config[
-            "all_dp_in_decode"
-        ]
+    if True:
+        use_all2all_v = True
+        threshold = forward_context.all2allv_threshold if hasattr(forward_context, "all2allv_threshold") else 0
+
+        dp_metadata = forward_context.dp_metadata
+        if dp_metadata is not None and \
+                dp_metadata.cu_tokens_across_dp_cpu is not None and \
+                dp_metadata.cu_tokens_across_dp_cpu[-1] > threshold:
+            use_all2all_v = False
+        else:
+            use_all2all_v = hidden_states.shape[0] <= threshold
 
         group = get_world_group().device_group
         ep_size = get_world_group().world_size
@@ -759,16 +757,10 @@ def ep_fused_experts_impl(
             else nullcontext()
         )
         all_to_all_with_scales = (use_fp8_w8a8 and not input_static_quant)
-        if all_dp_in_decode:
-            padded_recv_len = scheduler_config.max_num_seqs \
-                if spec_config is None \
-                else scheduler_config.max_num_seqs * (spec_config.num_speculative_tokens + 1)
-            if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
-                sp_size = get_tp_group().world_size
-                padded_recv_len = (padded_recv_len + sp_size - 1) // sp_size * sp_size
+        if use_all2all_v:
             recv_packed = torch.empty(
                 (
-                    padded_recv_len * parallel_config.data_parallel_size,
+                    threshold,
                     hidden_states.shape[1] + topk_ids_width + topk_weights_width
                     if not all_to_all_with_scales
                     else
@@ -905,8 +897,6 @@ def ep_fused_experts_impl(
         topk_weights = topk_weights_.view(topk_weights.dtype)
         if all_to_all_with_scales:
             a1_scale = a1_scale_.view(a1_scale.dtype)
-    else:
-        assert parallel_config.enable_expert_parallel
 
     # Check constraints.
     if use_int4_w4a16:
@@ -962,7 +952,7 @@ def ep_fused_experts_impl(
 
     if use_fp8_w8a8:
         orig_a1_scale = a1_scale
-        if parallel_config.enable_expert_parallel:
+        if True:
             # cannot inplace: hidden_states and out have different dtype.
             out_hidden_states = torch.empty_like(hidden_states, dtype=hidden_states_ori.dtype,
                                                 device=hidden_states_ori.device)
@@ -1110,13 +1100,13 @@ def ep_fused_experts_impl(
             False,
         )
 
-    if parallel_config.enable_expert_parallel:
+    if True:
         sp_hidden_states = torch.zeros(
             (send_packed_sorted.shape[0], hidden_states.shape[1]),
             dtype=hidden_states_ori.dtype,
             device=hidden_states_ori.device,
         )
-        if all_dp_in_decode:
+        if use_all2all_v:
             all_to_all_v2(
                 sp_hidden_states,
                 out_hidden_states,
