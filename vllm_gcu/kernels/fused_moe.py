@@ -1,33 +1,24 @@
 #!/usr/bin/env python
 # coding=utf-8
-import functools
-import math
 import sys
-from contextlib import nullcontext
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import torch
 import torch_gcu
 import vllm.envs as envs
-from vllm.distributed.parallel_state import get_tp_group
+
 from vllm.forward_context import ForwardContext, get_forward_context
 
 from vllm.model_executor.layers.fused_moe.fused_moe import (
-    get_config_dtype_str,
-    get_config_quant_dtype,
     fused_experts
 )
 from vllm.model_executor.layers.fused_moe.layer import (
     FusedMoE,
     UnquantizedFusedMoEMethod,
 )
-from vllm.model_executor.layers.fused_moe.utils import moe_kernel_quantize_input
-from vllm.platforms import current_platform
 from vllm.utils import vllm_lib
 
 import vllm_gcu.envs as gcu_envs
-
-from vllm_gcu.distributed.parallel_state import all_to_all_v2
 from vllm_gcu.kernels import _custom_ops as ops
 
 
@@ -240,12 +231,8 @@ def inplace_fused_experts(
     a2_scale: Optional[torch.Tensor] = None,
     block_shape: Optional[List[int]] = None,
 ) -> None:
-    if expert_map is not None:
-        impl = ep_fused_experts_impl
-    else:
-        impl = fused_experts_impl
 
-    impl(
+    fused_experts_impl(
         hidden_states,
         w1,
         w2,
@@ -294,12 +281,8 @@ def outplace_fused_experts(
     a2_scale: Optional[torch.Tensor] = None,
     block_shape: Optional[List[int]] = None,
 ) -> torch.Tensor:
-    if expert_map is not None:
-        impl = ep_fused_experts_impl
-    else:
-        impl = fused_experts_impl
 
-    return impl(
+    return fused_experts_impl(
         hidden_states,
         w1,
         w2,
@@ -359,272 +342,9 @@ def fused_experts_impl(
     b1=None,
     b2=None,
 ):
-    activation_and_layer_name = activation.split("_", 1)
-    if len(activation_and_layer_name) > 1:
-        activation, layer_name = activation_and_layer_name
-    else:
-        layer_name = None
-
-    shared_experts = None
-    forward_context: ForwardContext = get_forward_context()
-    if layer_name is not None:
-        layer = forward_context.no_compile_layers[layer_name]
-
-        shared_experts = getattr(layer, "shared_experts", None)
-        routed_scaling_factor = getattr(layer, "routed_scaling_factor", None)
-
-        if shared_experts is not None:
-            assert routed_scaling_factor is not None
-
-    # Check constraints.
-    if use_int4_w4a16:
-        assert hidden_states.shape[1] // 2 == w1.shape[2], "Hidden size mismatch"
-    else:
-        assert hidden_states.shape[1] == w1.shape[2], "Hidden size mismatch"
-
-    assert topk_weights.shape == topk_ids.shape, "topk shape mismatch"
-    assert hidden_states.is_contiguous(), "Hidden_states must be contiguous"
-    # assert w1.is_contiguous(), "Expert weights1 must be contiguous"
-    # assert w2.is_contiguous(), "Expert weights2 must be contiguous"
-    assert hidden_states.dtype in [torch.float32, torch.float16, torch.bfloat16]
-
-    num_tokens, _ = hidden_states.shape
-    E, N, _ = w1.shape
-    if global_num_experts == -1:
-        global_num_experts = E
-    top_k_num = topk_ids.shape[1]
-    # We execute the fused_moe kernel in chunks to circumvent this issue:
-    # https://github.com/vllm-project/vllm/issues/5938
-    CHUNK_SIZE = envs.VLLM_FUSED_MOE_CHUNK_SIZE
-    M = min(num_tokens, CHUNK_SIZE)
-
-    config_dtype = get_config_dtype_str(use_fp8_w8a8=use_fp8_w8a8,
-                                        use_int8_w8a16=use_int8_w8a16,
-                                        use_int4_w4a16=use_int4_w4a16,
-                                        dtype=hidden_states.dtype)
-
-    qtype = get_config_quant_dtype(use_fp8_w8a8=use_fp8_w8a8,
-                             use_int8_w8a8=use_int8_w8a8,
-                             use_int8_w8a16=use_int8_w8a16,
-                             use_int4_w4a16=use_int4_w4a16)
-
-    get_config_func = functools.partial(
-        get_default_config,
-        E=w2.shape[0],
-        N=w2.shape[2],
-        K=w1.shape[2],
-        topk=top_k_num,
-        dtype=config_dtype,
-        is_marlin=False,
-        block_shape=block_shape,
-    )
-
-    config = get_config_func(M)
-
-    cache13 = torch.empty(
-        M * top_k_num * max(N, w2.shape[1]),
-        device=hidden_states.device,
-        dtype=hidden_states.dtype,
-    )
-    intermediate_cache1 = cache13[: M * top_k_num * N].view((M, topk_ids.shape[1], N))
-    intermediate_cache3 = cache13[: M * top_k_num * w2.shape[1]].view(
-        (M, topk_ids.shape[1], w2.shape[1])
-    )
-
-    cache2_dtype = torch.float8_e4m3fn if use_fp8_w8a8 else hidden_states.dtype
-    intermediate_cache2 = torch.empty(
-        (M * top_k_num, N // 2),
-        device=hidden_states.device,
-        dtype=cache2_dtype,
-    )
-
-    shared_output = None
-    if shared_experts is not None and hidden_states.shape[0] > 0:
-        shared_output = shared_experts(hidden_states)
-
-    if inplace:
-        out_hidden_states = hidden_states
-    else:
-        out_hidden_states = torch.empty_like(hidden_states)
-
-    chunk_num = math.ceil(num_tokens / CHUNK_SIZE)
-    for chunk in range(chunk_num):
-        begin_chunk_idx, end_chunk_idx = (
-            chunk * CHUNK_SIZE,
-            min((chunk + 1) * CHUNK_SIZE, num_tokens),
-        )
-        curr_hidden_states = hidden_states[begin_chunk_idx:end_chunk_idx]
-        tokens_in_chunk, _ = curr_hidden_states.shape
-        valid_in_chunk = torch.full(
-                (1,),
-                tokens_in_chunk,
-                dtype=torch.int32,
-                device=curr_hidden_states.device,
-        )
-
-        if tokens_in_chunk == 0:
-            break
-
-        if tokens_in_chunk < CHUNK_SIZE and chunk > 0:
-            # Adjust the intermediate cache size and config for the last
-            # chunk. Note that in most cases we only have one chunk
-            # so the cache size and config are already set correctly and
-            # do not need to be adjusted.
-            intermediate_cache1 = intermediate_cache1[:tokens_in_chunk]
-            intermediate_cache2 = intermediate_cache2[: tokens_in_chunk * top_k_num]
-            intermediate_cache3 = intermediate_cache3[:tokens_in_chunk]
-            config = get_config_func(tokens_in_chunk)
-
-        curr_topk_ids = topk_ids[begin_chunk_idx:end_chunk_idx]
-        curr_topk_weights = topk_weights[begin_chunk_idx:end_chunk_idx]
-
-        qcurr_hidden_states, a1q_scale = moe_kernel_quantize_input(
-            A=curr_hidden_states,
-            A_scale=a1_scale,
-            quant_dtype=qtype,
-            per_act_token_quant=per_channel_quant,
-            block_shape=block_shape)
-
-        sorted_token_ids, expert_ids, num_tokens_post_padded = moe_align_block_size(
-            curr_topk_ids,
-            config["BLOCK_SIZE_M"],
-            global_num_experts,
-            expert_map,
-            valid_in_chunk,
-        )
-
-        invoke_fused_moe_kernel(
-            qcurr_hidden_states,
-            w1,
-            intermediate_cache1,
-            a1q_scale,
-            w1_scale,
-            w1_zp,
-            curr_topk_weights,
-            curr_topk_ids,
-            sorted_token_ids,
-            expert_ids,
-            num_tokens_post_padded,
-            False,
-            top_k_num,
-            config,
-            use_fp8_w8a8=use_fp8_w8a8,
-            use_int8_w8a8=use_int8_w8a8,
-            use_int8_w8a16=use_int8_w8a16,
-            use_int4_w4a16=use_int4_w4a16,
-            block_shape=block_shape,
-            real_token_num=valid_in_chunk,
-            bias=b1,
-        )
-
-        if use_fp8_w8a8:
-            group_size = block_shape[1]
-            shape = (
-                *intermediate_cache2.shape[:-1],
-                N // 2 // group_size,
-            )
-            a2q_scale = torch.empty(
-                shape, dtype=torch.float32, device=intermediate_cache1.device
-            )
-            if activation == "silu":
-                torch.ops._C.silu_mul_per_token_group_quant_with_size(
-                    intermediate_cache2.view(-1, top_k_num, N // 2),
-                    a2q_scale.view(-1, top_k_num, N // 2 // group_size),
-                    intermediate_cache1,
-                    valid_in_chunk,
-                    group_size,
-                )
-            elif activation == "gelu":
-                raise ValueError(f"Unsupported FusedMoe activation: {activation}")
-
-            qintermediate_cache2 = intermediate_cache2
-        else:
-            if activation == "silu":
-                torch.ops._C.silu_and_mul_pad(
-                    intermediate_cache2.view(-1, top_k_num, N // 2),
-                    intermediate_cache1,
-                    valid_in_chunk,
-                )
-            elif activation == "gelu":
-                torch.ops._C.gelu_and_mul(intermediate_cache2,
-                                      intermediate_cache1.view(-1, N))
-            else:
-                raise ValueError(f"Unsupported FusedMoe activation: {activation}")
-
-            qintermediate_cache2, a2q_scale = moe_kernel_quantize_input(
-                A=intermediate_cache2,
-                A_scale=a2_scale,
-                quant_dtype=qtype,
-                per_act_token_quant=per_channel_quant,
-                block_shape=block_shape)
-
-        invoke_fused_moe_kernel(
-            qintermediate_cache2,
-            w2,
-            intermediate_cache3,
-            a2q_scale,
-            w2_scale,
-            w2_zp,
-            curr_topk_weights,
-            curr_topk_ids,
-            sorted_token_ids,
-            expert_ids,
-            num_tokens_post_padded,
-            True,
-            1,
-            config,
-            use_fp8_w8a8=use_fp8_w8a8,
-            use_int8_w8a8=use_int8_w8a8,
-            use_int8_w8a16=use_int8_w8a16,
-            use_int4_w4a16=use_int4_w4a16,
-            block_shape=block_shape,
-            real_token_num=valid_in_chunk,
-            bias=b2,
-        )
-        # TODO: replace with moe_sum
-        torch.ops._moe_C.moe_sum_pad(
-            out_hidden_states[begin_chunk_idx:end_chunk_idx],
-            intermediate_cache3.view(*intermediate_cache3.shape),
-            valid_in_chunk,
-            1,
-            False,
-        )
-
-    if shared_output is not None:
-        out_hidden_states.mul_(routed_scaling_factor)
-        out_hidden_states.add_(shared_output)
-
-    return out_hidden_states
-
-
-def ep_fused_experts_impl(
-    hidden_states: torch.Tensor,
-    w1: torch.Tensor,
-    w2: torch.Tensor,
-    topk_weights: torch.Tensor,
-    topk_ids: torch.Tensor,
-    inplace: bool = False,
-    activation: str = "silu",
-    apply_router_weight_on_input: bool = False,
-    use_fp8_w8a8: bool = False,
-    use_int8_w8a8: bool = False,
-    use_int8_w8a16: bool = False,
-    use_int4_w4a16: bool = False,
-    per_channel_quant: bool = False,
-    global_num_experts: int = -1,
-    expert_map: Optional[torch.Tensor] = None,
-    w1_scale: Optional[torch.Tensor] = None,
-    w2_scale: Optional[torch.Tensor] = None,
-    w1_zp: Optional[torch.Tensor] = None,
-    w2_zp: Optional[torch.Tensor] = None,
-    a1_scale: Optional[torch.Tensor] = None,
-    a2_scale: Optional[torch.Tensor] = None,
-    block_shape: Optional[List[int]] = None,
-    b1=None,
-    b2=None,
-):
-    from vllm.distributed import get_world_group
-
+    from vllm_gcu.kernels.modular_experts import TritonExpertsPad
+    from vllm_gcu.kernels.prepare_finalize import get_prepare_finalize
+    from vllm_gcu.kernels.modular_kernel import FusedMoEModularKernel
     activation_and_layer_name = activation.split("_", 1)
     if len(activation_and_layer_name) > 1:
         activation, layer_name = activation_and_layer_name
@@ -636,502 +356,40 @@ def ep_fused_experts_impl(
     forward_context: ForwardContext = get_forward_context()
     if layer_name is not None:
         layer = forward_context.no_compile_layers[layer_name]
-
         shared_experts = getattr(layer, "shared_experts", None)
         routed_scaling_factor = getattr(layer, "routed_scaling_factor", None)
-        log2phy = getattr(layer, "log2phy", None)
-
         if shared_experts is not None:
             assert routed_scaling_factor is not None
     else:
         shared_experts = None
-        log2phy = None
+        routed_scaling_factor = 1.0
 
-    recv_token_total = None
-    shared_output = None
-    hidden_states_ori = hidden_states
-    # In official vllm master branch, "per_channel_quant" parameter is used to determine dynamic or static quant
-    # TODO: when upgrade, need to refine this parameter
-    # https://github.com/vllm-project/vllm/blob/v0.9.0.1/vllm/model_executor/layers/fused_moe/fused_moe.py#L1222
-    input_static_quant = (a1_scale is not None)
-    if use_fp8_w8a8:
-        if block_shape is None:
-            # for dynamic per token
-            hidden_states, a1_scale = ops.scaled_fp8_quant(hidden_states, a1_scale, use_per_token_if_dynamic=input_static_quant)
-        else:
-            assert len(block_shape) == 2
-            block_n, block_k = block_shape[0], block_shape[1]
-            assert (
-                block_n == block_k
-            ), "FP8 only support DeepSeek V3 with same group_n and group_k"
-            if a1_scale is None:
-                hidden_states, a1_scale = ops.per_token_group_quant_fp8(hidden_states, block_k)
-    if True:
-        all2allv_threshold = forward_context.all2allv_threshold if hasattr(forward_context, "all2allv_threshold") else None
-        use_all2all_v = all2allv_threshold is not None
-
-        group = get_world_group().device_group
-        ep_size = get_world_group().world_size
-        expert_per_rank = global_num_experts // ep_size
-
-        if hidden_states.numel() == 0:
-            ep_split_size = torch.zeros(
-                [ep_size], dtype=torch.int32, device=topk_ids.device
-            )
-            send_token_total = torch.zeros(
-                [1], dtype=torch.int32, device=topk_ids.device
-            )
-        else:
-            ep_split_size = torch.empty(
-                [ep_size], dtype=torch.int32, device=topk_ids.device
-            )
-            ep_token_indices = torch.empty(
-                [hidden_states.shape[0] * topk_ids.shape[1]],
-                dtype=torch.int32,
-                device=topk_ids.device,
-            )
-            send_token_total = torch.empty(
-                [1], dtype=torch.int32, device=topk_ids.device
-            )
-
-            if log2phy is not None:
-                mapped_topk_ids = log2phy[topk_ids]
-            else:
-                mapped_topk_ids = topk_ids
-
-            ops.get_ep_indices(
-                ep_split_size,
-                ep_token_indices,
-                send_token_total,
-                mapped_topk_ids,
-                expert_per_rank,
-                ep_size,
-            )
-
-        topk_ids_width = topk_ids.shape[1] * topk_ids.element_size()
-        assert topk_ids_width % hidden_states.element_size() == 0
-        topk_ids_width //= hidden_states.element_size()
-        topk_weights_width = topk_weights.shape[1] * topk_weights.element_size()
-        assert topk_weights_width % hidden_states.element_size() == 0
-        topk_weights_width //= hidden_states.element_size()
-
-        if use_fp8_w8a8 and not input_static_quant:
-            a1_scale_width = a1_scale.shape[1] * a1_scale.element_size()
-            assert a1_scale_width % hidden_states.element_size() == 0
-            a1_scale_width //= hidden_states.element_size()
-            send_data = (
-                hidden_states,
-                topk_ids.view(hidden_states.dtype),
-                topk_weights.view(hidden_states.dtype),
-                a1_scale.view(hidden_states.dtype),
-            )
-        else:
-            send_data = (
-                hidden_states,
-                topk_ids.view(hidden_states.dtype),
-                topk_weights.view(hidden_states.dtype),
-            )
-        send_packed = torch.cat(
-            send_data,
-            dim=1,
-        )
-
-        enable_parallel_compute = gcu_envs.VLLM_GCU_ENABLE_PARALLEL_COMPUTE
-        parallel_compute_context = (
-            torch.gcu.ParallelCompute(2, 10)
-            if current_platform.is_device_capability(130)
-            and enable_parallel_compute
-            else nullcontext()
-        )
-        all_to_all_with_scales = (use_fp8_w8a8 and not input_static_quant)
-        if use_all2all_v:
-            recv_packed = torch.empty(
-                (
-                    all2allv_threshold,
-                    hidden_states.shape[1] + topk_ids_width + topk_weights_width
-                    if not all_to_all_with_scales
-                    else
-                    hidden_states.shape[1] + topk_ids_width + topk_weights_width + a1_scale_width
-                ),
-                dtype=hidden_states.dtype,
-                device=hidden_states.device,
-            )
-
-            sp_split_size = torch.empty_like(ep_split_size)
-            if hidden_states.numel() == 0:
-                send_packed_sorted = torch.empty(
-                    [1, send_packed.shape[-1]],
-                    dtype=send_packed.dtype,
-                    device=send_packed.device,
-                )
-            else:
-                send_packed_sorted = torch_gcu.gcu.efficient.gcu_index(
-                    send_packed, [ep_token_indices]
-                )
-                # send_packed_sorted = send_packed[ep_token_indices.to(torch.int64)]
-            with parallel_compute_context:
-                work = all_to_all_v2(
-                    recv_packed,
-                    send_packed_sorted,
-                    sp_split_size,
-                    ep_split_size,
-                    group=group,
-                    flag=1,
-                    async_op=enable_parallel_compute,
-                )
-                if shared_experts is not None and hidden_states_ori.shape[0] > 0:
-                    shared_output = shared_experts(hidden_states_ori)
-                if enable_parallel_compute:
-                    work.wait()
-
-            recv_token_total = torch.sum(sp_split_size, 0, True, dtype=torch.int32)
-        else:
-            sp_split_size = torch.empty_like(ep_split_size)
-            torch.distributed.all_to_all_single(
-                sp_split_size, ep_split_size, group=group
-            )
-            recv_token_total = torch.sum(sp_split_size, 0, True, dtype=torch.int32)
-            cpu_sp_split_size = sp_split_size.cpu().tolist()
-            cpu_ep_split_size = ep_split_size.cpu().tolist()
-            cpu_recv_token_total = recv_token_total[0].item()
-            cpu_send_token_total = send_token_total[0].item()
-            if hidden_states.numel() == 0:
-                send_packed_sorted = torch.empty(
-                    [1, send_packed.shape[-1]],
-                    dtype=send_packed.dtype,
-                    device=send_packed.device,
-                )
-            else:
-                ep_token_indices = ep_token_indices[:cpu_send_token_total]
-                send_packed_sorted = torch_gcu.gcu.efficient.gcu_index(
-                    send_packed, [ep_token_indices]
-                )
-                # send_packed_sorted = send_packed[ep_token_indices.to(torch.int64)]
-
-            recv_packed = torch.empty(
-                (
-                    max(cpu_recv_token_total, 1),
-                    hidden_states.shape[1] + topk_ids_width + topk_weights_width
-                    if not all_to_all_with_scales
-                    else
-                    hidden_states.shape[1] + topk_ids_width + topk_weights_width + a1_scale_width
-                ),
-                dtype=hidden_states.dtype,
-                device=hidden_states.device,
-            )
-            with parallel_compute_context:
-                work = torch.distributed.all_to_all_single(
-                    recv_packed[:cpu_recv_token_total],
-                    send_packed_sorted[:cpu_send_token_total],
-                    cpu_sp_split_size,
-                    cpu_ep_split_size,
-                    group=group,
-                    async_op=enable_parallel_compute,
-                )
-                if shared_experts is not None:
-                    shared_output = shared_experts(hidden_states_ori)
-                if enable_parallel_compute:
-                    work.wait()
-
-        # EP
-        hidden_states = torch.empty(
-            (recv_packed.shape[0], hidden_states.shape[1]),
-            dtype=hidden_states.dtype,
-            device=hidden_states.device,
-        )
-        topk_ids_ = torch.empty(
-            (recv_packed.shape[0], topk_ids_width),
-            dtype=hidden_states.dtype,
-            device=hidden_states.device,
-        )
-        topk_weights_ = torch.empty(
-            (recv_packed.shape[0], topk_weights_width),
-            dtype=hidden_states.dtype,
-            device=hidden_states.device,
-        )
-        if all_to_all_with_scales:
-            a1_scale_ = torch.empty(
-                (recv_packed.shape[0], a1_scale_width),
-                dtype=hidden_states.dtype,
-                device=hidden_states.device,
-            )
-        if gcu_envs.VLLM_GCU_DEEPSEEK_FUSION:
-            torch.ops._C.fused_dispatch_decode(
-                [hidden_states, topk_ids_, topk_weights_]
-                if not all_to_all_with_scales
-                else [hidden_states, topk_ids_, topk_weights_, a1_scale_],
-                recv_packed,
-                sp_split_size,
-                [hidden_states.shape[1], topk_ids_width, topk_weights_width]
-                if not all_to_all_with_scales
-                else
-                [hidden_states.shape[1], topk_ids_width, topk_weights_width, a1_scale_width],
-            )
-        else:
-            torch.ops._C.dynamic_split(
-                [hidden_states, topk_ids_, topk_weights_]
-                if not all_to_all_with_scales
-                else [hidden_states, topk_ids_, topk_weights_, a1_scale_],
-                recv_packed,
-                recv_token_total,
-                [hidden_states.shape[1], topk_ids_width, topk_weights_width]
-                if not all_to_all_with_scales
-                else
-                [hidden_states.shape[1], topk_ids_width, topk_weights_width, a1_scale_width],
-                1,
-            )
-        topk_ids = topk_ids_.view(topk_ids.dtype)
-        topk_weights = topk_weights_.view(topk_weights.dtype)
-        if all_to_all_with_scales:
-            a1_scale = a1_scale_.view(a1_scale.dtype)
-
-    # Check constraints.
-    if use_int4_w4a16:
-        assert hidden_states.shape[1] // 2 == w1.shape[2], "Hidden size mismatch"
-    else:
-        assert hidden_states.shape[1] == w1.shape[2], "Hidden size mismatch"
-
-    assert topk_weights.shape == topk_ids.shape, "topk shape mismatch"
-    assert hidden_states.is_contiguous(), "Hidden_states must be contiguous"
-    # assert w1.is_contiguous(), "Expert weights1 must be contiguous"
-    # assert w2.is_contiguous(), "Expert weights2 must be contiguous"
-    assert hidden_states.dtype in [torch.float32, torch.float16, torch.bfloat16, torch.float8_e4m3fn]
-
-    num_tokens, _ = hidden_states.shape
-    E, N, _ = w1.shape
-    if global_num_experts == -1:
-        global_num_experts = E
-    top_k_num = topk_ids.shape[1]
-    # We execute the fused_moe kernel in chunks to circumvent this issue:
-    # https://github.com/vllm-project/vllm/issues/5938
-    CHUNK_SIZE = envs.VLLM_FUSED_MOE_CHUNK_SIZE
-    M = min(num_tokens, CHUNK_SIZE)
-
-    get_config_func = functools.partial(
-        get_default_config,
-        E=w2.shape[0],
-        N=w2.shape[2],
-        K=w1.shape[2],
-        topk=top_k_num,
-        dtype="",
-        is_marlin=False,
-        block_shape=block_shape,
+    use_ep = expert_map is not None
+    prepare_finalize = get_prepare_finalize(use_ep, forward_context)
+    prepare_finalize.set_shared_experts(shared_experts, routed_scaling_factor)
+    fused_experts = TritonExpertsPad(use_fp8_w8a8, use_int8_w8a8,
+                                     use_int8_w8a16, use_int4_w4a16, False,
+                                     block_shape)
+    modular = FusedMoEModularKernel(prepare_finalize=prepare_finalize,
+                                    fused_experts=fused_experts)
+    return modular(
+        hidden_states,
+        w1,
+        w2,
+        topk_weights,
+        topk_ids,
+        inplace,
+        activation,
+        global_num_experts,
+        expert_map,
+        w1_scale,
+        w2_scale,
+        w1_zp,
+        w2_zp,
+        a1_scale,
+        a2_scale,
+        apply_router_weight_on_input,
     )
-
-    config = get_config_func(M)
-
-    cache13 = torch.empty(
-        M * top_k_num * max(N, w2.shape[1]),
-        device=hidden_states.device,
-        dtype=hidden_states_ori.dtype,
-    )
-    intermediate_cache1 = cache13[: M * top_k_num * N].view((M, topk_ids.shape[1], N))
-    intermediate_cache3 = cache13[: M * top_k_num * w2.shape[1]].view(
-        (M, topk_ids.shape[1], w2.shape[1])
-    )
-
-    cache2_dtype = torch.float8_e4m3fn if use_fp8_w8a8 else hidden_states.dtype
-    intermediate_cache2 = torch.empty(
-        (M * top_k_num, N // 2),
-        device=hidden_states.device,
-        dtype=cache2_dtype,
-    )
-
-    if use_fp8_w8a8:
-        orig_a1_scale = a1_scale
-        if True:
-            # cannot inplace: hidden_states and out have different dtype.
-            out_hidden_states = torch.empty_like(hidden_states, dtype=hidden_states_ori.dtype,
-                                                device=hidden_states_ori.device)
-        else:
-            if inplace:
-                out_hidden_states = hidden_states_ori
-            else:
-                out_hidden_states = torch.empty_like(hidden_states_ori,
-                                                dtype=hidden_states_ori.dtype,
-                                                device=hidden_states_ori.device)
-    else:
-        if inplace:
-            out_hidden_states = hidden_states
-        else:
-            out_hidden_states = torch.empty_like(hidden_states)
-
-    chunk_num = math.ceil(num_tokens / CHUNK_SIZE)
-    for chunk in range(chunk_num):
-        begin_chunk_idx, end_chunk_idx = (
-            chunk * CHUNK_SIZE,
-            min((chunk + 1) * CHUNK_SIZE, num_tokens),
-        )
-        curr_hidden_states = hidden_states[begin_chunk_idx:end_chunk_idx]
-        if use_fp8_w8a8 and orig_a1_scale is not None and not input_static_quant:
-            a1_scale = orig_a1_scale[begin_chunk_idx:end_chunk_idx]
-        tokens_in_chunk, _ = curr_hidden_states.shape
-        if recv_token_total is not None:
-            if chunk_num > 1:
-                valid_in_chunk = torch.clamp(
-                    recv_token_total, min=0, max=tokens_in_chunk
-                )
-                recv_token_total -= tokens_in_chunk
-            else:
-                valid_in_chunk = recv_token_total
-        else:
-            valid_in_chunk = torch.full(
-                (1,),
-                tokens_in_chunk,
-                dtype=torch.int32,
-                device=curr_hidden_states.device,
-            )
-
-        if tokens_in_chunk == 0:
-            break
-
-        if tokens_in_chunk < CHUNK_SIZE and chunk > 0:
-            # Adjust the intermediate cache size and config for the last
-            # chunk. Note that in most cases we only have one chunk
-            # so the cache size and config are already set correctly and
-            # do not need to be adjusted.
-            intermediate_cache1 = intermediate_cache1[:tokens_in_chunk]
-            intermediate_cache2 = intermediate_cache2[: tokens_in_chunk * top_k_num]
-            intermediate_cache3 = intermediate_cache3[:tokens_in_chunk]
-            config = get_config_func(tokens_in_chunk)
-
-        curr_topk_ids = topk_ids[begin_chunk_idx:end_chunk_idx]
-        curr_topk_weights = topk_weights[begin_chunk_idx:end_chunk_idx]
-
-        sorted_token_ids, expert_ids, num_tokens_post_padded = moe_align_block_size(
-            curr_topk_ids,
-            config["BLOCK_SIZE_M"],
-            global_num_experts,
-            expert_map,
-            valid_in_chunk,
-        )
-
-        invoke_fused_moe_kernel(
-            curr_hidden_states,
-            w1,
-            intermediate_cache1,
-            a1_scale,
-            w1_scale,
-            w1_zp,
-            curr_topk_weights,
-            curr_topk_ids,
-            sorted_token_ids,
-            expert_ids,
-            num_tokens_post_padded,
-            False,
-            top_k_num,
-            config,
-            use_fp8_w8a8=use_fp8_w8a8,
-            use_int8_w8a16=use_int8_w8a16,
-            use_int4_w4a16=use_int4_w4a16,
-            use_int8_w8a8=use_int8_w8a8,
-            block_shape=block_shape,
-            real_token_num=valid_in_chunk,
-            per_channel_quant=per_channel_quant,
-            bias=b1,
-        )
-
-        if use_fp8_w8a8:
-            group_size = block_shape[1]
-            shape = (
-                *intermediate_cache2.shape[:-1],
-                N // 2 // group_size,
-            )
-            a2_scale = torch.empty(
-                shape, dtype=torch.float32, device=intermediate_cache1.device
-            )
-            torch.ops._C.silu_mul_per_token_group_quant_with_size(
-                intermediate_cache2.view(-1, top_k_num, N // 2),
-                a2_scale.view(-1, top_k_num, N // 2 // group_size),
-                intermediate_cache1,
-                valid_in_chunk,
-                group_size,
-            )
-        else:
-            torch.ops._C.silu_and_mul_pad(
-                intermediate_cache2.view(-1, top_k_num, N // 2),
-                intermediate_cache1,
-                valid_in_chunk,
-            )
-
-        invoke_fused_moe_kernel(
-            intermediate_cache2,
-            w2,
-            intermediate_cache3,
-            a2_scale,
-            w2_scale,
-            w2_zp,
-            curr_topk_weights,
-            curr_topk_ids,
-            sorted_token_ids,
-            expert_ids,
-            num_tokens_post_padded,
-            True,
-            1,
-            config,
-            use_fp8_w8a8=use_fp8_w8a8,
-            use_int8_w8a16=use_int8_w8a16,
-            use_int4_w4a16=use_int4_w4a16,
-            use_int8_w8a8=use_int8_w8a8,
-            block_shape=block_shape,
-            real_token_num=valid_in_chunk,
-            per_channel_quant=per_channel_quant,
-            bias=b2,
-        )
-        # TODO: replace with moe_sum
-        torch.ops._moe_C.moe_sum_pad(
-            out_hidden_states[begin_chunk_idx:end_chunk_idx],
-            intermediate_cache3.view(*intermediate_cache3.shape),
-            valid_in_chunk,
-            1,
-            False,
-        )
-
-    if True:
-        sp_hidden_states = torch.zeros(
-            (send_packed_sorted.shape[0], hidden_states.shape[1]),
-            dtype=hidden_states_ori.dtype,
-            device=hidden_states_ori.device,
-        )
-        if use_all2all_v:
-            all_to_all_v2(
-                sp_hidden_states,
-                out_hidden_states,
-                ep_split_size,
-                sp_split_size,
-                group=group,
-                flag=0,
-            )
-        else:
-            torch.distributed.all_to_all_single(
-                sp_hidden_states[:cpu_send_token_total],
-                out_hidden_states[:cpu_recv_token_total],
-                cpu_ep_split_size,
-                cpu_sp_split_size,
-                group=group,
-            )
-
-        if shared_output is not None:
-            if inplace:
-                output = hidden_states_ori
-                output.copy_(shared_output)
-            else:
-                output = shared_output
-        else:
-            routed_scaling_factor = 1.0
-            if inplace:
-                output = hidden_states_ori
-                output.fill_(0)
-            else:
-                output = torch.zeros_like(hidden_states_ori)
-        if hidden_states_ori.numel() != 0:
-            output.index_add_(
-                0,
-                ep_token_indices,
-                sp_hidden_states,
-                alpha=routed_scaling_factor,
-            )
-        return output
 
 
 def forward_oot(

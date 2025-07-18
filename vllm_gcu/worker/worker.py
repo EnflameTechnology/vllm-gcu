@@ -13,9 +13,6 @@ from vllm.config import VllmConfig, set_current_vllm_config
 from vllm.distributed import (
     ensure_model_parallel_initialized,
     get_dp_group,
-    get_pp_group,
-    get_tp_group,
-    get_world_group,
     init_distributed_environment,
     set_custom_all_reduce,
 )
