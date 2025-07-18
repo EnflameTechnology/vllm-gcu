@@ -20,13 +20,14 @@ from vllm.attention import AttentionMetadata, get_attn_backend
 from vllm.attention.backends.abstract import AttentionState
 from vllm.attention.backends.utils import CommonAttentionState
 from vllm.config import CompilationLevel, VllmConfig, set_current_vllm_config
-from vllm.distributed import get_dp_group, get_pp_group
+from vllm.distributed import get_pp_group
 from vllm.distributed.kv_transfer import get_kv_transfer_group
 from vllm.distributed.parallel_state import (
     get_tensor_model_parallel_rank,
     graph_capture,
 )
-from vllm.forward_context import get_forward_context, set_forward_context
+from vllm.forward_context import get_forward_context, DPMetadata
+from vllm_gcu.utils import set_gcu_forward_context as set_forward_context
 from vllm.inputs import INPUT_REGISTRY, InputRegistry
 from vllm.logger import init_logger
 from vllm.lora.layers import LoRAMapping
@@ -58,6 +59,7 @@ from vllm.utils import (
     is_pin_memory_available,
     PyObjectCache,
     supports_dynamo,
+    round_up,
 )
 from vllm.worker.model_runner import (
     ModelInputForGPUBuilder,
@@ -68,7 +70,7 @@ from vllm.worker.model_runner_base import InputProcessingError, ModelRunnerBase
 
 import vllm_gcu.envs as gcu_envs
 
-from vllm_gcu.utils import dump_memory_snapshot_when_exception
+from vllm_gcu.utils import dump_memory_snapshot_when_exception, ep_alltoall_threshold
 
 
 logger = init_logger(__name__)
@@ -597,8 +599,6 @@ class GCUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
             "switching to eager mode. You can also reduce the "
             "`max_num_seqs` as needed to decrease memory usage."
         )
-        additional_config = self.vllm_config.additional_config
-        additional_config.update({"all_dp_in_decode": True})
 
         start_time = time.perf_counter()
         start_free_gpu_memory = torch.gcu.mem_get_info()[0]
@@ -734,8 +734,22 @@ class GCUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
                         # encoder-decoder models.
                         self._update_inputs_to_capture_for_enc_dec_model(capture_inputs)
 
+                    num_tokens = num_tokens_across_dp = None
+                    if (
+                        self.vllm_config.parallel_config.enable_expert_parallel
+                        and self.vllm_config.parallel_config.data_parallel_size > 1
+                    ):
+                        num_tokens = self._get_dp_rank_num_tokens(attn_metadata)
+                        num_tokens_across_dp = DPMetadata.num_tokens_across_dp(
+                            num_tokens,
+                            self.vllm_config.parallel_config.data_parallel_size,
+                            self.vllm_config.parallel_config.data_parallel_rank
+                        )
+
                     with set_forward_context(
-                        attn_metadata, self.vllm_config, virtual_engine
+                        attn_metadata, self.vllm_config, virtual_engine,
+                        num_tokens=num_tokens,
+                        num_tokens_across_dp=num_tokens_across_dp,
                     ):
                         with set_current_vllm_config(self.vllm_config):
                             graph_runner.capture(**capture_inputs)
@@ -862,6 +876,18 @@ class GCUModelRunner(GCUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
             virtual_engine=virtual_engine,
         )
 
+    def _get_dp_rank_num_tokens(self, attn_metadata):
+        if attn_metadata is not None and hasattr(attn_metadata,"num_prefill_tokens"):
+            num_tokens = attn_metadata.num_prefill_tokens + attn_metadata.num_decode_tokens
+        else:
+            num_tokens = 0
+
+        tp_size = self.vllm_config.parallel_config.tensor_parallel_size
+        if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL and tp_size > 1:
+            num_tokens = round_up(num_tokens, tp_size)
+
+        return num_tokens
+
     @torch.inference_mode()
     @dump_memory_snapshot_when_exception('step')
     def execute_model(
@@ -906,26 +932,14 @@ class GCUModelRunner(GCUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
             use_cuda_graph = not self.vllm_config.model_config.enforce_eager
 
         parallel_config = self.vllm_config.parallel_config
-        additional_config = self.vllm_config.additional_config
-        if (
-            parallel_config.enable_expert_parallel
-            and parallel_config.data_parallel_size > 1
-        ):
-            has_prefill = torch.tensor(
-                1 if model_input.attn_metadata and prefill_meta else 0,
-                dtype=torch.int32,
-            )
-            torch.distributed.all_reduce(
-                has_prefill,
-                group=get_dp_group().cpu_group,
-            )
-            if has_prefill.item() > 0:
-                # some dp rank is in prefill stage
-                additional_config.update({"all_dp_in_decode": False})
-                if prefill_meta is None:
-                    prefill_meta = 1  # disable graph
-            else:
-                additional_config.update({"all_dp_in_decode": True})
+
+        num_tokens = num_tokens_across_dp = None
+        if parallel_config.data_parallel_size > 1:
+            num_tokens = self._get_dp_rank_num_tokens(model_input.attn_metadata)
+            num_tokens_across_dp = DPMetadata.num_tokens_across_dp(num_tokens, parallel_config.data_parallel_size, parallel_config.data_parallel_rank)
+
+            if parallel_config.enable_expert_parallel:
+                use_cuda_graph &= torch.sum(num_tokens_across_dp) <= ep_alltoall_threshold(self.vllm_config)
 
         # assert model_input.attn_metadata is not None
         # prefill_meta = model_input.attn_metadata.prefill_metadata
@@ -1002,7 +1016,11 @@ class GCUModelRunner(GCUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
 
         if not bypass_model_exec:
             with set_forward_context(
-                model_input.attn_metadata, self.vllm_config, virtual_engine
+                model_input.attn_metadata,
+                self.vllm_config,
+                virtual_engine,
+                num_tokens=num_tokens,
+                num_tokens_across_dp=num_tokens_across_dp,
             ):
                 with set_current_vllm_config(self.vllm_config):
                     hidden_or_intermediate_states = model_executable(
