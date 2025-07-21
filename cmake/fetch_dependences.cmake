@@ -139,12 +139,7 @@ include(${PROJECT_SOURCE_DIR}/cmake/2nd/caps_version.cmake)
 include(caps_binary)
 set(TOPSRT_HOME "${runtime_install_usr_dir_for_run}")
 message(STATUS "TOPSRT_HOME : ${TOPSRT_HOME}")
-
-if( ${CMAKE_SYSTEM_PROCESSOR} STREQUAL "x86_64")
-    set(BUILD_TORCH_VERSION "2.6.0")
-else()
-    set(BUILD_TORCH_VERSION "2.5.1")
-endif()
+set(BUILD_TORCH_VERSION "2.7.0")
 
 set(CMAKE_FPKG_PYTHON_PACKAGES python_packages)
 set(CMAKE_FPKG_LIBDIR lib)
@@ -160,9 +155,9 @@ set(PACKAGE_LIB_FILES "${CMAKE_FPKG_LIBDIR}//FILE/")
 # ###################  TOPS_EXTENSION  #################
 # ######################################################
 set(TOPS_EXTENSION_PATH ${MODULE_PACKAGE_PATH}/tops_extension)
-set(TOPS_EXTENSION_COMMITID 3e45c74)
+set(TOPS_EXTENSION_COMMITID 2dc4702)
 set(TOPS_EXTENSION_BRANCH master)
-set(TOPS_EXTENSION_DAILY_TAG 3.2.20250604)
+set(TOPS_EXTENSION_DAILY_TAG 3.2.20250715)
 set(TOPS_EXTENSION_PY_VERS 310 312)
 set(TOPS_EXTENSION_SEMI_NAME "")
 foreach(TOPS_EXTENSION_PY_VER IN LISTS TOPS_EXTENSION_PY_VERS)
@@ -286,7 +281,7 @@ endforeach()
 # ######################################################
 # ###################  XFORMERS  #######################
 # ######################################################
-set(XFORMERS_TORCH_0.0.29.post2.2.6.0_COMMITID 0736a34)
+set(XFORMERS_TORCH_0.0.30.2.6.0_COMMITID 0736a34)
 set(XFORMERS_PATH ${MODULE_PACKAGE_PATH}/xformers)
 set(XFORMERS_COMMITID c11be60)
 set(XFORMERS_BRANCH 0.0.29.post2)

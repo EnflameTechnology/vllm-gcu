@@ -3,7 +3,7 @@
         "BUILD": {
             "UBUNTU_2004": {
                 "X86_GCC9": {
-                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2004_gcc9:2.0.2",
+                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2204_gcc11:1.4.2",
                     "TORCH_2_3_0": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2004_gcc9:1.7.1"
                 }
             }
@@ -21,7 +21,7 @@
         "BUILD": {
             "UBUNTU_2004": {
                 "X86_GCC9": {
-                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2004_gcc9:2.0.2",
+                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2204_gcc11:1.4.2",
                     "TORCH_2_3_0": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2004_gcc9:1.7.1"
                 },
                 "AARCH64_GCC9": {
@@ -31,7 +31,7 @@
             },
             "TLINUX_24": {
                 "X86_GCC9": {
-                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/tlinux/qic_tlinux_24_gcc9:1.0.5"
+                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/tlinux/qic_tlinux_31_gcc11:1.0.1"
                 }
             }
         },
@@ -48,7 +48,7 @@
         "BUILD": {
             "UBUNTU_2004": {
                 "X86_GCC9": {
-                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2004_gcc9:2.0.2",
+                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2204_gcc11:1.4.2",
                     "TORCH_2_3_0": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2004_gcc9:1.7.1"
                 },
                 "AARCH64_GCC9": {
@@ -62,7 +62,7 @@
         "BUILD": {
             "UBUNTU_2004": {
                 "X86_GCC9": {
-                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2004_gcc9:2.0.2",
+                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2204_gcc11:1.4.2",
                     "TORCH_2_3_0": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2004_gcc9:1.7.1"
                 },
                 "AARCH64_GCC9": {
@@ -72,7 +72,7 @@
             },
             "TLINUX_24": {
                 "X86_GCC9": {
-                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/tlinux/qic_tlinux_24_gcc9:1.0.5"
+                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/tlinux/qic_tlinux_31_gcc11:1.0.1"
                 }
             }
         }

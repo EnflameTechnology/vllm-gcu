@@ -3,12 +3,12 @@
 #
 set -eu -o pipefail
 BUILD_ROOT_DIR=`pwd`
-export TORCH_VERSION=${torch_gcu_version:-"2.6.0"}
+export TORCH_VERSION=${torch_gcu_version:-"2.7.0"}
 
 function arm_normal_build() {
   echo "Current build job: $FUNCNAME"
   echo `pwd`
-  sudo python3.12 -m pip install torch==2.5.1
+  sudo python3.12 -m pip install torch==$TORCH_VERSION
   cmake ${project_name} --preset ci_all -B cmake_build
   cd cmake_build
   ninja -j${cpu_count} install
