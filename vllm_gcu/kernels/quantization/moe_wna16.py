@@ -128,6 +128,10 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
     def __init__(self, quant_config: MoeWNA16GCUConfig):
         self.quant_config = quant_config
 
+        from vllm.config import get_current_vllm_config
+        self.model_config = get_current_vllm_config().model_config
+        self.parallel_config = get_current_vllm_config().parallel_config
+
     def create_weights(
         self,
         layer: torch.nn.Module,
@@ -446,15 +450,10 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
             w13 = []
             w2 = []
 
-            from vllm.config import get_current_vllm_config
-
-            model_config = get_current_vllm_config().model_config
-            parallel_config = get_current_vllm_config().parallel_config
-
             if (
-                model_config.hf_text_config.model_type
+                self.model_config.hf_text_config.model_type
                 in ("deepseek_v2", "deepseek_v3", "deepseek_mtp")
-                and parallel_config.enable_expert_parallel
+                and self.parallel_config.enable_expert_parallel
             ):
                 weight_in_KN = True
                 zeros_in_int8 = True
@@ -564,7 +563,7 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
             raise NotImplementedError(
                 "EPLB not supported for `MoeWNA16GCUMethod` yet.")
 
-        from vllm.model_executor.layers.fused_moe import fused_experts
+        from vllm.model_executor.layers.fused_moe.fused_moe import fused_experts
 
         activation += f"_{layer.layer_name}"
 

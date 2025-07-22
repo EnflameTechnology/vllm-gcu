@@ -66,6 +66,13 @@ class Fp8GCULinearMethod(Fp8LinearMethod):
 
 
 class Fp8GCUMoEMethod(Fp8MoEMethod):
+
+    def __init__(self, quant_config: Fp8Config):
+        import vllm.model_executor.layers.fused_moe
+        from vllm.model_executor.layers.fused_moe.fused_moe import fused_experts
+        setattr(vllm.model_executor.layers.fused_moe, 'fused_experts', fused_experts)
+        super().__init__(quant_config)
+
     def apply(
         self,
         layer: torch.nn.Module,

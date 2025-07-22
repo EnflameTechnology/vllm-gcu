@@ -252,7 +252,9 @@ class GCUPlatform(Platform):
                             "after_dump",
                         ]
                     )
-            if vllm_config.parallel_config.data_parallel_size > 1:
+            # TODO: v1
+            if not envs.VLLM_USE_V1 and \
+                    vllm_config.parallel_config.data_parallel_size > 1:
                 compilation_config.compile_sizes.append(0)
                 compilation_config.cudagraph_capture_sizes.append(0)  # capture 0 graph
 
@@ -281,7 +283,9 @@ class GCUPlatform(Platform):
 
         additional_config.update({"all_dp_in_decode": False})
 
-        if "VLLM_GCU_DEEPSEEK_FUSION" not in os.environ and \
+        # TODO: v1
+        if not envs.VLLM_USE_V1 and \
+                "VLLM_GCU_DEEPSEEK_FUSION" not in os.environ and \
                 cls.get_device_capability().to_int() == 130 and \
                 model_config and model_config.hf_text_config.model_type in \
                     ('deepseek_v3', 'deepseek_mtp'):

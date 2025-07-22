@@ -6,10 +6,13 @@ import gc
 # import vllm.device_allocator
 from vllm.utils import MemorySnapshot, GiB_bytes
 from vllm.model_executor import set_random_seed
-from vllm.v1.worker.gpu_model_runner import GPUModelRunner
+
 from vllm.v1.utils import report_usage_stats
 from vllm_gcu import gcumem
+from vllm_gcu.utils import set_gcu_forward_context
 
+with patch('vllm.forward_context.set_forward_context', set_gcu_forward_context):
+    from vllm.v1.worker.gpu_model_runner import GPUModelRunner
 
 class GCUModelRunner(GPUModelRunner):
     def __init__(self, *args, **kwargs):
