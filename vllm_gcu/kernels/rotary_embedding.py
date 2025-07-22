@@ -72,7 +72,11 @@ def deepseek_oot(
     offsets: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
 
-    self.cos_sin_cache = self.cos_sin_cache.to(query.device, dtype=query.dtype)
+    if (
+        self.cos_sin_cache.device != query.device
+        or self.cos_sin_cache.dtype != query.dtype
+    ):
+        self.cos_sin_cache = self.cos_sin_cache.to(query.device, dtype=query.dtype)
 
     assert offsets is None
     assert query.ndim == 3

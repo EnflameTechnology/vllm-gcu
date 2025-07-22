@@ -35,6 +35,7 @@ class GCUCommunicator(CudaCommunicator):
             ),
         )
         self.ca_comm = None
+        self.all2all_manager = 1
 
     def all_reduce(self, input_):
         # always try custom allreduce first,
