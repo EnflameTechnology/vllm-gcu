@@ -2,23 +2,16 @@
 # coding=utf-8
 
 from dataclasses import dataclass
-from typing import Any, ClassVar, Optional
+from typing import Any, Optional
 
 import torch
 
-from vllm.attention.backends.abstract import (AttentionMetadata, AttentionType,
-                                              is_quantized_kv_cache)
-from vllm.attention.ops.flashmla import (flash_mla_with_kvcache,
-                                         get_mla_metadata,
-                                         is_flashmla_supported)
 from vllm.logger import init_logger
 from vllm.v1.attention.backends.mla.common import (MLACommonBackend,
                                                    MLACommonDecodeMetadata,
                                                    MLACommonImpl,
                                                    MLACommonMetadata,
                                                    MLACommonMetadataBuilder)
-from vllm.v1.kv_cache_interface import AttentionSpec
-from vllm.v1.worker.block_table import BlockTable
 
 import vllm_gcu.kernels._custom_ops as ops
 
@@ -54,6 +47,7 @@ class GCUMLAMetadata(MLACommonMetadata[GCUMLADecodeMetadata]):
 
 
 class GCUMLAMetadataBuilder(MLACommonMetadataBuilder[GCUMLAMetadata]):
+    full_cudagraph_supported = True
 
     def _build_decode(self, block_table_tensor: torch.Tensor,
                       seq_lens: torch.Tensor):
