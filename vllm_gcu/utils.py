@@ -12,6 +12,16 @@ import vllm_gcu.envs as gcu_envs
 from vllm.config import VllmConfig
 from vllm.forward_context import set_forward_context, get_forward_context
 
+STR_DTYPE_TO_TORCH_DTYPE = {
+    "half": torch.half,
+    "bfloat16": torch.bfloat16,
+    "float": torch.float,
+    "fp8": torch.float8_e4m3fn,
+    "fp8_e4m3": torch.float8_e4m3fn,
+    "fp8_e5m2": torch.uint8,
+    "int8": torch.int8
+}
+
 try:
     from vllm.utils import is_torch_equal_or_newer
 except Exception:

@@ -34,7 +34,8 @@ void paged_attention_v1(
     int64_t tp_rank, int64_t blocksparse_local_blocks,
     int64_t blocksparse_vert_stride, int64_t blocksparse_block_size,
     int64_t blocksparse_head_sliding_step, double k_zero, double v_zero,
-    const c10::optional<at::Tensor> &out_scales) {
+    const c10::optional<at::Tensor> &out_scales,
+    const c10::optional<at::Tensor> &query_scales) {
   TORCH_CHECK(blocksparse_vert_stride <= 0,
               "block sparse attention is not supported for gcu");
   const torch_gcu::OptionalGCUGuard device_guard(device_of(query));
@@ -55,7 +56,10 @@ void paged_attention_v1(
   at::Scalar v_zp_scalar(v_zero);
 
   at::Tensor out_scales_tensor;
-
+  at::Tensor query_scales_tensor;
+  if (query_scales.has_value()) {
+    query_scales_tensor = query_scales.value();
+  }
   at::Tensor alibi_slopes_tensor;
   if (alibi_slopes.has_value()) {
     alibi_slopes_tensor = alibi_slopes.value();
@@ -65,6 +69,7 @@ void paged_attention_v1(
       out, query, key_cache, value_cache, head_mapping_tensor, scale_scalar,
       block_tables, context_lens, block_size_scalar, max_context_len_scalar,
       alibi_slopes_tensor, kv_dtype, k_scale_scalar, k_zp_scalar,
-      v_scale_scalar, v_zp_scalar, out_scales_tensor, stream));
+      v_scale_scalar, v_zp_scalar, out_scales_tensor,
+      query_scales_tensor, stream));
 }
 }  // namespace vllm_gcu::llm_ops

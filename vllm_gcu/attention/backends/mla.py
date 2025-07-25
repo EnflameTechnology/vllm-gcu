@@ -15,6 +15,7 @@ from vllm.platforms import current_platform
 
 
 import vllm_gcu.kernels._custom_ops as ops
+from vllm_gcu.kernels._custom_ops import merge_attn_states
 
 if TYPE_CHECKING:
     pass
@@ -125,6 +126,10 @@ class GCUMLAImpl(MLACommonImpl[MLACommonMetadata]):
             else:
                 return torch.empty_like(hidden_states_or_q_c).contiguous()
 
+        # if self.kv_cache_dtype.startswith("fp8"): 
+        from functools import partial
+        self._forward_decode = partial(self._forward_decode, k_scale=layer._k_scale_float)
+ 
         res = super().forward(
             layer,
             hidden_states_or_q_c,
@@ -217,10 +222,11 @@ class GCUMLAImpl(MLACommonImpl[MLACommonMetadata]):
         q_pe: torch.Tensor,
         kv_c_and_k_pe_cache: torch.Tensor,
         attn_metadata: MLACommonMetadata,
+        k_scale: float
     ) -> torch.Tensor:
         assert kv_c_and_k_pe_cache.numel() > 0
-        if self.kv_cache_dtype.startswith("fp8"):
-            raise NotImplementedError("FP8 MLA not yet supported")
+        # if self.kv_cache_dtype.startswith("fp8"):
+        #     raise NotImplementedError("FP8 MLA not yet supported")
 
         decode_meta = attn_metadata.decode_metadata
         assert decode_meta is not None
@@ -230,6 +236,10 @@ class GCUMLAImpl(MLACommonImpl[MLACommonMetadata]):
         o = torch.zeros(
             B, self.num_heads, self.kv_lora_rank, dtype=q.dtype, device=q.device
         )
+
+        q_scale=None
+        if self.kv_cache_dtype=="fp8":
+            q, q_scale = ops.scaled_fp8_quant(q, q_scale, scale_ub=None, use_per_token_if_dynamic=True)
 
         ops.paged_attention_v1(
             out=o,
@@ -244,9 +254,97 @@ class GCUMLAImpl(MLACommonImpl[MLACommonMetadata]):
             max_seq_len=decode_meta.max_decode_seq_len,
             alibi_slopes=None,
             kv_cache_dtype=self.kv_cache_dtype,
-            k_scale_float=1.0,
-            v_scale_float=1.0,
+            k_scale_float=k_scale,
+            v_scale_float=k_scale,
             out_scales=None,
+            query_scales=q_scale
         )
 
         return self._v_up_proj(o)
+    
+    def _compute_prefill_context(
+        self,
+        q: torch.Tensor,
+        kv_c_and_k_pe_cache: torch.Tensor,
+        attn_metadata: MLACommonMetadata,
+    ):
+        prefill_metadata = attn_metadata.prefill_metadata
+        assert prefill_metadata is not None
+        assert prefill_metadata.context_chunk_seq_tot is not None
+        assert prefill_metadata.context_chunk_cu_seq_lens is not None
+        assert prefill_metadata.context_chunk_starts is not None
+        assert prefill_metadata.context_chunk_max_seq_lens is not None
+        assert prefill_metadata.context_lens_tensor is not None
+
+        output = None
+        iters = len(prefill_metadata.context_chunk_seq_tot)
+
+        # Fetch from attn_metadata directly, since it late bound by
+        # MLAAttentionState, grabbing it directly `attn_metadata` can avoid
+        # any weirdness around prefill_metadata caching
+        assert attn_metadata.context_chunk_workspace is not None
+        if attn_metadata.context_chunk_workspace.dtype != kv_c_and_k_pe_cache.dtype:
+            workspace = attn_metadata.context_chunk_workspace.to(kv_c_and_k_pe_cache.dtype)
+        else:
+            workspace = attn_metadata.context_chunk_workspace
+
+        for i in range(iters):
+            toks = prefill_metadata.context_chunk_seq_tot[i]
+
+            ops.gather_cache(
+                src_cache=kv_c_and_k_pe_cache,
+                dst=workspace,
+                block_table=prefill_metadata.block_tables,
+                cu_seq_lens=prefill_metadata.context_chunk_cu_seq_lens[i],
+                batch_size=prefill_metadata.num_prefills,
+                seq_starts=prefill_metadata.context_chunk_starts[i],
+            )
+
+            if attn_metadata.context_chunk_workspace.dtype != kv_c_and_k_pe_cache.dtype:
+                workspace = workspace.to(attn_metadata.context_chunk_workspace.dtype)
+
+            kv_c_normed = workspace[:toks]\
+                [..., :self.kv_lora_rank]
+            k_pe = workspace[:toks]\
+                [..., self.kv_lora_rank:].unsqueeze(1)
+
+            kv_nope = self.kv_b_proj(kv_c_normed)[0].view( \
+                -1, self.num_heads, self.qk_nope_head_dim + self.v_head_dim)
+            k_nope, v = kv_nope\
+                .split([self.qk_nope_head_dim, self.v_head_dim], dim=-1)
+
+            k = torch.cat((k_nope, k_pe.expand((*k_nope.shape[:-1], -1))),
+                          dim=-1)
+
+            attn_output, attn_softmax_lse = \
+                self._flash_attn_varlen_diff_headdims(
+                q=q,
+                k=k,
+                v=v,
+                cu_seqlens_q=prefill_metadata.query_start_loc,
+                cu_seqlens_k=prefill_metadata.context_chunk_cu_seq_lens[i],
+                max_seqlen_q=prefill_metadata.max_query_len,
+                max_seqlen_k=prefill_metadata.context_chunk_max_seq_lens[i],
+                softmax_scale=self.scale,
+                causal=False,  # Context is unmasked
+                return_softmax_lse=True,
+            )
+
+            if output is None:
+                output = attn_output
+                output_lse = attn_softmax_lse
+            else:
+                output_tmp = torch.empty_like(output)
+                output_lse_tmp = torch.empty_like(output_lse)
+                merge_attn_states(
+                    output=output_tmp,
+                    output_lse=output_lse_tmp,
+                    prefix_output=output,
+                    prefix_lse=output_lse,
+                    suffix_output=attn_output,
+                    suffix_lse=attn_softmax_lse,
+                )
+                output = output_tmp
+                output_lse = output_lse_tmp
+
+        return output, output_lse

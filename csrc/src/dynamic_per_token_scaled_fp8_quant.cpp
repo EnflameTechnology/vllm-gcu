@@ -15,11 +15,23 @@
  */
 
 #include "dynamic_per_token_scaled_fp8_quant.h"
+#include <topsaten/topsaten_vllm.h>
+#include <tuple>
+#include "tops_extension/torch/GCUAten.h"
+#include "torch_gcu.h"
 
 namespace vllm_gcu::llm_ops {
 
 void dynamic_per_token_scaled_fp8_quant(
     at::Tensor &result, const at::Tensor &input, at::Tensor &scale,
-    const ::std::optional<at::Tensor> &scale_ub) {}
+    const ::std::optional<at::Tensor> &scale_ub) {
+        if (result.numel() == 0) return;
+        const torch_gcu::OptionalGCUGuard device_guard(device_of(result));
+        const topsStream_t stream = torch_gcu::getCurrentGCUStream();
+
+        ATEN_ATENOP_CHECK(
+            ATEN_ATENOP_CALL(topsvllm::topsvllmDynamicPerTokenScaledFP8Quant)(
+                result, scale, input, stream));
+    }
 
 }  // namespace vllm_gcu::llm_ops
