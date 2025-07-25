@@ -6,4 +6,4 @@ __pycache__
 *.h
 _C.abi3.so
 .vscode
-docs/content/_build
+docs/_build
