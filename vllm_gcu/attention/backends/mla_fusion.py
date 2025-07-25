@@ -265,7 +265,7 @@ class GCUMLAFusionImpl(GCUMLAImpl):
 
         if has_decode:
             output[num_prefill_tokens:] = self._forward_decode(
-                decode_q_concat, kv_cache, attn_metadata)
+                decode_q_concat, kv_cache, attn_metadata, layer._k_scale_float)
 
         return output
 
@@ -274,10 +274,11 @@ class GCUMLAFusionImpl(GCUMLAImpl):
         decode_q_concat: torch.Tensor,
         kv_c_and_k_pe_cache: torch.Tensor,
         attn_metadata: MLACommonMetadata,
+        k_scale: float
     ) -> torch.Tensor:
         assert kv_c_and_k_pe_cache.numel() > 0
-        if self.kv_cache_dtype.startswith("fp8"):
-            raise NotImplementedError("FP8 MLA not yet supported")
+        # if self.kv_cache_dtype.startswith("fp8"):
+        #     raise NotImplementedError("FP8 MLA not yet supported")
 
         decode_meta = attn_metadata.decode_metadata
         assert decode_meta is not None
@@ -287,7 +288,10 @@ class GCUMLAFusionImpl(GCUMLAImpl):
         o = torch.zeros(
             B, self.num_heads, self.kv_lora_rank, dtype=q.dtype, device=q.device
         )
-
+        q_scale=None
+        if self.kv_cache_dtype=="fp8":
+            q, q_scale = ops.scaled_fp8_quant(q, q_scale, scale_ub=None, use_per_token_if_dynamic=True)
+            
         ops.paged_attention_v1(
             out=o,
             query=q,
@@ -301,9 +305,10 @@ class GCUMLAFusionImpl(GCUMLAImpl):
             max_seq_len=decode_meta.max_decode_seq_len,
             alibi_slopes=None,
             kv_cache_dtype=self.kv_cache_dtype,
-            k_scale_float=1.0,
-            v_scale_float=1.0,
+            k_scale_float=k_scale,
+            v_scale_float=k_scale,
             out_scales=None,
+            query_scales=q_scale
         )
 
         return self._v_up_proj(o)

@@ -445,7 +445,7 @@ class RMSNormDynamicQuantPattern(FusedQuantPattern):
             empty_bf16(5, 4),  # result_rms
             empty_bf16(5, 4),  # input
             empty_bf16(4),  # weight
-            empty_fp32(1, 1),  # scale
+            empty_fp32(5, 1),  # scale
         ]
 
         pm.register_replacement(
@@ -565,7 +565,7 @@ class FusedAddRMSNormDynamicQuantPattern(FusedQuantPattern):
             empty_bf16(5, 4),  # input
             empty_bf16(5, 4),  # residual
             empty_bf16(4),  # weight
-            empty_fp32(1, 1),  # scale
+            empty_fp32(5, 1),  # scale
         ]
 
         pm.register_replacement(

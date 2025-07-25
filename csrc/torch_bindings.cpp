@@ -123,7 +123,7 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
         "    int tp_rank, int blocksparse_local_blocks,"
         "    int blocksparse_vert_stride, int blocksparse_block_size,"
         "    int blocksparse_head_sliding_step, float k_zero,"
-        "    float v_zero, Tensor? out_scales) -> ()");
+        "    float v_zero, Tensor? out_scales, Tensor? query_scales) -> ()");
   }
   ops.impl("paged_attention_v1", torch::kPrivateUse1, &paged_attention_v1);
 
