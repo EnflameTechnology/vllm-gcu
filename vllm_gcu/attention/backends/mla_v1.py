@@ -49,6 +49,16 @@ class GCUMLAMetadata(MLACommonMetadata[GCUMLADecodeMetadata]):
 class GCUMLAMetadataBuilder(MLACommonMetadataBuilder[GCUMLAMetadata]):
     full_cudagraph_supported = True
 
+    def build_for_cudagraph_capture(self, common_attn_metadata):
+        m = common_attn_metadata
+        m.max_query_len = 1
+
+        self._num_decodes = m.num_reqs
+        self._num_decode_tokens = m.num_actual_tokens
+        self._num_prefills = 0
+        self._num_prefill_tokens = 0
+        return self.build(0, m)
+
     def _build_decode(self, block_table_tensor: torch.Tensor,
                       seq_lens: torch.Tensor):
         return GCUMLADecodeMetadata(

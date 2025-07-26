@@ -21,6 +21,8 @@
 namespace vllm_gcu::llm_ops {
 
 at::Tensor weak_ref_tensor(const at::Tensor& x) {
+  if (x.numel() == 0) return x.alias();
+
   void* data_ptr = x.data_ptr();
 
   std::vector<int64_t> sizes = x.sizes().vec();
