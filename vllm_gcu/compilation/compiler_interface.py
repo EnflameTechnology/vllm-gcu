@@ -90,7 +90,7 @@ def lowering():
 class CustomInductorAdaptor(InductorAdaptor):
     def compute_hash(self, vllm_config) -> str:
         with version():
-            super().compute_hash(vllm_config)
+            return super().compute_hash(vllm_config)
 
     def compile(
         self,
