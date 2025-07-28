@@ -4,8 +4,8 @@ message(STATUS "Fetch topsgraph2 deb and whl")
 include(binary_base)
 
 # modify the following variables to change the prebuild caps version
-set(PREBUILD_TOPSGRAPH_COMMIT 69a388c)
-set(PREBUILD_TOPSGRAPH_VERSION 3.4.20250506)
+set(PREBUILD_TOPSGRAPH_COMMIT d332f11)
+set(PREBUILD_TOPSGRAPH_VERSION 3.5.1)
 
 # code below should not be modified for most cases
 set(PREBUILD_TOPSGRAPH_DEB_VERSION_URL_BASE ${MODULE_PACKAGE_PATH_URL_BASE_BASE}/topsgraph/${PREBUILD_TOPSGRAPH_COMMIT})

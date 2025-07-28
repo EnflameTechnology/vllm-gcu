@@ -62,6 +62,19 @@
         "deb_package_name":"topscc_[0-9][0-9a-z_\\.-]*.deb",
         "rpm_package_name":"topscc-[0-9][0-9a-z_\\.-]*.rpm"
     },
+    "topsgraph":{
+        "type":["whl", "deb", "rpm"],
+        "deb_package_name":"topsgraph_[0-9][0-9a-z_\\.-]*.deb",
+        "rpm_package_name":"topsgraph-[0-9][0-9a-z_\\.-]*.rpm",
+        "3.8_package_name":"topsgraph-*{version}*-[cp][py]3*8-*.whl",
+        "3.9_package_name":"topsgraph-*{version}*-[cp][py]3*9-*.whl",
+        "3.10_package_name":"topsgraph-*{version}*-[cp][py]3*10-*.whl"
+    },
+    "flash_attn": {
+        "type":["whl"],
+        "3.8_package_name": "flash_attn-*torch*{version}*-[cp][py]3*8-*.whl",
+        "3.10_package_name": "flash_attn-*torch*{version}*-[cp][py]3*10-*.whl"
+    },
     "TopsPlatform":{
         "type":["run"],
         "rpm_run_package_name":"TopsPlatform_[0-9][0-9a-z_\\.-]*_rpm_*.run",

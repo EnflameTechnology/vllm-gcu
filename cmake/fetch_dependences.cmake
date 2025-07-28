@@ -281,11 +281,10 @@ endforeach()
 # ######################################################
 # ###################  XFORMERS  #######################
 # ######################################################
-set(XFORMERS_TORCH_0.0.30.2.6.0_COMMITID 0736a34)
 set(XFORMERS_PATH ${MODULE_PACKAGE_PATH}/xformers)
-set(XFORMERS_COMMITID c11be60)
-set(XFORMERS_BRANCH 0.0.29.post2)
-set(XFORMERS_DAILY_TAG 0.0.29.post2+torch.2.6.0.gcu.3.2.20250605)
+set(XFORMERS_COMMITID c81f58c)
+set(XFORMERS_BRANCH 0.0.30)
+set(XFORMERS_DAILY_TAG 0.0.30+torch.2.7.0.gcu.3.2.20250721)
 set(XFORMERS_PY_VERS 310 312)
 set(XFORMERS_SEMI_NAME "")
 if( ${CMAKE_SYSTEM_PROCESSOR} STREQUAL "x86_64")
@@ -325,6 +324,7 @@ endif()
 
 include(${PROJECT_SOURCE_DIR}/cmake/2nd/topsgraph_version.cmake)
 include(${PROJECT_SOURCE_DIR}/cmake/2nd/pcals_version.cmake)
+include(${PROJECT_SOURCE_DIR}/cmake/2nd/flash_attnention_version.cmake)
 
 # set(PREBUILD_XNAS_SDK_BASE "http://artifact.enflame.cn/artifactory/module_package/topsfactor/13ee374/")
 set(PREBUILD_FACTOR_COMMIT a2916e9)
