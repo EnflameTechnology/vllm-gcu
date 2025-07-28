@@ -52,16 +52,17 @@ def dump_memory_snapshot_when_exception(name):
                 if torch.distributed.is_initialized()
                 else 0
             )
-            if step % n == 0:
-                filename = f"/tmp/vllm_snapshot_rank{rank}_{name}{step}.pkl"
-                torch.gcu.memory._dump_snapshot(filename)
-            step += 1
             try:
-                return func(*args, **kwargs)
+                r = func(*args, **kwargs)
             except Exception as err:
                 filename = f"/tmp/vllm_snapshot_rank{rank}_exception.pkl"
                 torch.gcu.memory._dump_snapshot(filename)
                 raise err
+            if step % n == 0:
+                filename = f"/tmp/vllm_snapshot_rank{rank}_{name}{step}.pkl"
+                torch.gcu.memory._dump_snapshot(filename)
+            step += 1
+            return r
 
         return _wrapper
 

@@ -3,16 +3,21 @@ from unittest.mock import patch
 import os
 import gc
 import numpy as np
-from typing import Optional
+from typing import Optional, Union
 
 # import vllm.device_allocator
 from vllm.utils import MemorySnapshot, GiB_bytes
 from vllm.model_executor import set_random_seed
 from vllm.distributed.parallel_state import get_pp_group
-
+from vllm.config import VllmConfig
+from vllm.v1.core.sched.output import SchedulerOutput
 from vllm.v1.utils import report_usage_stats
+from vllm.v1.outputs import ModelRunnerOutput
+from vllm.sequence import IntermediateTensors
+
 from vllm_gcu import gcumem
-from vllm_gcu.utils import set_gcu_forward_context
+from vllm_gcu.utils import set_gcu_forward_context, dump_memory_snapshot_when_exception
+import vllm_gcu.envs as gcu_envs
 
 with patch("vllm.forward_context.set_forward_context", set_gcu_forward_context):
     from vllm.v1.worker.gpu_model_runner import GPUModelRunner
@@ -28,6 +33,7 @@ class GCUModelRunner(GPUModelRunner):
         return 0, None
 
     @torch.inference_mode()
+    @dump_memory_snapshot_when_exception('step')
     def _dummy_run(
         self,
         num_tokens: int,
@@ -154,6 +160,15 @@ class GCUModelRunner(GPUModelRunner):
 
         logit_indices = np.cumsum(num_scheduled_tokens) - 1
         return hidden_states, hidden_states[logit_indices]
+    
+    @torch.inference_mode()
+    @dump_memory_snapshot_when_exception('step')
+    def execute_model(
+        self,
+        scheduler_output: "SchedulerOutput",
+        intermediate_tensors: Optional[IntermediateTensors] = None,
+    ) -> Union[ModelRunnerOutput, IntermediateTensors]:
+        return super().execute_model(scheduler_output, intermediate_tensors)
 
 
 with patch("vllm.device_allocator", "cumem", gcumem):
@@ -161,12 +176,33 @@ with patch("vllm.device_allocator", "cumem", gcumem):
 
 
 class GCUWorker(Worker):
-    def __init__(self, *args, **kwargs):
+    def __init__(
+        self,
+        vllm_config: VllmConfig,
+        local_rank: int,
+        rank: int,
+        distributed_init_method: str,
+        is_driver_worker: bool = False,
+    ):
         import vllm_gcu.kernels  # noqa: F401
         import vllm_gcu.compilation  # noqa: F401
         import vllm_gcu.patch  # noqa: F401
+        if gcu_envs.VLLM_GCU_RANK_LOG_PATH:
+            # before init dist, since we want to split eccl init logs
+            dp_rank = vllm_config.parallel_config.data_parallel_rank
+            world_size = vllm_config.parallel_config.world_size
+            rank_across_dp = dp_rank * world_size + rank
+            f = open(os.path.join(gcu_envs.VLLM_GCU_RANK_LOG_PATH,
+                                  f'worker_{rank_across_dp}.log'),
+                     'w', buffering=1)
+            os.dup2(f.fileno(), 1)
+            os.dup2(f.fileno(), 2)
 
-        super().__init__(*args, **kwargs)
+        super().__init__(vllm_config=vllm_config,
+                         local_rank=local_rank,
+                         rank=rank,
+                         distributed_init_method=distributed_init_method,
+                         is_driver_worker=is_driver_worker)
 
     def init_device(self):
         os.environ["TORCH_ECCL_AVOID_RECORD_STREAMS"] = "1"
