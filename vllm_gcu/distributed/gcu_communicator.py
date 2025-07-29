@@ -6,11 +6,17 @@ import torch
 import torch_gcu  # noqa: F401
 from torch.distributed import ProcessGroup
 from vllm.distributed.device_communicators.base_device_communicator import (
-    DeviceCommunicatorBase,
+    DeviceCommunicatorBase, All2AllManagerBase
 )
 from vllm.distributed.device_communicators.cuda_communicator import CudaCommunicator
 
 from vllm_gcu.distributed.pyeccl import PyEcclCommunicator
+
+
+class GCUAll2AllManager(All2AllManagerBase):
+
+    def __init__(self):
+        pass
 
 
 class GCUCommunicator(CudaCommunicator):
@@ -35,7 +41,7 @@ class GCUCommunicator(CudaCommunicator):
             ),
         )
         self.ca_comm = None
-        self.all2all_manager = 1
+        self.all2all_manager = GCUAll2AllManager()
 
     def all_reduce(self, input_):
         # always try custom allreduce first,

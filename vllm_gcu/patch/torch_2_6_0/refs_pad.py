@@ -93,3 +93,9 @@ def constant_pad_nd(
 
     prims.copy_to(c_output, c_input)
     return output
+
+
+# NOTE: this is not how original decomposition get dispatched,
+# see FakeTensorMode._dispatch_impl for details.
+constant_pad_nd.__module__ = 'torch._decomp'
+setattr(torch._decomp.decompositions, 'constant_pad_nd', constant_pad_nd)

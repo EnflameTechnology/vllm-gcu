@@ -3,6 +3,7 @@ from unittest.mock import patch
 import os
 import gc
 import numpy as np
+from typing import Optional
 
 # import vllm.device_allocator
 from vllm.utils import MemorySnapshot, GiB_bytes
@@ -21,6 +22,10 @@ class GCUModelRunner(GPUModelRunner):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.input_ids = self.input_ids.to(torch.int64)
+
+    def get_dp_padding(self,
+                       num_tokens: int) -> tuple[int, Optional[torch.Tensor]]:
+        return 0, None
 
     @torch.inference_mode()
     def _dummy_run(
@@ -53,9 +58,6 @@ class GCUModelRunner(GPUModelRunner):
         else:
             num_reqs = 1
             num_scheduled_tokens = np.array([], dtype=np.int32)
-            num_tokens_across_dp[
-                self.vllm_config.parallel_config.data_parallel_rank
-            ] = 0
 
         attn_metadata = None
         if capture_attn_cudagraph:

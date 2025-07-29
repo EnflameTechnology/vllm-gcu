@@ -117,7 +117,25 @@ def set_gcu_forward_context(
         skip_cuda_graphs,
     ) as ctx:
         forward_context = get_forward_context()
-        setattr(forward_context, "all2allv_threshold", ep_alltoall_threshold(vllm_config))
+        threshold = ep_alltoall_threshold(vllm_config)
+        dp_metadata = forward_context.dp_metadata
+        if dp_metadata is not None:
+            total_tokens = dp_metadata.cu_tokens_across_dp_cpu[-1].item()
+        else:
+            if attn_metadata is not None and hasattr(attn_metadata,
+                                                 "num_prefill_tokens"):
+                # for v0 attention backends
+                total_tokens = attn_metadata.num_prefill_tokens + \
+                    attn_metadata.num_decode_tokens
+                if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
+                    sp_size = vllm_config.parallel_config.tensor_parallel_size
+                    total_tokens = round_up(total_tokens, sp_size)
+            else:
+                # for v1 attention backends or no attn_metadata
+                total_tokens = num_tokens or 0
+        use_all2all_v = total_tokens <= threshold
+        forward_context.skip_cuda_graphs |= not use_all2all_v
+        setattr(forward_context, "all2allv_threshold", None if not use_all2all_v else threshold)
 
         try:
             yield ctx

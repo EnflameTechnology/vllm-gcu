@@ -672,16 +672,8 @@ def ep_fused_experts_impl(
             if a1_scale is None:
                 hidden_states, a1_scale = ops.per_token_group_quant_fp8(hidden_states, block_k)
     if True:
-        use_all2all_v = True
-        threshold = forward_context.all2allv_threshold if hasattr(forward_context, "all2allv_threshold") else 0
-
-        dp_metadata = forward_context.dp_metadata
-        if dp_metadata is not None and \
-                dp_metadata.cu_tokens_across_dp_cpu is not None and \
-                dp_metadata.cu_tokens_across_dp_cpu[-1] > threshold:
-            use_all2all_v = False
-        else:
-            use_all2all_v = hidden_states.shape[0] <= threshold
+        all2allv_threshold = forward_context.all2allv_threshold if hasattr(forward_context, "all2allv_threshold") else None
+        use_all2all_v = all2allv_threshold is not None
 
         group = get_world_group().device_group
         ep_size = get_world_group().world_size
@@ -760,7 +752,7 @@ def ep_fused_experts_impl(
         if use_all2all_v:
             recv_packed = torch.empty(
                 (
-                    threshold,
+                    all2allv_threshold,
                     hidden_states.shape[1] + topk_ids_width + topk_weights_width
                     if not all_to_all_with_scales
                     else
