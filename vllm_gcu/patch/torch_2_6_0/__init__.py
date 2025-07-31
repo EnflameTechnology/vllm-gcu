@@ -1,0 +1,1 @@
+import vllm_gcu.patch.torch_2_6_0.reinplace # noqa
