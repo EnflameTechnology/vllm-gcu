@@ -120,7 +120,7 @@ class CustomInductorAdaptor(InductorAdaptor):
             # for a specific batchsize, tuning triton kernel parameters
             # can be beneficial
             current_config["max_autotune"] = True
-            current_config["coordinate_descent_tuning"] = True
+            current_config["coordinate_descent_tuning"] = False
 
         # inductor can inplace modify the graph, so we need to copy it
         # see https://github.com/pytorch/pytorch/issues/138980

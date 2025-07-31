@@ -92,6 +92,12 @@ class GCUMLAImpl(MLACommonImpl[GCUMLAMetadata]):
                          kv_sharing_target_layer_name, **mla_args)
 
         self.flash_attn_varlen_func = flash_attn_varlen_func
+        self._pad_v = False
+
+    def process_weights_after_loading(self, act_dtype: torch.dtype):
+        super().process_weights_after_loading(act_dtype)
+        self.W_UV = self.W_UV.contiguous()
+        self.W_UK_T = self.W_UK_T.contiguous()
 
     def _forward_decode(
         self,
