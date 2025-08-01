@@ -169,6 +169,8 @@ def invoke_fused_moe_kernel(
         elif use_int8_w8a8:
             B_zp = None
             group_size = 1
+            if B_scale is not None and B_scale.ndim == 3:
+                B_scale = B_scale.transpose(1,2).contiguous()
         elif use_int4_w4a16:
             A_scale = None
             group_size = block_shape[1]
