@@ -1,6 +1,7 @@
 {
     "fully_test": [
-        "scorpio_s60_ci_func_ubuntu"
+        "scorpio_s60_ci_func_ubuntu",
+        "libra_silicon_ci_func_ubuntu"
     ],
     "doc_build":[
         "doc_build"
