@@ -213,7 +213,8 @@ class GCUWorker(Worker):
         self,
         scheduler_output,
     ):
-        with torch.profiler.record_function(f"execute_{scheduler_output}"):
+        num_scheduled_tokens = scheduler_output.num_scheduled_tokens
+        with torch.profiler.record_function(f"execute_{num_scheduled_tokens}"):
             return super().execute_model(scheduler_output)
 
 
