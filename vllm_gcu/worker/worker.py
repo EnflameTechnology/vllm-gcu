@@ -25,6 +25,7 @@ from vllm.model_executor import set_random_seed
 from vllm.utils import GiB_bytes, memory_profiling, MemorySnapshot
 from vllm.worker.model_runner import GPUModelRunnerBase
 from vllm.worker.worker import Worker
+from vllm.sequence import ExecuteModelRequest
 
 from vllm_gcu.worker.model_runner import GCUModelRunner
 import vllm_gcu.envs as gcu_envs
@@ -188,6 +189,25 @@ class GCUWorker(Worker):
             num_cpu_blocks = blocks_tensor[1].item()
 
         return num_gpu_blocks, num_cpu_blocks
+
+
+
+    def execute_model(
+        self,
+        execute_model_req: Optional[ExecuteModelRequest] = None,
+    ):
+        pre_fix_parts = []
+        for idx, seq_group_metadata in enumerate(execute_model_req.seq_group_metadata_list):
+            req_id = seq_group_metadata.request_id
+            seq_data = seq_group_metadata.seq_data
+            stages = [value.stage.name for value in seq_data.values()]
+            stages_str = "_".join(stages) if stages else "<unk_stage>"
+            pre_fix_parts.append(f"{stages_str}_{req_id}")
+
+        pre_fix = "_".join(pre_fix_parts)
+
+        with torch.profiler.record_function(f"execute_{pre_fix}"):
+            return super().execute_model(execute_model_req)
 
 
 def init_worker_distributed_environment(
