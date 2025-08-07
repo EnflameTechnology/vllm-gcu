@@ -102,7 +102,8 @@ class RoundRobinProxy:
             logger.debug("Kill idle request.")
 
     async def handle_request(self, request):
-        if request.path_qs in ['/start_profile', '/stop_profile']:
+        stable_api = request.path_qs in ['/start_profile', '/stop_profile']
+        if stable_api:
             server_id = 0
         else:
             server_id = await self.increment()
@@ -135,7 +136,8 @@ class RoundRobinProxy:
             except Exception as e:
                 return web.Response(text=f"Error: {str(e)}", status=500)
             finally:
-                await self.decrement(server_id)
+                if not stable_api:
+                    await self.decrement(server_id)
 
 
 async def router(args: Namespace):
