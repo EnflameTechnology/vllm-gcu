@@ -1179,23 +1179,51 @@ def add_debug_dump(graph):
             new_node.args = (node,) + new_node.args[1:]
 
 
+def custom_copy(self: torch.Tensor, value: torch.Tensor) -> torch.Tensor:
+    self.copy_(value)
+    return self
+
+
+def custom_copy_fake(self: torch.Tensor, value: torch.Tensor) -> torch.Tensor:
+    return self
+
+
+direct_register_custom_op(
+    op_name="custom_copy",
+    op_func=custom_copy,
+    mutates_args=["self"],
+    fake_impl=custom_copy_fake,
+    dispatch_key=current_platform.dispatch_key,
+)
+
+
 def fix_copy_pass(graph):
+    to_remove = []
     for node in graph.nodes:
         if node.op == 'call_function' and node.target == torch.ops.aten.copy_.default:
+            to_remove.append(node)
+
             input_tensor = node.args[0]
             copy_value = node.args[1]
+            with graph.inserting_after(node):
+                new_node = graph.call_function(
+                    torch.ops.vllm.custom_copy.default,
+                    (input_tensor, copy_value),
+                    {}
+                )
 
-            with graph.inserting_before(node):
-                new_node = graph.call_method("copy_", (input_tensor, copy_value), {})
+            node.replace_all_uses_with(new_node, lambda n: n != new_node)
 
-            node.replace_all_uses_with(new_node)
-
-            graph.erase_node(node)
+    for node in to_remove:
+        graph.erase_node(node)
 
 
 def fallback_prims(graph):
+    to_remove = []
     for node in graph.nodes:
         if node.op == "call_function" and node.target == torch.ops.prims.convert_element_type.default:
+            to_remove.append(node)
+
             input_tensor = node.args[0]
             target_dtype = node.args[1]
 
@@ -1203,7 +1231,9 @@ def fallback_prims(graph):
                 new_node = graph.call_function(torch.ops.aten.to.dtype, (input_tensor, target_dtype), {})
 
             node.replace_all_uses_with(new_node)
-            graph.erase_node(node)
+
+    for node in to_remove:
+        graph.erase_node(node)
 
 
 class GCUFusionPass(FusionPass):
