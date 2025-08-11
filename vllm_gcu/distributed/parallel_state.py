@@ -76,12 +76,20 @@ def all_to_all_v2_ref(
 ) -> None:
     assert output.is_contiguous(), 'output is not contiguous'
     assert input.is_contiguous(), 'input is not contiguous'
+    world_size = torch.distributed.get_world_size(group)
+    if output_split_sizes is None:
+        output_split_sizes = [output.shape[0] // world_size] * world_size
+    if input_split_sizes is None:
+        input_split_sizes = [input.shape[0] // world_size] * world_size
+
     if flag == 1:
         torch.distributed.all_to_all_single(
             output_split_sizes, input_split_sizes, group=group
         )
+
     assert output.shape[0] >= output_split_sizes.sum().item(), 'output shape error'
-    assert input.shape[0] >= input_split_sizes.sum().item(), 'output shape error'
+    assert input.shape[0] >= input_split_sizes.sum().item(), 'input shape error'
+
     return torch.distributed.all_to_all_single(
         output[: output_split_sizes.sum().item()],
         input[: input_split_sizes.sum().item()],
@@ -107,6 +115,6 @@ class GroupWrapper:
     def all_to_all_single(
         self, output, input, output_split_sizes=None, input_split_sizes=None
     ):
-        return torch.distributed.all_to_all(
+        return torch.distributed.all_to_all_single(
             output, input, output_split_sizes, input_split_sizes
         )
