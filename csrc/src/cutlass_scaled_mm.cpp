@@ -26,7 +26,10 @@ void cutlass_scaled_mm(at::Tensor& out, const at::Tensor& x,
   }
 
   // w_scale squeeze here
-  at::Tensor w_scale_modified = w_scale.squeeze(-1);
+  at::Tensor w_scale_modified = w_scale;
+  if (w_scale.dim() > 1) {
+    w_scale_modified = w_scale.squeeze(-1);
+  }
 
   ATEN_ATENOP_CHECK(ATEN_ATENOP_CALL(topsaten::topsatenDotBiasQuant)(
       out, x, weight, x_scale_modified, w_scale_modified, bias_tensor, stream));

@@ -299,7 +299,7 @@ def outplace_fused_experts(
     else:
         impl = fused_experts_impl
 
-    impl(
+    return impl(
         hidden_states,
         w1,
         w2,
@@ -633,8 +633,8 @@ def ep_fused_experts_impl(
 
     assert activation == "silu", f"not support activation: {activation}"
 
+    forward_context: ForwardContext = get_forward_context()
     if layer_name is not None:
-        forward_context: ForwardContext = get_forward_context()
         layer = forward_context.no_compile_layers[layer_name]
 
         shared_experts = getattr(layer, "shared_experts", None)
@@ -650,13 +650,6 @@ def ep_fused_experts_impl(
     recv_token_total = None
     shared_output = None
     hidden_states_ori = hidden_states
-    if use_fp8_w8a8 and use_int8_w8a16:
-        # hack int8_w8a8 when both True
-        use_int8_w8a8 = True
-        use_fp8_w8a8 = False
-        use_int8_w8a16 = False
-    else:
-        use_int8_w8a8 = False
     # In official vllm master branch, "per_channel_quant" parameter is used to determine dynamic or static quant
     # TODO: when upgrade, need to refine this parameter
     # https://github.com/vllm-project/vllm/blob/v0.9.0.1/vllm/model_executor/layers/fused_moe/fused_moe.py#L1222
