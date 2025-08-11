@@ -196,15 +196,17 @@ class GCUWorker(Worker):
         self,
         execute_model_req: Optional[ExecuteModelRequest] = None,
     ):
-        pre_fix_parts = []
-        for idx, seq_group_metadata in enumerate(execute_model_req.seq_group_metadata_list):
-            req_id = seq_group_metadata.request_id
-            seq_data = seq_group_metadata.seq_data
-            stages = [value.stage.name for value in seq_data.values()]
-            stages_str = "_".join(stages) if stages else "<unk_stage>"
-            pre_fix_parts.append(f"{stages_str}_{req_id}")
+        pre_fix = ""
+        if execute_model_req is not None:
+            pre_fix_parts = []
+            for idx, seq_group_metadata in enumerate(execute_model_req.seq_group_metadata_list):
+                req_id = seq_group_metadata.request_id
+                seq_data = seq_group_metadata.seq_data
+                stages = [value.stage.name for value in seq_data.values()]
+                stages_str = "_".join(stages) if stages else "<unk_stage>"
+                pre_fix_parts.append(f"{stages_str}_{req_id}")
 
-        pre_fix = "_".join(pre_fix_parts)
+            pre_fix = "_".join(pre_fix_parts)
 
         with torch.profiler.record_function(f"execute_{pre_fix}"):
             return super().execute_model(execute_model_req)
