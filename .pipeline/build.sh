@@ -92,6 +92,18 @@ function zx_normal_build() {
   ./vllm/.pipeline/copy_packages.sh
 }
 
+function zx_local_config() {
+  echo zx local config
+}
+
+function zx_local_build() {
+  zx_normal_build
+}
+
+function zx_local_packaging() {
+  echo zx local packaging
+}
+
 function main() {
   set -x
   $build_job_name
