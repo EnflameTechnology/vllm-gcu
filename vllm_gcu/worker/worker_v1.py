@@ -11,6 +11,8 @@ from vllm.model_executor import set_random_seed
 from vllm.distributed.parallel_state import get_pp_group
 from vllm.config import VllmConfig
 from vllm.v1.core.sched.output import SchedulerOutput
+from vllm.v1.kv_cache_interface import KVCacheConfig
+
 from vllm.v1.utils import report_usage_stats
 from vllm.v1.outputs import ModelRunnerOutput
 from vllm.sequence import IntermediateTensors
@@ -169,6 +171,38 @@ class GCUModelRunner(GPUModelRunner):
         intermediate_tensors: Optional[IntermediateTensors] = None,
     ) -> Union[ModelRunnerOutput, IntermediateTensors]:
         return super().execute_model(scheduler_output, intermediate_tensors)
+
+    def _allocate_kv_cache_tensors(
+            self, kv_cache_config: KVCacheConfig) -> dict[str, torch.Tensor]:
+        """
+        Initializes the KV cache buffer with the correct size. The buffer needs
+        to be reshaped to the desired shape before being used by the models.
+
+        Args:
+            kv_cache_config: The KV cache config
+        Returns:
+            dict[str, torch.Tensor]: A map between layer names to their
+            corresponding memory buffer for KV cache.
+         """
+        if self.vllm_config.kv_transfer_config is None or \
+            self.vllm_config.kv_transfer_config.kv_connector != 'NixlConnector':
+            return super()._allocate_kv_cache_tensors(kv_cache_config)
+
+        kv_cache_raw_tensors: dict[str, torch.Tensor] = {}
+        for kv_cache_tensor in kv_cache_config.kv_cache_tensors:
+            tensor = torch.gcu.tops_malloc_host_accessible(
+                [kv_cache_tensor.size],
+                dtype=torch.int8,
+            ).fill_(0)
+            for layer_name in kv_cache_tensor.shared_by:
+                kv_cache_raw_tensors[layer_name] = tensor
+
+        layer_names = set()
+        for group in kv_cache_config.kv_cache_groups:
+            layer_names.update(group.layer_names)
+        assert layer_names == set(kv_cache_raw_tensors.keys(
+        )), "Some layers are not correctly initialized"
+        return kv_cache_raw_tensors
 
 
 with patch("vllm.device_allocator", "cumem", gcumem):
