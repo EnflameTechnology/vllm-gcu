@@ -442,32 +442,28 @@ def dot_bias_quant(
 
 
 def dispatch_bgmv(
-    y: torch.Tensor,
     x: torch.Tensor,
     w: torch.Tensor,
-    indicies: torch.Tensor,
-    layer_idx: int,
-    scale: float,
+    y: torch.Tensor,
+    indices: torch.Tensor,
+    scale: float = 1.0,
 ):
     w = w.unsqueeze(1)
-    torch.ops._C.dispatch_bgmv(y, x, w, indicies, layer_idx, scale)
+    torch.ops._C.dispatch_bgmv(y, x, w, indices, 0, scale)
 
 
-# dispatch bgmv
 def dispatch_bgmv_low_level(
-    y: torch.Tensor,
     x: torch.Tensor,
     w: torch.Tensor,
-    indicies: torch.Tensor,
-    layer_idx: int,
-    scale: float,
-    h_in: int,
-    h_out: int,
-    y_offset: int,
+    y: torch.Tensor,
+    indices: torch.Tensor,
+    slice_offset: int,
+    slice_size: int,
 ):
     w = w.unsqueeze(1)
+    h_in = x.size(1)
     torch.ops._C.dispatch_bgmv_low_level(
-        y, x, w, indicies, layer_idx, scale, h_in, h_out, y_offset
+        y, x, w, indices, 0, 1.0, h_in, slice_size, slice_offset
     )
 
 

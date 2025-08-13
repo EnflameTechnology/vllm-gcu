@@ -309,7 +309,7 @@ class GCUPlatform(Platform):
 
     @classmethod
     def get_punica_wrapper(cls) -> str:
-        raise NotImplementedError
+        return "vllm_gcu.lora.punica_gcu.PunicaWrapperGCU"
 
     @classmethod
     def get_device_communicator_cls(cls) -> str:
