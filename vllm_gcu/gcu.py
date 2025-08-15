@@ -38,6 +38,8 @@ class GCUPlatform(Platform):
         "moe_wna16",
         "moe_wna16_gcu",
         "w8a8_gcu",
+        "w4a8",
+        "w4a8_gcu",
         "fp8",
         "fp8_gcu",
         "compressed-tensors",
