@@ -156,7 +156,8 @@ def invoke_fused_moe_kernel(
     if use_fp8_w8a8 or use_int8_w8a16 or use_int4_w4a16 or use_int8_w8a8:
         if use_fp8_w8a8:
             B_zp = None
-            group_size = block_shape[1]
+            if B.dtype != torch.int8:
+                group_size = block_shape[1]
         elif use_int8_w8a8:
             B_zp = None
             group_size = 1
@@ -170,26 +171,48 @@ def invoke_fused_moe_kernel(
             group_size = -1
         else:
             raise NotImplementedError
-
-        torch.ops._C.fused_moe_quant_kernel(
-            C,
-            A,
-            B,
-            A_scale,
-            B_scale,
-            group_size,
-            B_zp,
-            topk_weights,
-            topk_ids,
-            sorted_token_ids,
-            expert_ids,
-            num_tokens_post_padded,
-            mul_routed_weight,
-            top_k,
-            block_size,
-            None,
-            real_token_num,
-        )
+        if use_fp8_w8a8 and B.dtype == torch.int8:
+            # w4a8-fp8
+            torch.ops._C.fused_moe_quant_kernel_ex(
+                C,
+                A,
+                B,
+                1.0/A_scale,
+                B_scale,
+                B_zp,
+                None, # bias
+                topk_weights,
+                topk_ids,
+                sorted_token_ids,
+                expert_ids,
+                num_tokens_post_padded,
+                real_token_num,
+                mul_routed_weight,
+                top_k,
+                block_size,
+                128,
+                -1,
+            )
+        else:
+            torch.ops._C.fused_moe_quant_kernel(
+                C,
+                A,
+                B,
+                A_scale,
+                B_scale,
+                group_size,
+                B_zp,
+                topk_weights,
+                topk_ids,
+                sorted_token_ids,
+                expert_ids,
+                num_tokens_post_padded,
+                mul_routed_weight,
+                top_k,
+                block_size,
+                None,
+                real_token_num,
+            )
     else:
         topk_weights = topk_weights.to(torch.float32)  # WA for grouped_topk
         torch.ops._C.fused_moe_kernel(

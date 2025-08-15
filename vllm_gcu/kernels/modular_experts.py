@@ -104,9 +104,14 @@ class TritonExpertsPad(mk.FusedMoEPermuteExpertsUnpermute):
             assert hidden_states.size(-1) // 2 == w1.size(2), (
                 "Hidden size mismatch")
         else:
-            assert hidden_states.size(-1) == w1.size(2), \
-                (f"Hidden size mismatch {hidden_states.size(-1)} "
-                 f"!= {w1.size(2)}")
+            if self.use_fp8_w8a8 and w1.dtype == torch.int8:
+                # for w4a8-fp8
+                assert hidden_states.size(-1) // 2 == w1.size(2), (
+                    "Hidden size mismatch")
+            else:
+                assert hidden_states.size(-1) == w1.size(2), \
+                    (f"Hidden size mismatch {hidden_states.size(-1)} "
+                        f"!= {w1.size(2)}")
 
         assert hidden_states.is_contiguous(
         ), "Hidden_states must be contiguous"
@@ -180,21 +185,37 @@ class TritonExpertsPad(mk.FusedMoEPermuteExpertsUnpermute):
 
         if activation == "silu":
             if self.use_fp8_w8a8:
-                group_size = self.quant_config.block_shape[1]
-                shape = (
-                    *intermediate_cache2.shape[:-1],
-                    N // 2 // group_size,
-                )
-                a2_scale = torch.empty(
-                    shape, dtype=torch.float32, device=intermediate_cache1.device
-                )
-                torch.ops._C.silu_mul_per_token_group_quant_with_size(
-                    intermediate_cache2.view(-1, top_k_num, N // 2),
-                    a2_scale.view(-1, top_k_num, N // 2 // group_size),
-                    intermediate_cache1,
-                    expert_num_tokens,
-                    group_size,
-                )
+                if w1.dtype == torch.int8:
+                    # shape = (
+                    #     *intermediate_cache2.shape[:-1],
+                    #     N // 2 // self.quant_config.block_shape[1],
+                    # )
+                    # a2_scale = torch.empty(
+                    #     shape, dtype=torch.float32, device=intermediate_cache1.device
+                    # )
+                    assert a2_scale is not None
+                    torch.ops._C.silu_mul_static_fp8_quant(
+                        intermediate_cache2.view(-1, top_k_num, N // 2),
+                        intermediate_cache1,
+                        a2_scale,
+                        expert_num_tokens,
+                    )
+                else:
+                    group_size = self.quant_config.block_shape[1]
+                    shape = (
+                        *intermediate_cache2.shape[:-1],
+                        N // 2 // group_size,
+                    )
+                    a2_scale = torch.empty(
+                        shape, dtype=torch.float32, device=intermediate_cache1.device
+                    )
+                    torch.ops._C.silu_mul_per_token_group_quant_with_size(
+                        intermediate_cache2.view(-1, top_k_num, N // 2),
+                        a2_scale.view(-1, top_k_num, N // 2 // group_size),
+                        intermediate_cache1,
+                        expert_num_tokens,
+                        group_size,
+                    )
             else:
                 torch.ops._C.silu_and_mul_pad(
                     intermediate_cache2.view(-1, top_k_num, N // 2),

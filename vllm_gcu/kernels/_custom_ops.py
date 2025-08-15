@@ -283,16 +283,20 @@ def scaled_fp8_quant(
     num_token_padding: Optional[int] = None,
     scale_ub: Optional[torch.Tensor] = None,
     use_per_token_if_dynamic: bool = False,
+    output: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    if use_per_token_if_dynamic:
-        output = torch.empty_like(input, dtype=torch.float8_e4m3fn)
-        # dynamic-per-token quantization.
-        shape = input.shape[:-1] + (1,)
-        if scale is None:
+    if scale is None:
+        if use_per_token_if_dynamic:
+            output = torch.empty_like(input, dtype=torch.float8_e4m3fn)
+            # dynamic-per-token quantization.
+            shape = input.shape[:-1] + (1,)
             scale = torch.empty(shape, device=input.device, dtype=torch.float32)
-        torch.ops._C.dynamic_per_token_scaled_fp8_quant(output, input, scale, scale_ub=scale_ub)
-        return output, scale
-    raise NotImplementedError
+            torch.ops._C.dynamic_per_token_scaled_fp8_quant(output, input, scale, scale_ub=scale_ub)
+        else:
+            raise NotImplementedError("dynamic_scaled_fp8_quant is not implemented for per tensor!")
+    else:
+        torch.ops._C.static_scaled_fp8_quant(output, input, scale)
+    return output, scale
 
 
 def scaled_int8_quant(
