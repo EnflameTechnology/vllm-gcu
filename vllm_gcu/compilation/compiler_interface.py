@@ -72,9 +72,9 @@ def lowering():
 
             til.make_fallback(op, warn=False, override_decomp=True)
 
-    for name in dir(torch.ops.prim):
+    for name in dir(torch.ops.prims):
         if not name.startswith("_") and name not in BLACK_LIST:
-            op = getattr(torch.ops.prim, name)
+            op = getattr(torch.ops.prims, name)
             til.make_fallback(op, warn=False, override_decomp=True)
 
     yield
