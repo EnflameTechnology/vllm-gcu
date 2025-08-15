@@ -5,7 +5,6 @@ from typing import Any, Callable, Dict, List, Optional
 import torch
 
 from torch.nn.modules import Module
-from vllm.distributed import get_tensor_model_parallel_rank, get_tp_group
 from vllm.model_executor.layers.fused_moe.layer import (
     FusedMoE, FusedMoEMethodBase, FusedMoeWeightScaleSupported)
 from vllm.model_executor.layers.linear import (LinearBase,
@@ -13,13 +12,12 @@ from vllm.model_executor.layers.linear import (LinearBase,
 from vllm.model_executor.layers.quantization.base_config import (
     QuantizationConfig, QuantizeMethodBase)
 from vllm.model_executor.utils import set_weight_attrs
-from vllm.platforms import current_platform
 
-from vllm_gcu.kernels import _custom_ops as ops
 from vllm_gcu.kernels.quantization.utils import (
     register_gcu_quantization_config,
     register_weight_loader_v2_supported,
 )
+from vllm_gcu.kernels.modular_experts import TritonExpertsPad
 
 
 @register_gcu_quantization_config("w4a8")
@@ -376,6 +374,16 @@ class MoeW4A8Method(FusedMoEMethodBase):
                        hidden_size, intermediate_size_per_partition,
                        params_dtype, **extra_weight_attrs)
 
+    def select_gemm_impl(
+        self,
+        prepare_finalize,
+        moe,
+    ):
+        return TritonExpertsPad(
+            use_fp8_w8a8=True,
+            block_shape=None,
+        )
+
     def apply(
         self,
         layer: torch.nn.Module,
@@ -399,8 +407,6 @@ class MoeW4A8Method(FusedMoEMethodBase):
         logical_replica_count: Optional[torch.Tensor] = None,
 
     ) -> torch.Tensor:
-        from vllm.model_executor.layers.fused_moe.fused_moe import fused_experts
-        activation += f"_{layer.layer_name}"
         if enable_eplb:
             assert expert_load_view is not None
             assert logical_to_physical_map is not None
@@ -425,22 +431,22 @@ class MoeW4A8Method(FusedMoEMethodBase):
             logical_replica_count=logical_replica_count,
         )
 
-        return fused_experts(
-                hidden_states=x,
-                w1=layer.w13_qweight,
-                w2=layer.w2_qweight,
-                topk_weights=topk_weights,
-                topk_ids=topk_ids,
-                inplace=True,
-                use_fp8_w8a8=True, # for w4a8
-                activation=activation,
-                global_num_experts=global_num_experts,
-                expert_map=expert_map,
-                w1_scale=layer.w13_scales,
-                w2_scale=layer.w2_scales,
-                a1_scale=layer.w13_input_scale,
-                a2_scale=layer.w2_input_scale,
-                block_shape=None)
+        return self.fused_experts(
+            hidden_states=x,
+            w1=layer.w13_qweight,
+            w2=layer.w2_qweight,
+            topk_weights=topk_weights,
+            topk_ids=topk_ids,
+            inplace=True,
+            activation=activation,
+            global_num_experts=global_num_experts,
+            expert_map=expert_map,
+            w1_scale=layer.w13_scales,
+            w2_scale=layer.w2_scales,
+            a1_scale=layer.w13_input_scale,
+            a2_scale=layer.w2_input_scale,
+            apply_router_weight_on_input=apply_router_weight_on_input,
+        )
 
     @staticmethod
     def get_weight_loader(layer, weight_loader):

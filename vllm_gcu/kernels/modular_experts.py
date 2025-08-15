@@ -119,7 +119,8 @@ class TritonExpertsPad(mk.FusedMoEPermuteExpertsUnpermute):
         assert hidden_states.dim() == 2
 
         assert hidden_states.dtype in [
-            torch.float32, torch.float16, torch.bfloat16, torch.float8_e4m3fn
+            torch.float32, torch.float16, torch.bfloat16, torch.float8_e4m3fn,
+            torch.int8
         ]
 
         E, num_tokens, N, K, top_k_num = mk._moe_problem_size(

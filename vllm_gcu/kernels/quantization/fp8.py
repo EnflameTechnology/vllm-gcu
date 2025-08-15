@@ -14,6 +14,7 @@ from vllm_gcu.kernels.quantization.utils import (
     register_gcu_quantization_config,
     register_weight_loader_v2_supported,
 )
+from vllm_gcu.kernels.modular_experts import TritonExpertsPad
 
 
 @register_gcu_quantization_config("fp8")
@@ -74,9 +75,15 @@ class Fp8GCUMoEMethod(Fp8MoEMethod):
         setattr(vllm.model_executor.layers.fused_moe, 'fused_experts', fused_experts)
         super().__init__(quant_config)
 
-    def init_prepare_finalize(self, moe, quant_config):
-        super().init_prepare_finalize(moe, quant_config)
-        self.topk_indices_dtype = torch.int32  # hard
+    def select_gemm_impl(
+        self,
+        prepare_finalize,
+        moe,
+    ):
+        return TritonExpertsPad(
+            use_fp8_w8a8=True,
+            block_shape=self.quant_config.weight_block_size,
+        )
 
     def apply(
         self,
@@ -100,7 +107,7 @@ class Fp8GCUMoEMethod(Fp8MoEMethod):
         logical_to_physical_map: Optional[torch.Tensor] = None,
         logical_replica_count: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        activation += f"_{layer.layer_name}"
+
         return super().apply(
             layer,
             x,
