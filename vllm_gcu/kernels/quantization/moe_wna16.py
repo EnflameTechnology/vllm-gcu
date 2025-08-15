@@ -20,6 +20,7 @@ from vllm.model_executor.layers.quantization.moe_wna16 import (
 from vllm.model_executor.utils import set_weight_attrs
 
 from vllm_gcu.kernels.quantization.utils import register_gcu_quantization_config
+from vllm_gcu.kernels.modular_experts import TritonExpertsPad
 
 
 @register_gcu_quantization_config("moe_wna16")
@@ -542,6 +543,18 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
                     layer.w2_qweight.data.permute(0, 2, 1).contiguous().permute(0, 2, 1)
                 )
 
+    def select_gemm_impl(
+        self,
+        prepare_finalize,
+        moe,
+    ):
+        weight_bits = self.quant_config.weight_bits
+        return TritonExpertsPad(
+            use_int4_w4a16=weight_bits == 4,
+            use_int8_w8a16=weight_bits == 8,
+            block_shape=[0, self.quant_config.group_size],
+        )
+
     def apply(
         self,
         layer: torch.nn.Module,
@@ -568,10 +581,6 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
             raise NotImplementedError(
                 "EPLB not supported for `MoeWNA16GCUMethod` yet.")
 
-        from vllm.model_executor.layers.fused_moe.fused_moe import fused_experts
-
-        activation += f"_{layer.layer_name}"
-
         topk_weights, topk_ids = FusedMoE.select_experts(
             hidden_states=x,
             router_logits=router_logits,
@@ -585,26 +594,22 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
             e_score_correction_bias=e_score_correction_bias,
         )
 
-        weight_bits = self.quant_config.weight_bits
         has_zp = self.quant_config.has_zp
 
-        fused_experts(
+        self.fused_experts(
             x,
             layer.w13_qweight,
             layer.w2_qweight,
             topk_weights=topk_weights,
             topk_ids=topk_ids,
             inplace=True,
-            use_int4_w4a16=weight_bits == 4,
-            use_int8_w8a16=weight_bits == 8,
-            global_num_experts=global_num_experts,
-            apply_router_weight_on_input=apply_router_weight_on_input,
+            activation=activation,
             expert_map=expert_map,
+            global_num_experts=global_num_experts,
             w1_scale=layer.w13_scales,
             w2_scale=layer.w2_scales,
             w1_zp=layer.w13_qzeros if has_zp else None,
             w2_zp=layer.w2_qzeros if has_zp else None,
-            block_shape=[0, layer.group_size],
-            activation=activation,
+            apply_router_weight_on_input=apply_router_weight_on_input,
         )
         return x

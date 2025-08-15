@@ -7,8 +7,9 @@ import torch_gcu
 from vllm.model_executor.layers.fused_moe.config import FusedMoEQuantConfig
 from vllm.model_executor.layers.fused_moe.modular_kernel import FusedMoEActivationFormat, FusedMoEPrepareAndFinalize
 from vllm.model_executor.layers.fused_moe.utils import moe_kernel_quantize_input
-from vllm.distributed import get_ep_group, get_dp_group
+from vllm.distributed import get_ep_group
 from vllm.platforms import current_platform
+from vllm.forward_context import ForwardContext, get_forward_context
 
 from vllm_gcu.distributed.parallel_state import all_to_all_v2
 import vllm_gcu.envs as gcu_envs
@@ -21,7 +22,6 @@ class MoEPrepareAndFinalizeNoEP(FusedMoEPrepareAndFinalize):
         super().__init__()
         self.shared_experts = None
         self.routed_scaling_factor = 1.0
-        self.shared_output = None
 
     def set_shared_experts(self, shared_experts, routed_scaling_factor):
         if shared_experts is not None:
@@ -53,11 +53,11 @@ class MoEPrepareAndFinalizeNoEP(FusedMoEPrepareAndFinalize):
         expert_map: Optional[torch.Tensor],
         apply_router_weight_on_input: bool,
         quant_config: FusedMoEQuantConfig,
+        output: Optional[torch.Tensor] = None,
     ) -> tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor],
                Optional[torch.Tensor], Optional[torch.Tensor]]:
         assert not apply_router_weight_on_input
-        if self.shared_experts is not None:
-            self.shared_output = self.shared_experts(a1)
+        assert output is not None
 
         a1q, a1q_scale = moe_kernel_quantize_input(
             a1, a1_scale, quant_config.quant_dtype,
@@ -69,6 +69,13 @@ class MoEPrepareAndFinalizeNoEP(FusedMoEPrepareAndFinalize):
             dtype=torch.int32,
             device=a1.device,
         )
+        # NOTE: output maybe inplace with a1/hidden_states,
+        # DO NOT use them after this
+        if self.shared_experts is not None:
+            shared_output = self.shared_experts(a1)
+            output.copy_(shared_output)
+        else:
+            output.fill_(0)
 
         return a1q, a1q_scale, total_tokens, topk_ids, topk_weights
 
@@ -80,10 +87,8 @@ class MoEPrepareAndFinalizeNoEP(FusedMoEPrepareAndFinalize):
         topk_ids: torch.Tensor,
         apply_router_weight_on_input: bool,
     ) -> None:
-        if self.shared_output is not None:
-            fused_expert_output.mul_(self.routed_scaling_factor)
-            fused_expert_output.add_(self.shared_output)
-        output.copy_(fused_expert_output)
+        fused_expert_output.mul_(self.routed_scaling_factor)
+        output.add_(fused_expert_output)
 
 
 class AlltoAllPrepareAndFinalize(FusedMoEPrepareAndFinalize):
@@ -99,7 +104,6 @@ class AlltoAllPrepareAndFinalize(FusedMoEPrepareAndFinalize):
         self.num_dispatchers_ = num_dispatchers
         self.shared_experts = None
         self.routed_scaling_factor = 1.0
-        self.shared_output = None
         self.ep_group = get_ep_group().device_group
 
     @property
@@ -238,6 +242,7 @@ class AlltoAllStaticShape(AlltoAllPrepareAndFinalize):
         expert_map: Optional[torch.Tensor],
         apply_router_weight_on_input: bool,
         quant_config: FusedMoEQuantConfig,
+        output: Optional[torch.Tensor] = None,
     ) -> tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor],
                Optional[torch.Tensor], Optional[torch.Tensor]]:
         """
@@ -264,6 +269,7 @@ class AlltoAllStaticShape(AlltoAllPrepareAndFinalize):
         - Optional dispatched expert topk weight
         """
         assert not apply_router_weight_on_input
+        assert output is not None
         log2phy = None
         hidden_states = a1
         hidden_states_ori = hidden_states
@@ -317,12 +323,18 @@ class AlltoAllStaticShape(AlltoAllPrepareAndFinalize):
                 flag=1,
                 async_op=enable_parallel_compute,
             )
+            # NOTE: output maybe inplace with a1/hidden_states,
+            # DO NOT use them after this
             if self.shared_experts is not None and hidden_states_ori.shape[
                     0] > 0:
                 if a1_scale is not None and not input_static_quant:
-                    self.shared_output = self.shared_experts(hidden_states, a1_scale)
+                    shared_output = self.shared_experts(
+                        hidden_states, a1_scale)
                 else:
-                    self.shared_output = self.shared_experts(hidden_states_ori)
+                    shared_output = self.shared_experts(hidden_states_ori)
+                output.copy_(shared_output)
+            else:
+                output.fill_(0)
             if enable_parallel_compute:
                 work.wait()
 
@@ -375,11 +387,6 @@ class AlltoAllStaticShape(AlltoAllPrepareAndFinalize):
             flag=0,
         )
 
-        if self.shared_output is not None:
-            output.copy_(self.shared_output)
-        else:
-            output.fill_(0)
-
         if output.numel() != 0:
             output.index_add_(
                 0,
@@ -412,6 +419,7 @@ class AlltoAllDynamicShape(AlltoAllPrepareAndFinalize):
         expert_map: Optional[torch.Tensor],
         apply_router_weight_on_input: bool,
         quant_config: FusedMoEQuantConfig,
+        output: Optional[torch.Tensor] = None,
     ) -> tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor],
                Optional[torch.Tensor], Optional[torch.Tensor]]:
         """
@@ -438,6 +446,7 @@ class AlltoAllDynamicShape(AlltoAllPrepareAndFinalize):
         - Optional dispatched expert topk weight
         """
         assert not apply_router_weight_on_input
+        assert output is not None
         log2phy = None
         hidden_states = a1
         hidden_states_ori = hidden_states
@@ -498,11 +507,17 @@ class AlltoAllDynamicShape(AlltoAllPrepareAndFinalize):
                 group=self.ep_group,
                 async_op=enable_parallel_compute,
             )
+            # NOTE: output maybe inplace with a1/hidden_states,
+            # DO NOT use them after this
             if self.shared_experts is not None:
                 if a1_scale is not None and not input_static_quant:
-                    self.shared_output = self.shared_experts(hidden_states, a1_scale)
+                    shared_output = self.shared_experts(
+                        hidden_states, a1_scale)
                 else:
-                    self.shared_output = self.shared_experts(hidden_states_ori)
+                    shared_output = self.shared_experts(hidden_states_ori)
+                output.copy_(shared_output)
+            else:
+                output.fill_(0)
             if enable_parallel_compute:
                 work.wait()
 
@@ -551,11 +566,6 @@ class AlltoAllDynamicShape(AlltoAllPrepareAndFinalize):
             group=self.ep_group,
         )
 
-        if self.shared_output is not None:
-            output.copy_(self.shared_output)
-        else:
-            output.fill_(0)
-
         if output.numel() != 0:
             output.index_add_(
                 0,
@@ -568,18 +578,38 @@ class AlltoAllDynamicShape(AlltoAllPrepareAndFinalize):
         return None
 
 
-def get_prepare_finalize(use_ep, forward_context):
-    if not use_ep:
-        prepare_finalize = MoEPrepareAndFinalizeNoEP()
-        return prepare_finalize
+class AlltoAllSelector(AlltoAllPrepareAndFinalize):
 
-    all2allv_threshold = forward_context.all2allv_threshold if hasattr(
-        forward_context, "all2allv_threshold") else None
-    use_all2all_v = all2allv_threshold is not None
-    if use_all2all_v:
-        prepare_finalize = AlltoAllStaticShape(all2allv_threshold,
-                                               get_dp_group().world_size)
-    else:
-        prepare_finalize = AlltoAllDynamicShape(get_dp_group().world_size)
+    def __init__(self, threshold, num_dispatchers: int):
+        super().__init__(num_dispatchers)
+        self.dynamic = AlltoAllDynamicShape(num_dispatchers)
+        self.static = AlltoAllStaticShape(threshold, num_dispatchers)
 
-    return prepare_finalize
+    def max_num_tokens_per_rank(self) -> Optional[int]:
+        return None
+
+    def set_shared_experts(self, *args, **kwargs):
+        self.dynamic.set_shared_experts(*args, **kwargs)
+        self.static.set_shared_experts(*args, **kwargs)
+
+    def prepare(self, *args, **kwargs):
+        forward_context: ForwardContext = get_forward_context()
+        all2allv_threshold = forward_context.all2allv_threshold if hasattr(
+            forward_context, "all2allv_threshold") else None
+        use_all2all_v = all2allv_threshold is not None
+        if use_all2all_v:
+            self.static.threshold = all2allv_threshold
+            return self.static.prepare(*args, **kwargs)
+        else:
+            return self.dynamic.prepare(*args, **kwargs)
+
+    def finalize(self, *args, **kwargs):
+        forward_context: ForwardContext = get_forward_context()
+        all2allv_threshold = forward_context.all2allv_threshold if hasattr(
+            forward_context, "all2allv_threshold") else None
+        use_all2all_v = all2allv_threshold is not None
+        if use_all2all_v:
+            self.static.threshold = all2allv_threshold
+            return self.static.finalize(*args, **kwargs)
+        else:
+            return self.dynamic.finalize(*args, **kwargs)

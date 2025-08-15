@@ -8,6 +8,7 @@ from vllm.utils import cdiv
 from vllm.model_executor.layers.fused_moe.modular_kernel import (
     FusedMoEPrepareAndFinalize, FusedMoEPermuteExpertsUnpermute,
     _moe_problem_size, _chunk_scales)
+import vllm_gcu.envs as gcu_envs
 
 
 class FusedMoEModularKernel(torch.nn.Module):
@@ -93,8 +94,40 @@ class FusedMoEModularKernel(torch.nn.Module):
         - torch.Tensor: The output tensor after applying the MoE layer.
         """
 
+        if gcu_envs.VLLM_GCU_FORCE_EP_BALANCE:
+            from vllm.distributed import get_ep_group
+            ep_rank = get_ep_group().rank
+
+            num_tokens, num_topk = topk_ids.shape
+            local_num_experts = w1.size(0)
+            ep_size = global_num_experts // local_num_experts
+
+            num_tokens_across_ranks = get_ep_group().all_gather(
+                torch.ones(1, device=topk_ids.device) * num_tokens, dim=0)
+            token_start_loc = torch.zeros(ep_size + 1,
+                                          device=topk_ids.device,
+                                          dtype=topk_ids.dtype)
+            token_start_loc[1:] = num_tokens_across_ranks.cumsum(dim=0)
+
+            step = global_num_experts // num_topk
+            base_expert_ids = torch.arange(0,
+                                           global_num_experts,
+                                           step,
+                                           device=topk_ids.device,
+                                           dtype=topk_ids.dtype)
+
+            token_indices = torch.arange(num_tokens,
+                                         device=topk_ids.device,
+                                         dtype=topk_ids.dtype)
+
+            row_offsets = (token_indices + token_start_loc[ep_rank]) % step
+
+            topk_ids = base_expert_ids.unsqueeze(0) + row_offsets.unsqueeze(1)
+            topk_ids = torch.remainder(topk_ids, global_num_experts)
+
         a1 = hidden_states
-        output = a1 if inplace else torch.zeros_like(a1)
+        # NOTE: output will be filled zeros or shared output in prepare
+        output = a1 if inplace else torch.empty_like(a1)
 
         local_num_experts = w1.size(0)
         if global_num_experts == -1:
@@ -111,6 +144,7 @@ class FusedMoEModularKernel(torch.nn.Module):
              expert_map,
              apply_router_weight_on_input,
              self.fused_experts.quant_config,
+             output,
          )
 
         # Maybe prepare gathered topk_ids and topk_weights from other EP ranks.
