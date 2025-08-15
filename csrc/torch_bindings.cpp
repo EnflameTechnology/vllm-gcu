@@ -83,6 +83,7 @@
 #include "src/topk_softmax.h"
 #include "src/weak_ref_tensor.h"
 #include "src/weight_only_quant.h"
+#include "src/mha_fwd_kvcache_mla.h"
 
 // Note on op signatures:
 // The X_meta signatures are for the meta functions corresponding to op X.
@@ -1312,6 +1313,25 @@ TORCH_LIBRARY_FRAGMENT(CONCAT(_moe, TORCH_EXTENSION_NAME), moe_ops) {
   //     "int moe_block_size, bool replicate_input, bool apply_weights)"
   //     " -> Tensor");
   // conditionally compiled so impl registration is in source file
+}
+
+
+TORCH_LIBRARY_FRAGMENT(CONCAT(_flashmla, TORCH_EXTENSION_NAME), _flashmla_ops) {
+  std::optional<c10::OperatorHandle> handle;
+
+  // MHA forward with KV cache for MLA
+  handle = c10::Dispatcher::singleton().findSchema({"_C::fwd_kvcache_mla", ""});
+  if (!handle.has_value()) {
+    _flashmla_ops.def(
+        "fwd_kvcache_mla("
+        "    Tensor! q, Tensor kcache, Tensor? vcache, "
+        "    int head_size_v, Tensor seqlens_k, Tensor block_table, "
+        "    float softmax_scale, bool is_causal, "
+        "    Tensor tile_scheduler_metadata, "
+        "    Tensor num_splits) -> (Tensor, Tensor)");
+  }
+  _flashmla_ops.impl("fwd_kvcache_mla", torch::kPrivateUse1,
+                    &mha_fwd_kvcache_mla);
 }
 
 REGISTER_EXTENSION(TORCH_EXTENSION_NAME)
