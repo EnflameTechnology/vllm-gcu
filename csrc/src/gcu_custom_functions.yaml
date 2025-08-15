@@ -4,6 +4,9 @@
 - func: paged_attention_v2(Tensor(a!) out, Tensor exp_sums, Tensor max_logits, Tensor tmp_output, Tensor query, Tensor key_cache, Tensor value_cache, int num_kv_heads, float scale, Tensor block_tables, Tensor context_lens, int block_size, int max_context_len, Tensor? alibi_slopes, str kv_cache_dtype, float k_scale, float v_scale, int tp_rank, int blocksparse_local_blocks, int blocksparse_vert_stride, int blocksparse_block_size, int blocksparse_head_sliding_step, float k_zero, float v_zero, Tensor? out_scales) -> ()
   variants: function
 
+- func: mha_fwd_kvcache_mla(Tensor(a!) q, Tensor kcache, Tensor? vcache, int head_size_v, Tensor seqlens_k, Tensor block_table, float softmax_scale, bool is_causal, Tensor tile_scheduler_metadata, Tensor num_splits) -> (Tensor, Tensor)
+  variants: function
+
 - func: silu_and_mul(Tensor(a!) out, Tensor input) -> ()
   variants: function
 
