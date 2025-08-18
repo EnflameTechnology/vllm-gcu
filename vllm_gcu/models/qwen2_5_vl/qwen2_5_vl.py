@@ -57,7 +57,7 @@ from vllm.model_executor.model_loader.weight_utils import default_weight_loader
 from vllm.model_executor.models.module_mapping import MultiModelKeys
 from vllm.multimodal import MULTIMODAL_REGISTRY
 from vllm.multimodal.inputs import MultiModalFieldConfig
-from vllm.platforms import _Backend
+from vllm.platforms import _Backend, current_platform
 from vllm.sequence import IntermediateTensors
 from vllm.transformers_utils.config import uses_mrope
 
@@ -68,16 +68,47 @@ from vllm.model_executor.models.qwen2_vl import (Qwen2VLMultiModalProcessor, Qwe
 from vllm.model_executor.models.utils import (AutoWeightsLoader, WeightsMapper,
                     init_vllm_registered_model, maybe_prefix,
                     merge_multimodal_embeddings)
-from vllm.model_executor.models.vision import get_vit_attn_backend
 from vllm.model_executor.layers.layernorm import RMSNorm
-
-from xformers import ops as xops
-from xformers.ops.fmha.attn_bias import BlockDiagonalMask
 from vllm_gcu.kernels import _custom_ops as ops
+from vllm.attention.selector import (backend_name_to_enum,
+                                     get_global_forced_attn_backend)
+import vllm.envs as envs
 
 logger = init_logger(__name__)
 
 # === Vision Inputs === #
+
+def get_vit_attn_backend(support_fa: bool = False) -> _Backend:
+    """
+    Get the available attention backend for Vision Transformer.
+    """
+    # TODO(Isotr0py): Remove `support_fa` after support FA for all ViTs attn.
+    selected_backend: Optional[_Backend] = get_global_forced_attn_backend()
+    if selected_backend is None:
+        backend_by_env_var: Optional[str] = envs.VLLM_ATTENTION_BACKEND
+        if backend_by_env_var is not None:
+            selected_backend = backend_name_to_enum(backend_by_env_var)
+    if selected_backend is None:
+        if current_platform.is_cuda():
+            device_available = current_platform.has_device_capability(80)
+            if device_available and support_fa:
+                from transformers.utils import is_flash_attn_2_available
+                if is_flash_attn_2_available():
+                    selected_backend = _Backend.FLASH_ATTN
+                else:
+                    logger.warning_once(
+                        "Current `vllm-flash-attn` has a bug inside vision "
+                        "module, so we use xformers backend instead. You can "
+                        "run `pip install flash-attn` to use flash-attention "
+                        "backend.")
+                    selected_backend = _Backend.XFORMERS
+            else:
+                # For Volta and Turing GPUs, use xformers instead.
+                selected_backend = _Backend.XFORMERS
+        else:
+            # workaround for s60 inference
+            selected_backend = _Backend.XFORMERS
+    return selected_backend
 
 
 class Qwen2_5_VLImagePixelInputs(TypedDict):
@@ -240,8 +271,11 @@ class Qwen2_5_VisionAttention(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        attn_bias: torch.Tensor,
+        cu_seqlens: torch.Tensor,
         rotary_pos_emb: torch.Tensor,
+        max_seqlen: Optional[int] = None,  # Only used for Flash Attention
+        seqlens: Optional[list[int]] = None,  # Only used for xFormers
+        attn_bias: Optional[torch.Tensor] = None,  # Only used for xFormers
     ) -> torch.Tensor:
         # [s, b, c] --> [s, b, head * 3 * head_dim]
         x, _ = self.qkv(x)
@@ -285,12 +319,32 @@ class Qwen2_5_VisionAttention(nn.Module):
             q = q.reshape(q_shape)
             k = k.reshape(k_shape)
 
-        context_layer = xops.memory_efficient_attention_forward(
-            q, k, v, attn_bias=attn_bias, p=0, scale=None)
+        if self.attn_backend == _Backend.FLASH_ATTN:
+            from flash_attn import flash_attn_varlen_func
+            q, k, v = (rearrange(x, "b s ... -> (b s) ...") for x in [q, k, v])
+            output = flash_attn_varlen_func(q,
+                                            k,
+                                            v,
+                                            cu_seqlens_q=cu_seqlens,
+                                            cu_seqlens_k=cu_seqlens,
+                                            max_seqlen_q=max_seqlen,
+                                            max_seqlen_k=max_seqlen,
+                                            dropout_p=0,
+                                            causal=False)
 
+            context_layer = rearrange(output,
+                                      "(b s) ... -> b s ...",
+                                      b=batch_size)
+        elif self.attn_backend == _Backend.XFORMERS:
+            from xformers import ops as xops
+            context_layer = xops.memory_efficient_attention_forward(
+                q, k, v, attn_bias=attn_bias, p=0, scale=None)
+        else:
+            raise RuntimeError(
+                f"Qwen2.5-VL does not support {self.attn_backend} backend now."
+            )
         context_layer = rearrange(context_layer,
-                                  "b s h d -> s b (h d)").contiguous()
-
+                                    "b s h d -> s b (h d)").contiguous()
         output, _ = self.proj(context_layer)
         return output
 
@@ -343,11 +397,21 @@ class Qwen2_5_VisionBlock(nn.Module):
                                      quant_config=quant_config,
                                      prefix=f"{prefix}.mlp")
 
-    def forward(self, x: torch.Tensor, attn_bias: torch.Tensor,
-                rotary_pos_emb: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        cu_seqlens: torch.Tensor,
+        rotary_pos_emb: torch.Tensor,
+        max_seqlen: Optional[int] = None,  # Only used for Flash Attention
+        seqlens: Optional[list[int]] = None,  # Only used for xFormers
+        attn_bias: Optional[torch.Tensor] = None,  # Only used for xFormers
+    ) -> torch.Tensor:
         x = x + self.attn(self.norm1(x),
-                          attn_bias=attn_bias,
-                          rotary_pos_emb=rotary_pos_emb)
+                          cu_seqlens=cu_seqlens,
+                          rotary_pos_emb=rotary_pos_emb,
+                          max_seqlen=max_seqlen,
+                          seqlens=seqlens,
+                          attn_bias=attn_bias)
         x = x + self.mlp(self.norm2(x))
         return x
 
@@ -508,6 +572,7 @@ class Qwen2_5_VisionTransformer(nn.Module):
             quant_config=quant_config,
             prefix=f"{prefix}.merger",
         )
+        self.attn_backend: _Backend = get_vit_attn_backend(support_fa=True)
 
     @property
     def dtype(self) -> torch.dtype:
@@ -614,18 +679,41 @@ class Qwen2_5_VisionTransformer(nn.Module):
         # transformers
         hidden_states = hidden_states.unsqueeze(1)
         
-        cu_seqlens_attn_bias = BlockDiagonalMask.from_seqlens(q_seqlen=(cu_seqlens[1:] - cu_seqlens[:-1]).tolist(),
-                                                              kv_seqlen=None)
-        cu__window_seqlens_attn_bias = BlockDiagonalMask.from_seqlens(q_seqlen=(cu_window_seqlens[1:] - cu_window_seqlens[:-1]).tolist(),
-                                                              kv_seqlen=None)
+        max_seqlen = None
+        seqlens = None
+        cu_seqlens_attn_bias = None
+        cu_window_seqlens_attn_bias = None
+        if self.attn_backend == _Backend.FLASH_ATTN:
+            max_seqlen = (cu_seqlens[1:] - cu_seqlens[:-1]).max().item()
+        elif self.attn_backend == _Backend.XFORMERS:
+            from xformers.ops.fmha.attn_bias import BlockDiagonalMask
+            seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).tolist()
+            cu_seqlens_attn_bias = BlockDiagonalMask.from_seqlens(
+                q_seqlen=(cu_seqlens[1:] - cu_seqlens[:-1]).tolist(),
+                kv_seqlen=None
+            )
+            cu_window_seqlens_attn_bias = BlockDiagonalMask.from_seqlens(
+                q_seqlen=(cu_window_seqlens[1:] - cu_window_seqlens[:-1]).tolist(),
+                kv_seqlen=None
+            )
+        else:
+            raise RuntimeError(
+                f"Qwen2.5-VL does not support {self.attn_backend} backend now."
+            )
         for layer_num, blk in enumerate(self.blocks):
             if layer_num in self.fullatt_block_indexes:
                 cu_attn_bias_now = cu_seqlens_attn_bias
+                cu_seqlens_now = cu_seqlens
             else:
-                cu_attn_bias_now = cu__window_seqlens_attn_bias
+                cu_attn_bias_now = cu_window_seqlens_attn_bias
+                cu_seqlens_now = cu_window_seqlens
             hidden_states = blk(hidden_states,
+                                cu_seqlens=cu_seqlens_now,
+                                rotary_pos_emb=rotary_pos_emb,
+                                max_seqlen=max_seqlen,
+                                seqlens=seqlens,
                                 attn_bias=cu_attn_bias_now,
-                                rotary_pos_emb=rotary_pos_emb)
+                                )
 
         # adapter
         hidden_states = self.merger(hidden_states)
