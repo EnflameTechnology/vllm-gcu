@@ -68,19 +68,16 @@ def all_to_all_cpu(
 def all_to_all_v2_ref(
     output,
     input,
-    output_split_sizes=None,
-    input_split_sizes=None,
+    output_split_sizes,
+    input_split_sizes,
     group=None,
-    flag=None,
+    flag=0,
     async_op = False,
 ) -> None:
     assert output.is_contiguous(), 'output is not contiguous'
     assert input.is_contiguous(), 'input is not contiguous'
-    world_size = torch.distributed.get_world_size(group)
-    if output_split_sizes is None:
-        output_split_sizes = [output.shape[0] // world_size] * world_size
-    if input_split_sizes is None:
-        input_split_sizes = [input.shape[0] // world_size] * world_size
+    assert output_split_sizes is not None
+    assert input_split_sizes is not None
 
     if flag == 1:
         torch.distributed.all_to_all_single(
@@ -98,23 +95,3 @@ def all_to_all_v2_ref(
         group=group,
         async_op=async_op,
     )
-
-
-class GroupWrapper:
-    # proxy
-    def __init__(self, group: GroupCoordinator):
-        self.group = group
-        self.group.device = torch.device(f"gcu:{self.group.local_rank}")
-        self.group.pynccl_comm = PyEcclCommunicator(
-            group=self.group.cpu_group, device=self.group.device
-        )
-
-    def __getattr__(self, method: str):
-        return getattr(self.group, method)
-
-    def all_to_all_single(
-        self, output, input, output_split_sizes=None, input_split_sizes=None
-    ):
-        return torch.distributed.all_to_all_single(
-            output, input, output_split_sizes, input_split_sizes
-        )
