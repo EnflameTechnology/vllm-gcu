@@ -123,7 +123,7 @@ python3 -m pip install xformers-<version>.whl
 #### Step 2: Build and Install vLLM-GCU from source code
 
 ```bash
-git clone https://github.com/vllm-gcu.git
+git clone https://github.com/enflame-tech/vllm-gcu.git
 cd vllm-gcu
 python3 setup.py bdist_wheel
 python3 -m pip install ./dist/vllm_gcu-0.8.0+<version>.whl

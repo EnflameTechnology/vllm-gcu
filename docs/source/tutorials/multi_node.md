@@ -20,7 +20,7 @@ Combined (DP \* TP), each DP rank can manage multiple TP workers. Expert layers 
 
 * 4 physical machines connected to the same high-speed InfiniBand (IB) network.
 * All nodes should have the GCU hardware connected and powered on.
-* All required driver and software packages should be placed under a consistent directory on all machines: `/data/Yidian_test/`
+* All required driver and software packages should be placed under a consistent directory on all machines, like `/data/test/`
 
 ### Network Configuration
 
@@ -55,7 +55,7 @@ docker load -i ubuntu2204_llm.tar
 
 ```bash
 docker run -it --name test_env \
-  -v /data/Yidian_test:/home/workspace \
+  -v /data/test:/home/workspace \
   -e ENFLAME_VISIBLE_DEVICES=all \
   -e TZ=Asia/Shanghai \
   --ipc=host -u root \

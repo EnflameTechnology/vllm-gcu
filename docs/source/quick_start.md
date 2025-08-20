@@ -49,17 +49,18 @@ for output in outputs:
 
 ### Option 2: Running OpenAI-API Compatible Server
 
-Start vLLM server for Qwen 32B on two GCUs:
+Start vLLM server for Qwen3 32B MoE model on two GCUs:
 
 ```bash
 python3 -m vllm.entrypoints.openai.api_server \
- --model [Qwen2.5-32B-Instruct-GPTQ-Int8 folder path] \
+ --model [folder of Qwen/Qwen3-Coder-30B-A3B-Instruct] \
  --tensor-parallel-size 2 \
  --max-model-len 32768 \
  --disable-log-requests \
  --block-size=64 \
- --dtype=float16 \
+ --dtype=bfloat16 \
  --device gcu \
+ --gpu-memory-utilization 0.9  \
  --trust-remote-code
 ```
 
@@ -75,7 +76,7 @@ Send request(s) with curl or any OpenAI-API compatible clients
 curl http://localhost:8000/v1/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "Qwen/Qwen2.5-0.5B-Instruct",
+    "model": "Qwen/Qwen3-Coder-30B-A3B-Instruct",
     "prompt": "Please talk about China in 100 words.",
     "max_tokens": 256,
     "temperature": 0
