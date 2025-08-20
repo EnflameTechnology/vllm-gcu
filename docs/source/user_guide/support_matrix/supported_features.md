@@ -71,19 +71,3 @@ Refer to the [vLLM V1 Engine User Guide][v1_user_guide] for upstream feature def
 * 🔵 **Experimental**: Prototype-level support; APIs and behavior may change.
 * 🟡 **Planned**: Support planned or in progress.
 * 🔴 **No Plan / Deprecated**: Not supported or deprecated upstream.
-
----
-
-## References
-
-* [v1_user_guide]: https://docs.vllm.ai/en/latest/getting_started/v1_user_guide.html
-* [cp]: https://docs.vllm.ai/en/stable/performance/optimization.html#chunked-prefill
-* [apc]: https://github.com/vllm-project/vllm-gcu/issues/732
-* [multimodal]: https://vllm-gcu.readthedocs.io/en/latest/tutorials/single_gcu_multimodal.html
-* [multilora]: https://github.com/vllm-project/vllm-gcu/issues/396
-* [v1 multilora]: https://github.com/vllm-project/vllm-gcu/pull/893
-* [graph_mode]: https://github.com/vllm-project/vllm-gcu/issues/767
-* [guided_decoding]: https://github.com/vllm-project/vllm-gcu/issues/177
-* [best_of]: https://github.com/vllm-project/vllm/issues/13361
-* [v1_rfc]: https://github.com/vllm-project/vllm/issues/8779
-* [v1_scheduler]: https://github.com/vllm-project/vllm/blob/main/vllm/v1/core/sched/scheduler.py
