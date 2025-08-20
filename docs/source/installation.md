@@ -45,11 +45,11 @@ Expected output includes driver version, hardware type, temperature, power, memo
 | TEMP   Dpm   Pwr(Usage/Cap) | Mem     GCU Virt | DUsed       SN            |
 |----------------------------------------------------------------------------|
 | 0      Enflame S60          | 33.6.5           | 00:3d:00.0  Enable        |
-| 54℃    Sleep    101W / 300W | 42976MiB Disable | 0%          A004J40510014 |
+| -      Sleep    -           | 49120MiB Disable | 0%          xxx |
 +----------------------------------------------------------------------------+
 |----------------------------------------------------------------------------|
 | 1      Enflame S60          | 33.6.5           | 00:3e:00.0  Disable       |
-| 53℃    Sleep    99W / 300W  | 49120MiB Disable | 0%          A004J40510013 |
+| -      Sleep    -           | 49120MiB Disable | 0%          xxx |
 +----------------------------------------------------------------------------+
 ```
 
@@ -66,7 +66,7 @@ Choose one of the following methods depending on your usage and environment.
 
 **Python3.10+:** 
 
-Before installation, msake sure you have python3.10+ installed and the default python version is 3.10+
+Before installation, make sure you have python3.10+ installed and the default python version is 3.10+
 
 ```bash
 # check default python version 
@@ -183,7 +183,6 @@ python3 example.py
 
 ## Notes
 
-* Enflame recommends using **GCU quantized models** generated via **TopsCompressor**.
+* Enflame recommends using **GCU quantized models** generated via [**TopsCompressor**](user_guide/feature_guide/quantization.md).
 * If encountering compile errors with `xformers`, ensure GCC >= 9 and C++17 support.
-* Some GCU operators are compiled during install. Use `COMPILE_CUSTOM_KERNELS=0` to skip if needed.
-* For full quantization support (INT8 KV cache, GPTQ, etc.), confirm that the quantization config files are in place.
+* For full quantization support (AWQ, GPTQ, etc.), confirm that the quantization config files are in place.
