@@ -4,22 +4,22 @@
 This feature is currently **experimental**. Future versions may introduce behavioral changes to configuration, model coverage, or performance characteristics.
 ```
 
-vLLM-GCU supports graph execution to improve performance for certain models. This guide explains how to use graph mode. Graph mode is only available with the **V1 Engine**.
+vLLM-GCU supports graph execution to improve performance for certain models. This guide explains how to use graph mode.
 
-> ✅ Graph mode is **enabled by default** for supported models on V1 Engine.
+> ✅ Graph mode is **enabled by default** for supported models.
 
 ## Getting Started
 
-From `v0.9.1`, vLLM enables graph mode automatically for supported models when using the V1 engine. If you encounter issues, consider:
+From `v0.8.0`, vLLM-GCU enables graph mode automatically for supported models. If you encounter issues, consider:
 
 * Falling back to eager mode by setting `enforce_eager=True`.
 * Submitting a GitHub issue for support.
 
 ---
 
-## Using TopGraph (Default)
+## Using GcuGraph (Default)
 
-No extra configuration is needed for TopGraph. Simply load a supported model (e.g., Qwen2.5) with the V1 Engine:
+No extra configuration is needed for GcuGraph. Simply load a supported model (e.g., Qwen2.5):
 
 **Offline example:**
 

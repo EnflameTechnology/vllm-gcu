@@ -1,17 +1,12 @@
 # FAQs
 
-## Version Specific FAQs
-
-* [v0.7.3.post1 FAQ & Feedback](https://github.com/vllm-project/vllm/issues)
-* [v0.9.2rc1 FAQ & Feedback](https://github.com/vllm-project/vllm/issues)
-
 ## General FAQs
 
 ### 1. What devices are currently supported?
 
 vLLM-GCU currently supports:
 
-* Enflame **S60** Training Card
+* Enflame **S60** Inference Card
 * Enflame-compatible GCU systems running with **TopsRider ≥ i3x 3.4**
 
 > Check availability using `efsmi`.
@@ -41,61 +36,57 @@ vLLM-GCU supports most Hugging Face-compatible transformer models, including:
 * `ChatGLM`
 * `InternLM`
 
-For full compatibility and graph-mode acceleration, see [Model Support Matrix (GCU)](https://github.com/enflame-tech/vllm-gcu/blob/main/docs/model_support.md).
+For full compatibility and graph-mode acceleration, see [Model Support Matrix (GCU)](user_guide/support_matrix/supported_models.md).
 
 ---
 
 ### 4. What features does vLLM-GCU support?
 
-* Graph-mode execution on GCU
 * OpenAI-compatible REST API
+* Graph-mode execution on GCU
 * FP16 / BF16 precision
 * 4-bit and 8-bit quantization
 * KV Cache for efficient decoding
-* Tensor parallelism and pipeline parallelism on multi-card setups
-* Static / dynamic batch (continuous batching)
-* Offline batch inference
-* Int8 KV Cache
+* Tensor/Pipeline parallelism on multi-card setups
 * Chunked Prefill
+* Static/dynamic batch (continuous batching)
+* Offline batch inference
 
 ---
 
 ### 5. How is the performance on GCU?
 
-vLLM-GCU accelerates models like `Qwen2.5`, `Qwen3`, `LLaMa3`, `DeepSeek`, and `InternLM` by using graph-mode execution. You can further optimize with:
+vLLM-GCU accelerates models like `Qwen3`, `LLaMa3`, `GLM4` and `DeepSeek` by using graph-mode execution by default. You can disable graph-mode by setting:
 
-* Enable `--enable-graph-mode`
-* Using parallel inference by setting `--tensor-parallel-size`
+```shell
+--enforce-eager=True
+```
+
+Additionally, large models can be inferenced with multi-gcus by setting `--tensor-parallel-size`.
 
 ---
 
 ### 6. How does vLLM-GCU integrate with vLLM?
 
-It is implemented as a **plugin backend** to vLLM using Enflame’s GCU kernel interface. Make sure vllm-gcu and vllm use **matching versions** (e.g. `vllm==0.9.1`, `vllm-gcu==0.9.1`).
+vLLM-GCU is implemented as a **plugin** to vLLM using Enflame’s GCU kernel interface. Make sure vLLM-GCU and vLLM use **matching versions** (e.g. `vllm==0.8.0`, `vllm-gcu==0.8.0`).
 
 ---
 
 ### 7. Does vLLM-GCU support quantization?
 
-Yes. vLLM-GCU supports **w8a8 (GPTQ, 8-bit)** and **w4a16 (AWQ 4-bit)** quantization using GCU-optimized kernels.
+Yes. vLLM-GCU supports both **GPTQ** (8-bit) and **AWQ** (4-bit/8-bit) quantizations using GCU-optimized kernels.
 
 ---
 
-### 8. How to run AWQ (w4a16) DeepSeek or Qwen models?
+### 8. How to run DeepSeek and Qwen3 MoE models?
 
-Follow the model tutorial and add `--quantization w4a16` to `vllm serve` or `LLM()` initialization.
+Follow the model tutorial by `vllm serve` Qwen3 MoE models directly or refer to [Multi-Node Inference](tutorials/multi_node.md) for DeepSeek models.
 
 ---
 
 ### 9. How to avoid Out Of Memory (OOM) on GCU?
 
-* Reduce `--gpu-memory-utilization`, default is `0.9`
-* Enable Enflame memory optimizations:
-
-```bash
-export TOPS_ENABLE_VMEM=1
-export TOPS_MEM_POOL_ENABLE=1
-```
+* Reduce `--gpu-memory-utilization` (default is `0.9`) or enable chunked prefill. 
 
 ---
 
@@ -118,14 +109,7 @@ pip install --no-cache-dir .
 
 ### 11. How to ensure deterministic results?
 
-Use greedy decoding and set the following envs:
-
-```bash
-export GCU_DETERMINISTIC=1
-export TOPS_DISABLE_LCOC=1
-```
-
-And set temperature to zero:
+Use greedy decoding and set sampling parameter `temperature` to zero:
 
 ```python
 SamplingParams(temperature=0)
@@ -133,11 +117,9 @@ SamplingParams(temperature=0)
 
 ---
 
-### 12. How to contact the GCU community?
+### 12. How to contact the vLLM-GCU community?
 
 * [GitHub Issues](https://github.com/enflame-tech/vllm-gcu/issues)
 * Join our **WeChat dev group** (QR code in the repo)
 * Follow **weekly office hours** via Tencent Meeting (announced on GitHub)
 * Discuss in [vLLM Forum GCU Channel](https://discuss.vllm.ai)
-
----
