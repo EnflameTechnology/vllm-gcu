@@ -252,9 +252,8 @@ class GCUPlatform(Platform):
                             "after_dump",
                         ]
                     )
-            # TODO: v1
-            if not envs.VLLM_USE_V1 and \
-                    vllm_config.parallel_config.data_parallel_size > 1:
+
+            if vllm_config.parallel_config.data_parallel_size > 1:
                 compilation_config.compile_sizes.append(0)
                 compilation_config.cudagraph_capture_sizes.append(0)  # capture 0 graph
 
