@@ -2,8 +2,10 @@ import torch
 from unittest.mock import patch
 import os
 import gc
+import contextlib
 import numpy as np
 from typing import Optional, Union
+from importlib.util import find_spec
 
 # import vllm.device_allocator
 from vllm.utils import MemorySnapshot, GiB_bytes
@@ -280,7 +282,15 @@ class GCUWorker(Worker):
         scheduler_output,
     ):
         num_scheduled_tokens = scheduler_output.num_scheduled_tokens
-        with torch.profiler.record_function(f"execute_{num_scheduled_tokens}"):
+
+        has_tx = find_spec("topstx") is not None
+        if has_tx:
+            import topstx
+            tx_ctx = topstx.annotate(f"execute_{num_scheduled_tokens}", color="green", domain="VLLM")
+        else:
+            tx_ctx = contextlib.nullcontext()
+
+        with tx_ctx:
             return super().execute_model(scheduler_output)
 
 

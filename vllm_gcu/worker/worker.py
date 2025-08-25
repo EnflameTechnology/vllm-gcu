@@ -2,8 +2,10 @@
 
 import os
 import gc
+import contextlib
 from typing import Optional, Tuple, Type
 from datetime import timedelta
+from importlib.util import find_spec
 
 import torch
 import torch.distributed
@@ -205,7 +207,14 @@ class GCUWorker(Worker):
 
             pre_fix = "_".join(pre_fix_parts)
 
-        with torch.profiler.record_function(f"execute_{pre_fix}"):
+        has_tx = find_spec("topstx") is not None
+        if has_tx:
+            import topstx
+            tx_ctx = topstx.annotate(f"execute_{pre_fix}", color="green", domain="VLLM")
+        else:
+            tx_ctx = contextlib.nullcontext()
+
+        with tx_ctx:
             return super().execute_model(execute_model_req)
 
 
