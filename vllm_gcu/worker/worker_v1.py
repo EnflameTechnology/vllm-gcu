@@ -26,10 +26,6 @@ with patch("vllm.forward_context.set_forward_context", set_gcu_forward_context):
 
 
 class GCUModelRunner(GPUModelRunner):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.input_ids = self.input_ids.to(torch.int64)
-
     def get_dp_padding(self,
                        num_tokens: int) -> tuple[int, Optional[torch.Tensor]]:
         return 0, None
