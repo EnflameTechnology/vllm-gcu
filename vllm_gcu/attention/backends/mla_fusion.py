@@ -240,7 +240,7 @@ class GCUMLAFusionImpl(GCUMLAImpl):
                 dtype=decode_q.dtype,
                 device=decode_q.device,
             )
-            # decode_ql_nope = self._k_up_proj(decode_q_concat[...,:self.kv_lora_rank],decode_q_nope)
+            self._k_up_proj(decode_q_concat[...,:self.kv_lora_rank],decode_q_nope)
             self.rope_with_kvcache(
                 decode_q_concat[...,self.kv_lora_rank:],
                 None,
