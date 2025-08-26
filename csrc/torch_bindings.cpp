@@ -29,6 +29,7 @@
 #include "src/fused_grouped_topk.h"
 #include "src/fused_moe_kernel.h"
 #include "src/fused_moe_quant_kernel.h"
+#include "src/fused_moe_quant_kernel_ex.h"
 #include "src/fused_qkv_gemm_quant.h"
 #include "src/fused_qkv_proj.h"
 #include "src/gather_cache.h"
@@ -64,6 +65,8 @@
 #include "src/rms_norm.h"
 #include "src/rms_norm_per_token_group_quant_fp8.h"
 #include "src/rms_norm_static_fp8_quant.h"
+#include "src/silu_mul_static_fp8_quant.h"
+#include "src/mul_static_fp8_quant.h"
 #include "src/rms_norm_static_int8_quant.h"
 #include "src/rotary_embedding.h"
 #include "src/rotary_embedding_with_kv_cache.h"
@@ -272,6 +275,25 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
   }
   ops.impl("rms_norm_static_fp8_quant", torch::kPrivateUse1,
            &rms_norm_static_fp8_quant);
+
+  handle = c10::Dispatcher::singleton().findSchema(
+      {"_C::silu_mul_static_fp8_quant", ""});
+  if (!handle.has_value()) {
+    ops.def(
+        "silu_mul_static_fp8_quant(Tensor(a!) out, Tensor input, Tensor scale, "
+        "Tensor real_num_tokens) -> ()");
+  }
+  ops.impl("silu_mul_static_fp8_quant", torch::kPrivateUse1,
+          &silu_mul_static_fp8_quant);
+
+  handle = c10::Dispatcher::singleton().findSchema(
+    {"_C::mul_static_fp8_quant", ""});
+  if (!handle.has_value()) {
+    ops.def(
+        "mul_static_fp8_quant(Tensor(a!) out, Tensor input, Tensor scale, "
+        "Tensor real_num_tokens) -> ()");
+  }
+  ops.impl("mul_static_fp8_quant", torch::kPrivateUse1, &mul_static_fp8_quant);
 
   // In-place fused Add and RMS Normalization.
   handle = c10::Dispatcher::singleton().findSchema(
@@ -782,6 +804,21 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
   }
   ops.impl("fused_moe_quant_kernel", c10::kPrivateUse1,
            &fused_moe_quant_kernel);
+
+  handle = c10::Dispatcher::singleton().findSchema(
+    {"_C::fused_moe_quant_kernel_ex", ""});
+  if (!handle.has_value()) {
+    ops.def(
+        "fused_moe_quant_kernel_ex(Tensor(a!) C, Tensor A, "
+        "Tensor B, Tensor A_scale, Tensor B_scale, Tensor B_zero, "
+        "Tensor? bias, Tensor topk_weights, Tensor topk_ids, "
+        "Tensor sorted_token_ids, Tensor experts_ids, "
+        "Tensor num_tokens_post_pad, "
+        "Tensor? real_token_num, bool mul_routed_weight, int topk, "
+        "int block_size, int group_k, int group_n) -> ()");
+  }
+  ops.impl("fused_moe_quant_kernel_ex", c10::kPrivateUse1,
+    &fused_moe_quant_kernel_ex);
 
   handle = c10::Dispatcher::singleton().findSchema(
       {"_C::context_attention_forward", ""});
