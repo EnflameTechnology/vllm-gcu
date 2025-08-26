@@ -61,6 +61,8 @@ class GCUPlatform(Platform):
             if use_v1:
                 if selected_backend == _Backend.FLASHMLA:
                     return "vllm.v1.attention.backends.mla.flashmla.FlashMLABackend"
+                if gcu_envs.VLLM_GCU_DEEPSEEK_FUSION:
+                    return "vllm_gcu.attention.backends.mla_v1_fusion.GCUMLAFusionBackend"
                 else:
                     return "vllm_gcu.attention.backends.mla_v1.GCUMLABackend"
             else:
