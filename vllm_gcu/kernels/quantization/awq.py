@@ -2,6 +2,7 @@ from typing import List, Optional
 
 import torch
 from vllm.model_executor.layers.linear import LinearBase, UnquantizedLinearMethod
+from vllm.model_executor.layers.quantization.kv_cache import BaseKVCacheMethod
 from vllm.model_executor.layers.quantization.awq import (
     AWQConfig,
     AWQLinearMethod,
@@ -41,10 +42,14 @@ class AWQGCUConfig(AWQConfig):
     def get_quant_method(
         self, layer: torch.nn.Module, prefix: str
     ) -> Optional["AWQGCULinearMethod"]:
+        from vllm.attention.layer import Attention
+
         if isinstance(layer, LinearBase):
             if is_layer_skipped_awq(prefix, self.modules_to_not_convert):
                 return UnquantizedLinearMethod()
             return AWQGCULinearMethod(self)
+        elif isinstance(layer, Attention):
+            return BaseKVCacheMethod(self)
         return None
 
     @classmethod

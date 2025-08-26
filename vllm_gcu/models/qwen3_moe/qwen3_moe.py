@@ -56,6 +56,9 @@ from vllm.model_executor.models.utils import (AutoWeightsLoader, extract_layer_i
                     is_pp_missing_parameter,
                     make_empty_intermediate_tensors_factory, make_layers,
                     maybe_prefix)
+from vllm.model_executor.model_loader.weight_utils import (
+    default_weight_loader, maybe_remap_kv_scale_name)
+
 
 logger = init_logger(__name__)
 
@@ -455,6 +458,9 @@ class Qwen3MoeModel(nn.Module):
                     if is_pp_missing_parameter(name, self):
                         continue
                     # Remapping the name of FP8 kv-scale.
+                    name = maybe_remap_kv_scale_name(name, params_dict)
+                    if name is None:
+                        continue
                     if name.endswith("kv_scale"):
                         remapped_kv_scale_name = name.replace(
                             ".kv_scale", ".attn.kv_scale")

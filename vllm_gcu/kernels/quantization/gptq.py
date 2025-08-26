@@ -6,6 +6,7 @@ import torch
 from torch.nn.parameter import Parameter
 
 from vllm.model_executor.layers.linear import LinearBase
+from vllm.model_executor.layers.quantization.kv_cache import BaseKVCacheMethod
 from vllm.model_executor.layers.quantization.gptq import (
     ExllamaState,
     GPTQConfig,
@@ -80,10 +81,14 @@ class GPTQGCUConfig(GPTQConfig):
     def get_quant_method(
         self, layer: torch.nn.Module, prefix: str
     ) -> Optional["GPTQLinearMethod"]:
+        from vllm.attention.layer import Attention
+
         if isinstance(layer, LinearBase) or (
             isinstance(layer, ParallelLMHead) and self.lm_head_quantized
         ):
             return GPTQGCULinearMethod(self)
+        elif isinstance(layer, Attention):
+            return BaseKVCacheMethod(self)
         return None
 
     @classmethod
