@@ -11,6 +11,7 @@ from vllm.model_executor.layers.fused_moe.layer import (
     FusedMoeWeightScaleSupported,
 )
 from vllm.model_executor.layers.linear import LinearBase, UnquantizedLinearMethod
+from vllm.model_executor.layers.quantization.kv_cache import BaseKVCacheMethod
 from vllm.model_executor.layers.quantization.base_config import QuantizationConfig
 from vllm.model_executor.layers.quantization.moe_wna16 import (
     is_layer_skipped_quant,
@@ -92,6 +93,8 @@ class MoeWNA16GCUConfig(QuantizationConfig):
         )
 
     def get_quant_method(self, layer: torch.nn.Module, prefix: str):
+        from vllm.attention.layer import Attention
+
         if is_layer_skipped_quant(prefix, self.modules_to_not_convert):
             return UnquantizedLinearMethod()
         elif isinstance(layer, LinearBase):
@@ -111,6 +114,8 @@ class MoeWNA16GCUConfig(QuantizationConfig):
                 raise ValueError("moe_wna16_gcu only support gptq and awq.")
         elif isinstance(layer, FusedMoE):
             return MoeWNA16GCUMethod(self)
+        elif isinstance(layer, Attention):
+            return BaseKVCacheMethod(self)
         return None
 
     @classmethod
