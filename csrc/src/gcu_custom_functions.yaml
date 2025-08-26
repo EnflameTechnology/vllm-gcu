@@ -55,6 +55,9 @@
 - func: fused_moe_quant_kernel(Tensor(a!) C, Tensor A, Tensor B, Tensor? A_scale, Tensor B_scale, int gs, Tensor? B_zp, Tensor topk_weights, Tensor topk_ids, Tensor sorted_token_ids, Tensor experts_ids, Tensor num_tokens_post_pad, bool mul_routed_weight, int topk, int block_size, Tensor? bias, Tensor? real_token_num) -> ()
   variants: function
 
+- func: fused_moe_quant_kernel_ex(Tensor(a!) C, Tensor A, Tensor B, Tensor A_scale, Tensor B_scale, Tensor B_zero, Tensor? bias, Tensor topk_weights, Tensor topk_ids, Tensor sorted_token_ids, Tensor experts_ids, Tensor num_tokens_post_pad, Tensor? real_token_num, bool mul_routed_weight, int topk, int block_size, int group_k, int group_n) -> ()
+  variants: function
+
 - func: topk_softmax(Tensor(a!) topk_weights, Tensor(a!) topk_indices, Tensor(a!) token_expert_indices, Tensor(a!) gating_output) -> ()
   variants: function
 
@@ -236,4 +239,10 @@
   variants: function
 
 - func: dynamic_per_token_group_fp8_quant_with_size(Tensor(a!) output, Tensor(a!) scale, Tensor input, Tensor real_size, int group_size) -> ()
+  variants: function
+
+- func: silu_mul_static_fp8_quant(Tensor(a!) out, Tensor input, Tensor scale, Tensor real_num_tokens) -> ()
+  variants: function
+
+- func: mul_static_fp8_quant(Tensor(a!) out, Tensor input, Tensor scale, Tensor real_num_tokens) -> ()
   variants: function
