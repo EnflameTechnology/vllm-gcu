@@ -1,4 +1,3 @@
-import argparse
 import os
 import dataclasses
 import json
@@ -9,6 +8,7 @@ import csv
 from collections.abc import Sequence
 
 from vllm.engine.arg_utils import AsyncEngineArgs, EngineArgs
+from vllm.utils import FlexibleArgumentParser
 from vllm import LLM
 import mteb
 import torch
@@ -132,7 +132,7 @@ def save_to_csv(csv_file, data):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
+    parser = FlexibleArgumentParser(
         description="Benchmark embedding model by mteb"
     )
     parser.add_argument("--backend", type=str, choices=["vllm"], default="vllm")
