@@ -1,4 +1,3 @@
-import argparse
 import dataclasses
 from vllm.engine.arg_utils import EngineArgs
 from typing import Optional, Type
@@ -12,6 +11,7 @@ from datetime import datetime
 
 from vllm_utils.evaluate_datasets.configs.models.reranker.reranker import BaseReranker, VLLMReranker
 from vllm_utils.evaluate_datasets.configs.datasets.beir.beir import BEIRDataset
+from vllm.utils import FlexibleArgumentParser
 
 from rank_bm25 import BM25Okapi
 import numpy as np
@@ -21,7 +21,7 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-def save_results_to_csv(args: argparse.Namespace, metrics: dict, csv_path: str = "evaluation_results.csv"):
+def save_results_to_csv(args: FlexibleArgumentParser, metrics: dict, csv_path: str = "evaluation_results.csv"):
     """Save both input arguments and evaluation metrics to CSV file"""
     # Prepare data for CSV
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -122,7 +122,7 @@ class BEIREvaluator:
 
         return initial_metrics, rerank_metrics
 
-def main(args: argparse.Namespace):
+def main(args: FlexibleArgumentParser):
     """Main function that takes args as parameter"""
     logging.info(f"Running with arguments: {vars(args)}")
 
@@ -171,7 +171,7 @@ def main(args: argparse.Namespace):
 
 if __name__ == '__main__':
     # create parser
-    parser = argparse.ArgumentParser(description='Evaluate rerankers on BEIR datasets')
+    parser = FlexibleArgumentParser(description='Evaluate rerankers on BEIR datasets')
 
     # add evaluation related parameters (before vLLM parameters)
     parser.add_argument('--dataset', type=str, required=True,
