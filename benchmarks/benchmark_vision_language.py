@@ -114,9 +114,15 @@ def run_vllm(
     end = time.perf_counter()
     print(f"run {num_iters} cost {end-start}")
     if not engine_args.disable_log_stats:
-        time_per_output_token = llm.llm_engine.stat_loggers[
-            "prometheus"
-        ].metrics.histogram_time_per_output_token
+        eng = llm.llm_engine
+        if hasattr(eng, "stat_loggers"):
+            # for v0 
+            time_per_output_token = eng.stat_loggers[
+                'prometheus'
+                ].metrics.histogram_time_per_output_token
+        elif hasattr(eng, 'stat_logger'):
+            # for v1 
+            time_per_output_token = eng.stat_logger.histogram_time_per_output_token
         samples = time_per_output_token.collect()[0].samples
         decode_elapsed_time = (
             samples[-1].value / num_iters if len(samples) > 0 else None
