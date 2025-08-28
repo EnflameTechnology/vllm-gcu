@@ -39,3 +39,4 @@ def register_custom_models():
     ModelRegistry.register_model("Glm4ForCausalLM", "vllm_gcu.models.glm4.glm4:Glm4ForCausalLM")
     ModelRegistry.register_model("QuantDeepseekForCausalLM", "vllm_gcu.models.deepseek_moe_quant.deepseek_moe_quant:QuantDeepseekForCausalLM")
     ModelRegistry.register_model("QuantMixtralForCausalLM", "vllm_gcu.models.mixtral_quant.mixtral_quant:MixtralForCausalLM")
+    ModelRegistry.register_model("DeepseekVLV2ForCausalLM", "vllm_gcu.models.deepseek_vl2.deepseek_vl2:DeepseekVLV2ForCausalLMGCU")
