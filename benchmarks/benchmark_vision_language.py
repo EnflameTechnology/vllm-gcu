@@ -1,4 +1,3 @@
-import argparse
 import dataclasses
 import json
 import logging
@@ -13,6 +12,7 @@ import numpy as np
 from tqdm import tqdm
 from vllm import RequestOutput
 from vllm.engine.arg_utils import AsyncEngineArgs, EngineArgs
+from vllm.utils import FlexibleArgumentParser
 from vllm_utils.vision_language.datasets import VLM_DATASETS
 from vllm_utils.vision_language.interface import (
     dataset_evaluate,
@@ -73,7 +73,9 @@ def run_vllm(
                 prometheus.clear()
 
     if not engine_args.disable_log_stats:
-        clear(llm.llm_engine.stat_loggers["prometheus"].metrics)
+        if hasattr(llm.llm_engine, 'stat_loggers'):
+            clear(llm.llm_engine.stat_loggers["prometheus"].metrics)
+
 
     start = time.perf_counter()
     num_request = len(requests.mm_data_list)
@@ -193,7 +195,7 @@ def save_to_csv(csv_file, data):
     return csv_file
 
 
-def main(args: argparse.Namespace):
+def main(args: FlexibleArgumentParser):
     print(args)
     random.seed(args.seed)
     msgs = vars(args)
@@ -314,7 +316,7 @@ def main(args: argparse.Namespace):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Benchmark vision language model.")
+    parser = FlexibleArgumentParser(description="Benchmark vision language model.")
     parser.add_argument("--backend", type=str, choices=["vllm"], default="vllm")
 
     parser.add_argument("--model-arch-suffix", type=str, default="")
