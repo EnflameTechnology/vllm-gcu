@@ -707,7 +707,7 @@ class DeepseekV2DecoderLayer(nn.Module):
                     value=0,
                 )
                 residual_list = list(residual.chunk(tp_group.size(), dim=0))
-                residual = residual_list[tp_group.rank()]
+                residual = residual_list[tp_group.rank()].clone()
             else:
                 hidden_states = get_tp_group().all_gather(hidden_states, dim=0)
                 hidden_states = hidden_states[:actual_seqlen]
@@ -724,13 +724,17 @@ class DeepseekV2DecoderLayer(nn.Module):
                 mode="constant",
                 value=0,
             )
-            sp_hidden_states = list(hidden_states.chunk(tp_group.size(), dim=0))
+            sp_hidden_states = torch.empty(
+                hidden_states.shape[0] // tp_group.size(), *hidden_states.shape[1:],
+                device=hidden_states.device,
+                dtype=hidden_states.dtype
+            )
             torch.distributed.reduce_scatter_tensor(
-                sp_hidden_states[tp_group.rank()],
+                sp_hidden_states,
                 hidden_states,
                 group=tp_group,
             )
-            hidden_states = sp_hidden_states[tp_group.rank()]
+            hidden_states = sp_hidden_states
 
         # Fully Connected
         hidden_states, residual = self.post_attention_layernorm(hidden_states, residual)
