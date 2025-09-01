@@ -30,7 +30,7 @@ docker pull registry.daocloud.io/enflame/vllm-gcu:latest
 vLLM-GCU supports most Hugging Face-compatible transformer models, including:
 
 * `Qwen2.5` and `Qwen3` series
-* `DeepSeek V3`
+* `DeepSeek V3/R1`
 * `Baichuan`
 * `LLaMA2` & `LLaMA3`
 * `ChatGLM`
