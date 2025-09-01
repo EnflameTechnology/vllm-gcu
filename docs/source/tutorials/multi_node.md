@@ -70,7 +70,7 @@ docker run -it --name test_env \
 ```bash
 python3 -m pip install datasets==3.2.0
 python3 -m pip install opencv-python==4.10.0.84 opencv-python-headless==4.10.0.84
-python3 -m pip install triton==3.1.0
+python3 -m pip install triton==3.2.0
 ```
 
 ### ECCL Communication Verification

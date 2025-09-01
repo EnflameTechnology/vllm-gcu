@@ -1,6 +1,6 @@
 # Single GCU (Qwen3 8B)
 
-### Offline Inference on Single GCU
+## Offline Inference on Single GCU
 
 Run the following script to execute offline inference on a single gcu:
 
@@ -57,7 +57,7 @@ for output in outputs:
 ::::
 :::::
 
-### Online Serving on Single GCU
+## Online Serving on Single GCU
 
 Run docker container to start the vLLM server on a single GCU:
 

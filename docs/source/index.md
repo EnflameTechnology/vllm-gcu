@@ -46,7 +46,6 @@ faqs
 :caption: User Guide
 :maxdepth: 1
 user_guide/support_matrix/index
-user_guide/configuration/index
 user_guide/feature_guide/index
 :::
 

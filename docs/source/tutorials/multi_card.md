@@ -1,6 +1,6 @@
 # Multi-GCU (Qwen2.5 32B)
 
-### Offline Inference on Multiple GCUs
+## Offline Inference on Multiple GCUs
 
 Run the following script to execute offline inference on multiple GCUs:
 
@@ -59,7 +59,7 @@ for output in outputs:
 ::::
 :::::
 
-### Online Serving on Multiple GCUs
+## Online Serving on Multiple GCUs
 
 Run docker container to start the vLLM server on multiple GCUs:
 
