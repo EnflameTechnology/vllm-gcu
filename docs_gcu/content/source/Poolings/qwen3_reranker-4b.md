@@ -11,14 +11,14 @@
 
 将上述 url 路径下的内容全部下载到 `qwen3-reranker-4b` 文件夹中。
 
-### 环境变量
+#### 环境变量
 ```
-export VLLM_USE_V1=1
+export VLLM_USE_V1=0
 export TORCHGCU_INDUCTOR_ENABLE=0
 export PYTORCH_EFML_BASED_GCU_CHECK=1
 export TORCH_ECCL_AVOID_RECORD_STREAMS=1
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
-export VLLM_ATTENTION_BACKEND=FLASH_ATTN
+export VLLM_ATTENTION_BACKEND=XFORMERS
 ```
 
 #### requirement
@@ -28,9 +28,9 @@ python3 -m pip install transformers==4.51.3 beir==2.2.0
 
 #### 离线推理
 
-Server:
 
 ```shell
+# 启动服务端
 vllm serve [path of qwen3-reranker-4b] \
     --served-model-name qwen3-reranker-4b  \
     --task embed \
@@ -42,11 +42,9 @@ vllm serve [path of qwen3-reranker-4b] \
     --gpu-memory-utilization 0.9 \
     --block-size=64 \
     --trust-remote-code
-```
 
-Client:
+# 启动客户端
 
-```shell
 curl -X POST \
 http://localhost:6343/rerank \
   -H "Content-Type: application/json" \
@@ -65,9 +63,8 @@ http://localhost:6343/rerank \
 
 #### 性能测试
 
-Server:
-
 ```shell
+# 启动服务端
 vllm serve [path of qwen3-reranker-4b] \
     --served-model-name qwen3-reranker-4b  \
     --task embed \
@@ -79,19 +76,17 @@ vllm serve [path of qwen3-reranker-4b] \
     --gpu-memory-utilization 0.9 \
     --block-size=64 \
     --trust-remote-code
-```
 
-Client:
-
-```shell
+# 启动客户端
 python3 -m vllm_utils.benchmark_embedding_rerank \
     --tokenizer [path of qwen3-reranker-4b] \
     --trust-remote-code \
     --test-type rerank \
     --api-url http://localhost:6343/rerank \
     --model qwen3-reranker-4b \
-    --input-len 100 \
-    --total-requests 1000 \
+    --input-len 1024 \
+    --total-requests 256 \
     --query-len 20 \
-    --num-docs 100
+    --num-docs 1 \
+    --max-concurrency 1
 ```
