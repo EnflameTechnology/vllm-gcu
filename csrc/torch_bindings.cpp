@@ -255,7 +255,7 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
   if (!handle.has_value()) {
     ops.def(
         "fused_add_rms_norm(Tensor! input, Tensor! residual, Tensor weight, "
-        "float epsilon) -> ()");
+        "float epsilon) -> ()", {at::Tag::needs_fixed_stride_order});
   }
   ops.impl("fused_add_rms_norm", torch::kPrivateUse1, &fused_add_rms_norm);
 
