@@ -46,6 +46,7 @@ class GCUWorker(Worker):
         import vllm_gcu.kernels  # noqa: F401
         import vllm_gcu.patch  # noqa: F401
         import vllm_gcu.compilation  # noqa: F401
+        import vllm_gcu.distributed  # noqa
 
         if gcu_envs.VLLM_GCU_RANK_LOG_PATH:
             # before init dist, since we want to split eccl init logs
