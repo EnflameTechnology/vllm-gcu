@@ -319,7 +319,10 @@ class AlltoAllStaticShape(AlltoAllPrepareAndFinalize):
             )
             if self.shared_experts is not None and hidden_states_ori.shape[
                     0] > 0:
-                self.shared_output = self.shared_experts(hidden_states_ori)
+                if a1_scale is not None and not input_static_quant:
+                    self.shared_output = self.shared_experts(hidden_states, a1_scale)
+                else:
+                    self.shared_output = self.shared_experts(hidden_states_ori)
             if enable_parallel_compute:
                 work.wait()
 
@@ -496,7 +499,10 @@ class AlltoAllDynamicShape(AlltoAllPrepareAndFinalize):
                 async_op=enable_parallel_compute,
             )
             if self.shared_experts is not None:
-                self.shared_output = self.shared_experts(hidden_states_ori)
+                if a1_scale is not None and not input_static_quant:
+                    self.shared_output = self.shared_experts(hidden_states, a1_scale)
+                else:
+                    self.shared_output = self.shared_experts(hidden_states_ori)
             if enable_parallel_compute:
                 work.wait()
 
