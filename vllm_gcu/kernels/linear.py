@@ -3,7 +3,8 @@ from typing import Optional
 import torch
 from torch.nn.parameter import Parameter
 from vllm.logger import init_logger
-from vllm.model_executor.layers.linear import ReplicatedLinear
+from vllm.distributed import tensor_model_parallel_all_gather
+from vllm.model_executor.layers.linear import ReplicatedLinear, MergedColumnParallelLinear
 from vllm.model_executor.layers.quantization.base_config import QuantizationConfig
 from vllm.model_executor.parameter import (
     BasevLLMParameter,
@@ -112,3 +113,37 @@ class MergedReplicatedLinear(ReplicatedLinear):
         loaded_weight = loaded_weight.narrow(param.output_dim, 0, shard_size)
         assert param_data.shape == loaded_weight.shape
         param_data.copy_(loaded_weight)
+
+    def forward(self, x: torch.Tensor, x_scale: Optional[torch.Tensor]=None):
+        bias = self.bias if not self.skip_bias_add else None
+        assert self.quant_method is not None
+
+        if x_scale is not None:
+            assert self.quant_method.quant_config.get_name() == "fp8_gcu"
+            output = self.quant_method.apply(self, x, bias, x_scale)
+        else:
+            output = self.quant_method.apply(self, x, bias)
+        output_bias = self.bias if self.skip_bias_add else None
+        if not self.return_bias:
+            return output
+        return output, output_bias
+
+
+class CustomMergedColumnParallelLinear(MergedColumnParallelLinear):
+    def forward(self, input_, input_scale: Optional[torch.Tensor]=None):
+        bias = self.bias if not self.skip_bias_add else None
+        assert self.quant_method is not None
+
+        if input_scale is not None:
+            assert self.quant_method.quant_config.get_name() == "fp8_gcu"
+            output_parallel = self.quant_method.apply(self, input_, bias, input_scale)
+        else:
+            output_parallel = self.quant_method.apply(self, input_, bias)
+        if self.gather_output:
+            output = tensor_model_parallel_all_gather(output_parallel)
+        else:
+            output = output_parallel
+        output_bias = self.bias if self.skip_bias_add else None
+        if not self.return_bias:
+            return output
+        return output, output_bias

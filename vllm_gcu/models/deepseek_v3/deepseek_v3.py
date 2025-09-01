@@ -79,7 +79,7 @@ from vllm.model_executor.sampling_metadata import SamplingMetadata
 from vllm.sequence import IntermediateTensors, SequenceData
 
 import vllm_gcu.envs as gcu_envs
-from vllm_gcu.kernels.linear import MergedReplicatedLinear
+from vllm_gcu.kernels.linear import MergedReplicatedLinear, CustomMergedColumnParallelLinear
 from vllm_gcu.models.deepseek_v3.deepseek_v3_fusion import DeepseekV2MLAAttentionFusion
 
 
@@ -115,7 +115,8 @@ class DeepseekV2MLP(nn.Module):
                 prefix=f"{prefix}.down_proj",
             )
         else:
-            self.gate_up_proj = MergedColumnParallelLinear(
+            column_cls = CustomMergedColumnParallelLinear if prefix.endswith("shared_experts") else MergedColumnParallelLinear
+            self.gate_up_proj = column_cls(
                 hidden_size,
                 [intermediate_size] * 2,
                 bias=False,
@@ -137,8 +138,14 @@ class DeepseekV2MLP(nn.Module):
             )
         self.act_fn = SiluAndMul()
 
-    def forward(self, x):
-        gate_up, _ = self.gate_up_proj(x)
+    def forward(self, x, x_scale: Optional[torch.Tensor]=None):
+        if x_scale is not None:
+            # only support fp8
+            assert x.dtype in [torch.float8_e4m3fn]
+            gate_up, _ = self.gate_up_proj(x, x_scale)
+        else:
+            gate_up, _ = self.gate_up_proj(x)
+
         x = self.act_fn(gate_up)
         x, _ = self.down_proj(x)
         return x

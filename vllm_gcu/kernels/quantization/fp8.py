@@ -49,15 +49,16 @@ class Fp8GCULinearMethod(Fp8LinearMethod):
         layer: torch.nn.Module,
         x: torch.Tensor,
         bias: Optional[torch.Tensor] = None,
+        x_scale: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         if self.block_quant:
             assert self.quant_config.weight_block_size is not None
             return apply_w8a8_block_fp8_linear(
-                input=x,
+                input=x.view(self.out_dtype) if x.dtype != self.out_dtype else x,
                 weight=layer.weight,
                 block_size=self.quant_config.weight_block_size,
                 weight_scale=layer.weight_scale_inv,
-                input_scale=layer.input_scale,
+                input_scale=layer.input_scale if x_scale is None else x_scale,
                 bias=bias,
                 cutlass_block_fp8_supported=self.cutlass_block_fp8_supported,
             )
@@ -128,26 +129,32 @@ def apply_w8a8_block_fp8_linear(
     bias: Optional[torch.Tensor] = None,
     cutlass_block_fp8_supported: bool = False,
 ) -> torch.Tensor:
-    assert input_scale is None
+    output_dtype = input.dtype
 
-    # input_2d = input.view(-1, input.shape[-1])
+    if input_scale is None:
+        # input_2d = input.view(-1, input.shape[-1])
+        q_input, x_scale = ops.per_token_group_quant_fp8(
+            input,  # input_2d
+            block_size[1],
+            dtype=current_platform.fp8_dtype(),
+            column_major_scales=False,
+        )
+    else:
+        input = input.view(current_platform.fp8_dtype())
+        q_input = input
+        x_scale = input_scale
+
     output_shape = [*input.shape[:-1], weight.shape[0]]
-    q_input, x_scale = ops.per_token_group_quant_fp8(
-        input,  # input_2d
-        block_size[1],
-        dtype=current_platform.fp8_dtype(),
-        column_major_scales=False,
-    )
     output = ops.w8a8_block_fp8_matmul(
         q_input,
         weight,
         x_scale,
         weight_scale,
         block_size,
-        output_dtype=input.dtype,
+        output_dtype=output_dtype,
         bias=bias,
     )
-    return output.to(dtype=input.dtype).view(*output_shape)
+    return output.to(dtype=output_dtype).view(*output_shape)
 
 
 vllm_lib.impl(
