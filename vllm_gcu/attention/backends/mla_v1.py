@@ -14,6 +14,7 @@ from vllm.v1.attention.backends.mla.common import (MLACommonBackend,
                                                    MLACommonMetadataBuilder)
 
 import vllm_gcu.kernels._custom_ops as ops
+import vllm_gcu._C
 from vllm_gcu.kernels._custom_ops import merge_attn_states
 
 logger = init_logger(__name__)
@@ -197,7 +198,7 @@ class GCUMLAImpl(MLACommonImpl[GCUMLAMetadata]):
         for i in range(iters):
             toks = prefill_metadata.chunked_context.seq_tot[i]
 
-            ops.gather_cache(
+            torch.ops._C_cache_ops.gather_cache(
                 src_cache=kv_c_and_k_pe_cache,
                 dst=workspace,
                 block_table=prefill_metadata.block_table,
