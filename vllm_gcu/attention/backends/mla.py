@@ -15,6 +15,7 @@ from vllm.platforms import current_platform
 
 
 import vllm_gcu.kernels._custom_ops as ops
+import vllm_gcu._C
 from vllm_gcu.kernels._custom_ops import merge_attn_states
 
 if TYPE_CHECKING:
@@ -291,7 +292,7 @@ class GCUMLAImpl(MLACommonImpl[MLACommonMetadata]):
         for i in range(iters):
             toks = prefill_metadata.context_chunk_seq_tot[i]
 
-            ops.gather_cache(
+            torch.ops._C_cache_ops.gather_cache(
                 src_cache=kv_c_and_k_pe_cache,
                 dst=workspace,
                 block_table=prefill_metadata.block_tables,
