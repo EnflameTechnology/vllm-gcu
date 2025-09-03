@@ -75,7 +75,7 @@ class RopeWithKVCache(CustomOp):
         kv_c, k_pe = kv_c_and_k_pe.split(
             [self.kv_lora_rank, self.qk_rope_head_dim], dim=-1
         )
-        k_c_normed = self.kv_a_layernorm(kv_c.contiguous())
+        k_c_normed = self.kv_a_layernorm(kv_c)
         k_pe = k_pe.unsqueeze(1)
 
         q_pe_out[...], k_pe[...] = self.rotary_emb(input_positions, q_pe, k_pe)
