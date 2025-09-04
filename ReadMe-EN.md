@@ -170,13 +170,12 @@ python3 -m vllm_utils.benchmark_serving \
 
 * **Offline Inference**: Demonstrates GCU's raw inference capability
 * **Performance Metrics**: Measures TPS / TTFT / latency
-* **Launch with**: `vllm_utils.benchmark_throughput` or `benchmark_vision_language`
+* **Launch with**: `vllm_utils.benchmark_throughput`
 
 View help:
 
 ```bash
 python3 -m vllm_utils.benchmark_throughput --help
-python3 -m vllm_utils.benchmark_vision_language --help
 ```
 
 ### Common Parameters
@@ -251,28 +250,6 @@ python3 -m vllm_utils.benchmark_vision_language --help
 3. **Model support is continuously evolving**. For validation of specific models, it is recommended to contact Enflame for an official support list or test patches.
 
 4. **The Qwen series is most comprehensively supported**, covering various model sizes, quantization formats, and inference modes (including vision-language models).
-
----
-
-## 🧠 Vision-Language Benchmarking
-
-`benchmark_vision_language` provides testing for VLMs:
-
-* Offline inference with image/video input
-* Performance tests using synthetic data
-* Extensible for dataset-based evaluation
-
-Example command:
-
-```bash
-python3 -m vllm_utils.benchmark_vision_language \
- --backend vllm \
- --model [model path] \
- --input-vision-file [image path] \
- --prompt "Describe this image." \
- --device gcu \
- ...
-```
 
 ---
 
