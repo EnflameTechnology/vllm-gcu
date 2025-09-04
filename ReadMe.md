@@ -167,13 +167,12 @@ python3 -m vllm_utils.benchmark_serving \
 
 * 离线推理：展示 GCU 并推理能力
 * 性能测试：统计 TPS / TTFT / latency 等指标
-* 启动方式：`vllm_utils.benchmark_throughput` / `benchmark_vision_language`
+* 启动方式：`vllm_utils.benchmark_throughput`
 
 查看参数帮助：
 
 ```bash
 python3 -m vllm_utils.benchmark_throughput --help
-python3 -m vllm_utils.benchmark_vision_language --help
 ```
 
 ### 推理测试参数
@@ -244,30 +243,6 @@ python3 -m vllm_utils.benchmark_vision_language --help
 2. **INT8（W8A8）/ INT8 KV**：需加载额外量化缓存配置文件（如 `int8_kv_cache.json`），通常适用于极限压缩下的推理部署；
 3. **支持模型不断更新**，如需验证特定模型，建议联系官方获取支持清单或测试补丁；
 4. **Qwen 系列支持最完备**，涵盖多个模型尺寸、量化格式和推理方式（包括视觉语言模型）；
-
----
-
-
-
-## 🧠 多模态模型测试说明
-
-`benchmark_vision_language` 提供视觉语言模型的评估能力：
-
-* 离线推理：指定图像或视频输入
-* 性能测试：伪造输入进行性能压测
-* 精度评估：可扩展支持数据集评估
-
-示例命令：
-
-```bash
-python3 -m vllm_utils.benchmark_vision_language \
- --backend vllm \
- --model [模型路径] \
- --input-vision-file [图片路径] \
- --prompt "Describe this image." \
- --device gcu \
- ...
-```
 
 ---
 
