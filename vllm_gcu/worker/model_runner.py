@@ -20,7 +20,7 @@ from vllm.attention import AttentionMetadata, get_attn_backend
 from vllm.attention.backends.abstract import AttentionState
 from vllm.attention.backends.utils import CommonAttentionState
 from vllm.config import CompilationLevel, VllmConfig, set_current_vllm_config
-from vllm.distributed import get_pp_group
+from vllm.distributed import broadcast_tensor_dict, get_pp_group
 from vllm.distributed.kv_transfer import get_kv_transfer_group
 from vllm.distributed.parallel_state import (
     get_tensor_model_parallel_rank,
@@ -34,7 +34,7 @@ from vllm.lora.layers import LoRAMapping
 from vllm.lora.request import LoRARequest
 from vllm.lora.worker_manager import LRUCacheWorkerLoRAManager
 from vllm.model_executor import SamplingMetadata, SamplingMetadataCache
-from vllm.model_executor.layers.sampler import SamplerOutput, get_sampler
+from vllm.model_executor.layers.sampler import Sampler, SamplerOutput, get_sampler
 from vllm.model_executor.model_loader import get_model
 from vllm.model_executor.model_loader.tensorizer import TensorizerConfig
 from vllm.model_executor.models import supports_lora, supports_multimodal
@@ -1087,49 +1087,77 @@ class GCUModelRunner(GCUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
             hidden_or_intermediate_states, model_input.sampling_metadata
         )
 
+        if self.is_driver_worker:
+            if model_input.async_callback is not None:
+                model_input.async_callback()
+
+            # Sample the next token.
+            if gcu_envs.VLLM_GCU_SAMPLER_ON_CPU:
+                logits = logits.cpu().to(torch.float32)
+                selected_token_indices = (
+                    model_input.sampling_metadata.selected_token_indices
+                )
+                model_input.sampling_metadata.selected_token_indices = (
+                    selected_token_indices.cpu()
+                )
+
+                categorized_sample_indices = (
+                    model_input.sampling_metadata.categorized_sample_indices
+                )
+                model_input.sampling_metadata.categorized_sample_indices = {
+                    i: tensor.cpu() for i, tensor in categorized_sample_indices.items()
+                }
+
+            assert isinstance(self.sampler, Sampler)
+            orig_include_gpu_probs = self.sampler.include_gpu_probs_tensor
+            if model_input.inputs_embeds is not None:
+                self.sampler.include_gpu_probs_tensor = True
+
+            output: SamplerOutput = self.sampler(
+                logits=logits,
+                sampling_metadata=model_input.sampling_metadata,
+            )
+            if (
+                self.observability_config is not None
+                and self.observability_config.collect_model_forward_time
+                and output is not None
+            ):
+                model_forward_end.synchronize()
+                model_forward_time = model_forward_start.elapsed_time(model_forward_end)
+                orig_model_forward_time = 0.0
+                if intermediate_tensors is not None:
+                    orig_model_forward_time = intermediate_tensors.tensors.get(
+                        "model_forward_time", torch.tensor(0.0)
+                    ).item()
+                # If there are multiple workers, we are still tracking the latency
+                # from the start time of the driver worker to the end time of the
+                # driver worker. The model forward time will then end up covering
+                # the communication time as well.
+                output.model_forward_time = orig_model_forward_time + model_forward_time
+
+        if model_input.inputs_embeds is not None:
+            if self.is_driver_worker:
+                sampled = broadcast_tensor_dict(
+                    {"token_ids": output.sampled_token_ids})
+            else:
+                sampled = broadcast_tensor_dict()
+            if sampled["token_ids"] is not None:
+                sampled_token_embeds = self.model.get_input_embeddings(
+                    sampled["token_ids"].squeeze(1))
+                if self.is_driver_worker:
+                    self.sampler.include_gpu_probs_tensor = \
+                        orig_include_gpu_probs
+
+                    output.sampled_token_embeds = sampled_token_embeds
+
+                    for token_embed, sequence_group_output in zip(
+                            output.sampled_token_embeds, output.outputs):
+                        assert len(sequence_group_output.samples) == 1
+                        sequence_group_output.samples[
+                            0].output_embed = token_embed
+
         if not self.is_driver_worker:
             return []
-
-        if model_input.async_callback is not None:
-            model_input.async_callback()
-
-        # Sample the next token.
-        if gcu_envs.VLLM_GCU_SAMPLER_ON_CPU:
-            logits = logits.cpu().to(torch.float32)
-            selected_token_indices = (
-                model_input.sampling_metadata.selected_token_indices
-            )
-            model_input.sampling_metadata.selected_token_indices = (
-                selected_token_indices.cpu()
-            )
-
-            categorized_sample_indices = (
-                model_input.sampling_metadata.categorized_sample_indices
-            )
-            model_input.sampling_metadata.categorized_sample_indices = {
-                i: tensor.cpu() for i, tensor in categorized_sample_indices.items()
-            }
-        output: SamplerOutput = self.sampler(
-            logits=logits,
-            sampling_metadata=model_input.sampling_metadata,
-        )
-        if (
-            self.observability_config is not None
-            and self.observability_config.collect_model_forward_time
-            and output is not None
-        ):
-            model_forward_end.synchronize()
-            model_forward_time = model_forward_start.elapsed_time(model_forward_end)
-            orig_model_forward_time = 0.0
-            if intermediate_tensors is not None:
-                orig_model_forward_time = intermediate_tensors.tensors.get(
-                    "model_forward_time", torch.tensor(0.0)
-                ).item()
-            # If there are multiple workers, we are still tracking the latency
-            # from the start time of the driver worker to the end time of the
-            # driver worker. The model forward time will then end up covering
-            # the communication time as well.
-            output.model_forward_time = orig_model_forward_time + model_forward_time
 
         if self.return_hidden_states:
             # we only need to pass hidden states of most recent token
