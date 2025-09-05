@@ -273,7 +273,12 @@ class GCUPlatform(Platform):
                 model_config.use_async_output_proc = True
 
         additional_config = vllm_config.additional_config
-        additional_config.update({"all_dp_in_decode": False})
+        if additional_config.get("enable_eplb", False):
+            parallel_config.enable_eplb = True
+        num_redundant_experts = additional_config.get("num_redundant_experts", 0)
+        if num_redundant_experts > 0:
+            assert parallel_config.enable_eplb, "EPLB must be enabled"
+            parallel_config.num_redundant_experts = num_redundant_experts
 
         # TODO: v1
         if not envs.VLLM_USE_V1 and \

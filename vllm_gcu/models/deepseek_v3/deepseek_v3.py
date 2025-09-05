@@ -22,8 +22,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Inference-only DeepseekV2/DeepseekV3 model."""
+import typing
 from typing import Any, Optional, Union, Mapping
-from collections.abc import Iterable
+from collections.abc import Iterable, Callable
 
 import numpy as np
 import torch
@@ -39,6 +40,7 @@ from vllm.config import (
     VllmConfig,
 )
 from vllm.distributed import (
+    get_ep_group,
     get_pp_group,
     get_tensor_model_parallel_world_size,
     get_tp_group,
@@ -67,7 +69,7 @@ from vllm.model_executor.model_loader.weight_utils import (
     maybe_remap_kv_scale_name,
 )
 
-from vllm.model_executor.models.interfaces import SupportsPP
+from vllm.model_executor.models.interfaces import MixtureOfExperts, SupportsPP
 from vllm.model_executor.models.utils import (
     is_pp_missing_parameter,
     make_empty_intermediate_tensors_factory,
@@ -159,11 +161,17 @@ class DeepseekV2MoE(nn.Module):
         quant_config: Optional[QuantizationConfig] = None,
         prefix: str = "",
         layer_log2phy=None,
+        enable_eplb: bool = False,
     ):
         super().__init__()
         self.routed_scaling_factor = config.routed_scaling_factor
         self.n_shared_experts = config.n_shared_experts
-        self.routed_scaling_factor = config.routed_scaling_factor
+
+        self.ep_group = get_ep_group().device_group
+        self.ep_rank = self.ep_group.rank()
+        self.ep_size = self.ep_group.size()
+        self.n_routed_experts: int = config.n_routed_experts
+        self.n_shared_experts: int = config.n_shared_experts
 
         if layer_log2phy is not None:
             self.layer_log2phy = layer_log2phy.to(torch.gcu.current_device())
@@ -190,6 +198,22 @@ class DeepseekV2MoE(nn.Module):
         else:
             self.gate.e_score_correction_bias = None
 
+        # Load balancing settings.
+        vllm_config = get_current_vllm_config()
+        parallel_config = vllm_config.parallel_config
+        self.enable_eplb = enable_eplb
+
+        self.n_redundant_experts = parallel_config.num_redundant_experts
+        self.n_logical_experts = self.n_routed_experts
+        self.n_physical_experts = (self.n_logical_experts +
+                                   self.n_redundant_experts)
+        self.n_local_physical_experts = self.n_physical_experts // self.ep_size
+
+        self.physical_expert_start = (self.ep_rank *
+                                      self.n_local_physical_experts)
+        self.physical_expert_end = (self.physical_expert_start +
+                                    self.n_local_physical_experts)
+
         self.experts = FusedMoE(
             num_experts=config.n_routed_experts,
             top_k=config.num_experts_per_tok,
@@ -204,6 +228,8 @@ class DeepseekV2MoE(nn.Module):
             prefix=f"{prefix}.experts",
             scoring_func=config.scoring_func,
             e_score_correction_bias=self.gate.e_score_correction_bias,
+            enable_eplb=self.enable_eplb,
+            num_redundant_experts=self.n_redundant_experts
         )
 
         self.tp_size = self.experts.tp_size
@@ -621,6 +647,7 @@ class DeepseekV2DecoderLayer(nn.Module):
         quant_config: Optional[QuantizationConfig] = None,
         prior_expert_map: Optional[dict[int, torch.Tensor]] = None,
         log2phy=None,
+        enable_eplb: bool = False,
     ) -> None:
         super().__init__()
         self.hidden_size = config.hidden_size
@@ -670,6 +697,7 @@ class DeepseekV2DecoderLayer(nn.Module):
                 quant_config=quant_config,
                 prefix=f"{prefix}.mlp",
                 layer_log2phy=layer_log2phy,
+                enable_eplb=enable_eplb,
             )
         else:
             self.mlp = DeepseekV2MLP(
@@ -769,6 +797,7 @@ class DeepseekV2Model(nn.Module):
         model_config = vllm_config.model_config
         cache_config = vllm_config.cache_config
         quant_config = vllm_config.quant_config
+        enable_eplb = vllm_config.parallel_config.enable_eplb
         self.config = config
 
         self.vocab_size = config.vocab_size
@@ -791,6 +820,7 @@ class DeepseekV2Model(nn.Module):
                 quant_config=quant_config,
                 prior_expert_map=prior_expert_map,
                 log2phy=log2phy,
+                enable_eplb=enable_eplb,
             ),
             prefix=f"{prefix}.layers",
         )
@@ -860,7 +890,7 @@ def dummy_data_for_deepseek(
     return DummyData(seq_data)
 
 
-class DeepseekV2ForCausalLM(nn.Module, SupportsPP):
+class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
 
     def __init__(self, *, vllm_config: VllmConfig, prefix: str = ""):
         super().__init__()
@@ -924,6 +954,62 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP):
 
         self.vllm_config = vllm_config
 
+        self.expert_weights = []
+
+        # Set MoE hyperparameters
+        self.num_moe_layers = (config.num_hidden_layers -
+                               config.first_k_dense_replace)
+        self.num_expert_groups = config.n_group
+
+        self.moe_layers: list[FusedMoE] = []
+        for layer in self.model.layers:
+            assert isinstance(layer, DeepseekV2DecoderLayer)
+            if isinstance(layer.mlp, DeepseekV2MoE):
+                self.moe_layers.append(layer.mlp.experts)
+
+        # Pick last one layer since the first ones may be dense layers.
+        example_moe = typing.cast(
+            DeepseekV2MoE, self.model.layers[config.num_hidden_layers - 1].mlp)
+        self.num_logical_experts = example_moe.n_logical_experts
+        self.num_physical_experts = example_moe.n_physical_experts
+        self.num_local_physical_experts = example_moe.n_local_physical_experts
+        self.num_routed_experts = example_moe.n_routed_experts
+        self.num_shared_experts = example_moe.n_shared_experts
+        self.num_redundant_experts = example_moe.n_redundant_experts
+
+    def set_eplb_state(
+        self,
+        expert_load_view: torch.Tensor,
+        logical_to_physical_map: torch.Tensor,
+        logical_replica_count: torch.Tensor,
+    ) -> None:
+        def get_expert_weights(layer):
+            weights = list(layer.named_parameters())
+            assert all(weight.is_contiguous() for _, weight in weights)
+
+            NON_EXPERT_WEIGHTS = {
+                "e_score_correction_bias",
+                "shared_experts._orig_mod.gate_up_proj.weight",
+                "shared_experts._orig_mod.gate_up_proj.weight_scale_inv",
+                "shared_experts._orig_mod.down_proj.weight",
+                "shared_experts._orig_mod.down_proj.weight_scale_inv",
+            }
+
+            return [
+                weight.view(layer.local_num_experts, -1) for name, weight in weights
+                if name not in NON_EXPERT_WEIGHTS
+            ]
+
+        for layer_idx, layer in enumerate(self.moe_layers):
+            # Register the expert weights.
+            self.expert_weights.append(get_expert_weights(layer))
+            layer.set_eplb_state(
+                moe_layer_idx=layer_idx,
+                expert_load_view=expert_load_view,
+                logical_to_physical_map=logical_to_physical_map,
+                logical_replica_count=logical_replica_count,
+            )
+
     def get_input_embeddings(self, input_ids: torch.Tensor) -> torch.Tensor:
         return self.model.get_input_embeddings(input_ids)
 
@@ -986,6 +1072,7 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP):
             ckpt_down_proj_name="down_proj",
             ckpt_up_proj_name="up_proj",
             num_experts=self.config.n_routed_experts,
+            num_redundant_experts=self.num_redundant_experts,
         )
 
         params_dict = dict(self.named_parameters())
@@ -1048,29 +1135,37 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP):
                 weight_loader(param, loaded_weight, shard_id)
                 break
             else:
+                is_expert_weight = False
                 for mapping in expert_params_mapping:
                     param_name, weight_name, expert_id, shard_id = mapping
                     if weight_name not in name:
                         continue
-                    name = name.replace(weight_name, param_name)
+                    is_expert_weight = True
+                    name_mapped = name.replace(weight_name, param_name)
 
-                    if is_pp_missing_parameter(name, self):
+                    if is_pp_missing_parameter(name_mapped, self):
                         continue
 
-                    if name not in params_dict:
+                    if name_mapped not in params_dict:
                         continue
 
-                    param = params_dict[name]
-                    weight_loader = param.weight_loader
-                    weight_loader(
+                    param = params_dict[name_mapped]
+                    weight_loader = typing.cast(Callable[..., bool], param.weight_loader)
+                    success = weight_loader(
                         param,
                         loaded_weight,
-                        name,
+                        name_mapped,
                         shard_id=shard_id,
                         expert_id=expert_id,
+                        return_success=True
                     )
-                    break
+                    if success:
+                        name = name_mapped
+                        break
                 else:
+                    if is_expert_weight:
+                        continue
+
                     # Skip loading extra bias for GPTQ models.
                     if name.endswith(".bias") and name not in params_dict:
                         continue
