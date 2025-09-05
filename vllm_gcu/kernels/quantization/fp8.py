@@ -74,6 +74,10 @@ class Fp8GCUMoEMethod(Fp8MoEMethod):
         setattr(vllm.model_executor.layers.fused_moe, 'fused_experts', fused_experts)
         super().__init__(quant_config)
 
+    def init_prepare_finalize(self, moe, quant_config):
+        super().init_prepare_finalize(moe, quant_config)
+        self.topk_indices_dtype = torch.int32  # hard
+
     def apply(
         self,
         layer: torch.nn.Module,
