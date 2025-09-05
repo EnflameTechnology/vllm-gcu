@@ -28,8 +28,13 @@ void static_scaled_fp8_quant(at::Tensor& result, const at::Tensor& input,
     const torch_gcu::OptionalGCUGuard device_guard(device_of(result));
     const topsStream_t stream = torch_gcu::getCurrentGCUStream();
 
+    at::Tensor scale_tensor = scale;
+    if (scale.dim() == 0) {
+        scale_tensor = scale.unsqueeze(0);
+    }
+
     ATEN_ATENOP_CHECK(
         ATEN_ATENOP_CALL(topsvllm::topsvllmStaticScaledFP8Quantize)(
-            result, input, scale, stream));
+            result, input, scale_tensor, stream));
     }
 }  // namespace vllm_gcu::llm_ops
