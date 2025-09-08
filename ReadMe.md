@@ -1,6 +1,6 @@
 # 🔥 vLLM-GCU
 
-> **vLLM-GCU** 是由燧原科技基于原生 [vLLM](https://github.com/vllm-project/vllm) 框架适配 Enflame GCU（S60）推出的高性能推理系统，支持大语言模型（LLM）及多模态视觉语言模型（VLM）的部署与运行。该项目在保留 vLLM 核心调度策略与运行机制的基础上，针对 GCU 架构实现了高效的算子执行优化。
+> **vLLM-GCU** 是由燧原科技基于原生 [vLLM](https://github.com/vllm-project/vllm) 框架适配 Enflame GCU（S60）推出的大模型推理系统，支持大语言模型（LLM）及多模态视觉语言模型（VLM）的部署与运行。该项目在保留 vLLM 核心调度策略与运行机制的基础上，针对 GCU 架构实现了高效的算子执行优化。
 
 ---
 

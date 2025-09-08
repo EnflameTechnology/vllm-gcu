@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document provides a professional guide for deploying DeepSeek-R1 in a high-performance multi-node setup using Data Parallelism (DP), Tensor Parallelism (TP), and Expert Parallelism (EP) on GCU hardware. The setup targets 4 nodes (each with 8 GCUs), for a total of 32 GCUs.
+This document provides a professional guide for deploying DeepSeek-R1 in an efficient multi-node setup using Data Parallelism (DP), Tensor Parallelism (TP), and Expert Parallelism (EP) on GCU hardware. The setup targets 4 nodes (each with 8 GCUs), for a total of 32 GCUs.
 
 ### Parallelism Strategy
 

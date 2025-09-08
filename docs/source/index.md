@@ -21,7 +21,7 @@
 </p>
 :::
 
-**vLLM-GCU** is a high-performance backend plugin that enables efficient inference for Large Language Models (LLMs) and Vision-Language Models (VLMs) on **Enflame GCU** hardware. Built on the vLLM framework, this plugin leverages GCU-specific operator optimization and runtime integration via TopsRider and GCU-aware extensions.
+**vLLM-GCU** is an efficient backend plugin that enables efficient inference for Large Language Models (LLMs) and Vision-Language Models (VLMs) on **Enflame GCU** hardware. Built on the vLLM framework, this plugin leverages GCU-specific operator optimization and runtime integration via TopsRider and GCU-aware extensions.
 
 It is the **recommended integration method** for deploying LLMs on Enflame’s GCU platforms. The plugin conforms to the [vLLM Hardware Pluggable Interface RFC](https://github.com/vllm-project/vllm/issues/11162), enabling hardware decoupling and modular backend development.
 

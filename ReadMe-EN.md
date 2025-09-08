@@ -1,6 +1,6 @@
 # 🔥 vLLM-GCU
 
-> **vLLM-GCU** is a high-performance inference system developed by Enflame Technology based on the original [vLLM](https://github.com/vllm-project/vllm) framework, optimized for the Enflame GCU (S60). It supports the deployment and execution of Large Language Models (LLMs) and Vision-Language Models (VLMs). While retaining the core scheduling strategies and execution mechanisms of vLLM, this project introduces operator-level optimizations tailored for the GCU architecture.
+> **vLLM-GCU** is an efficient inference system developed by Enflame Technology based on the original [vLLM](https://github.com/vllm-project/vllm) framework, optimized for the Enflame GCU (S60). It supports the deployment and execution of Large Language Models (LLMs) and Vision-Language Models (VLMs). While retaining the core scheduling strategies and execution mechanisms of vLLM, this project introduces operator-level optimizations tailored for the GCU architecture.
 
 ---
 
