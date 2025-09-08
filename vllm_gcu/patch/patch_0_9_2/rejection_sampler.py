@@ -6,6 +6,7 @@ from vllm.v1.sample.ops.topk_topp_sampler import apply_top_k_top_p
 from vllm.v1.sample.rejection_sampler import generate_uniform_probs
 PLACEHOLDER_TOKEN_ID = -1
 GREEDY_TEMPERATURE = -1
+import vllm_gcu.envs as gcu_envs
 
 def rejection_greedy_sample_kernel_torch(
     output_token_ids,  # [batch_size, max_spec_len + 1]
@@ -16,9 +17,9 @@ def rejection_greedy_sample_kernel_torch(
     is_greedy,  # [batch_size] or None
     max_spec_len,):
     
-    rejected = False
     start_pos = 0
     for seq_index,end_pos in enumerate(cu_num_draft_tokens):
+        rejected = False
         if isinstance(is_greedy,torch.Tensor):
             if not is_greedy[seq_index]:
                 continue
@@ -200,31 +201,29 @@ def sample_recovered_tokens(
             q[i].exponential_(generator=generator)
 
     recovered_token_ids = torch.empty_like(draft_token_ids)
-    # sample_recovered_tokens_kernel[(batch_size, max_spec_len)](
-    #     recovered_token_ids,
-    #     cu_num_draft_tokens,
-    #     draft_token_ids,
-    #     draft_probs,
-    #     target_probs,
-    #     q,
-    #     vocab_size,
-    #     triton.next_power_of_2(vocab_size),
-    #     NO_DRAFT_PROBS=draft_probs is None,
-    # )
 
-    ###
-    # recovered_token_ids_v1 = \
-    #     torch.empty_like(draft_token_ids, dtype=draft_token_ids.dtype,device=draft_token_ids.device)
-
-    sample_recovered_tokens_kernel_torch(
+    torch.ops._C.sample_recovered_tokens(
         recovered_token_ids,
         cu_num_draft_tokens,
         draft_token_ids,
-        draft_probs,
         target_probs,
-        q)
+        q,
+        draft_probs,)
 
-    # assert torch.all(recovered_token_ids_v1 == recovered_token_ids)
+    ###
+    if gcu_envs.VLLM_GCU_REJECT_SAMPLER_CHECK:
+        recovered_token_ids_v1 = \
+            torch.empty_like(draft_token_ids, dtype=draft_token_ids.dtype,device=draft_token_ids.device)
+
+        sample_recovered_tokens_kernel_torch(
+            recovered_token_ids_v1,
+            cu_num_draft_tokens,
+            draft_token_ids,
+            draft_probs,
+            target_probs,
+            q)
+
+        assert torch.all(recovered_token_ids_v1 == recovered_token_ids)
 
     return recovered_token_ids
 
@@ -274,36 +273,34 @@ def rejection_sample(
     if not sampling_metadata.all_random:
         # Rejection sampling for greedy sampling requests.
         target_argmax = target_probs.argmax(dim=-1)
-        # rejection_greedy_sample_kernel[(batch_size, )](
-        #     output_token_ids,
-        #     cu_num_draft_tokens,
-        #     draft_token_ids,
-        #     target_argmax,
-        #     bonus_token_ids,
-        #     is_greedy,
-        #     max_spec_len,
-        #     num_warps=1,
-        # )
-
-        ###
-        # output_token_ids_v1 = torch.empty(
-        #     (batch_size, max_spec_len + 1),
-        #     dtype=torch.int32,  # Consistent with SamplerOutput.sampled_token_ids.
-        #     device=device,
-        # )
-        # output_token_ids_v1.fill_(PLACEHOLDER_TOKEN_ID)
-
-        rejection_greedy_sample_kernel_torch(
+        torch.ops._C.rejection_greedy_sample(
             output_token_ids,
             cu_num_draft_tokens,
             draft_token_ids,
             target_argmax,
             bonus_token_ids,
-            is_greedy,
-            max_spec_len,
+            is_greedy
         )
 
-        # assert torch.all(output_token_ids == output_token_ids_v1)
+        ###
+        if gcu_envs.VLLM_GCU_REJECT_SAMPLER_CHECK:
+            output_token_ids_v1 = torch.empty(
+                (batch_size, max_spec_len + 1),
+                dtype=torch.int32,  # Consistent with SamplerOutput.sampled_token_ids.
+                device=device,
+            )
+            output_token_ids_v1.fill_(PLACEHOLDER_TOKEN_ID)
+            rejection_greedy_sample_kernel_torch(
+                output_token_ids_v1,
+                cu_num_draft_tokens,
+                draft_token_ids,
+                target_argmax,
+                bonus_token_ids,
+                is_greedy,
+                max_spec_len,
+            )
+
+            assert torch.all(output_token_ids == output_token_ids_v1)
 
         ###
         if sampling_metadata.all_greedy:
@@ -332,43 +329,39 @@ def rejection_sample(
     )
 
     # # Rejection sampling for random sampling requests.
-    # rejection_random_sample_kernel[(batch_size, )](
-    #     output_token_ids,
-    #     cu_num_draft_tokens,
-    #     draft_token_ids,
-    #     draft_probs,
-    #     target_probs,
-    #     bonus_token_ids,
-    #     recovered_token_ids,
-    #     uniform_probs,
-    #     is_greedy,
-    #     max_spec_len,
-    #     vocab_size,
-    #     NO_DRAFT_PROBS=draft_probs is None,
-    #     num_warps=1,
-    # )
-
-    # ###
-    # output_token_ids_v1 = torch.empty(
-    #     (batch_size, max_spec_len + 1),
-    #     dtype=torch.int32,  # Consistent with SamplerOutput.sampled_token_ids.
-    #     device=device,
-    # )
-    # output_token_ids_v1.fill_(PLACEHOLDER_TOKEN_ID)
-
-    rejection_random_sample_kernel_torch(
+    torch.ops._C.rejection_random_sample(
         output_token_ids,
         cu_num_draft_tokens,
         draft_token_ids,
         draft_probs,
         target_probs,
-        bonus_token_ids,
+        bonus_token_ids.view(-1),
         recovered_token_ids,
         uniform_probs,
-        is_greedy,
-        max_spec_len)
+        is_greedy)
 
-    # assert torch.all(output_token_ids == output_token_ids_v1)
+    # ###
+    if gcu_envs.VLLM_GCU_REJECT_SAMPLER_CHECK:
+        output_token_ids_v1 = torch.empty(
+            (batch_size, max_spec_len + 1),
+            dtype=torch.int32,  # Consistent with SamplerOutput.sampled_token_ids.
+            device=device,
+        )
+        output_token_ids_v1.fill_(PLACEHOLDER_TOKEN_ID)
+
+        rejection_random_sample_kernel_torch(
+            output_token_ids_v1,
+            cu_num_draft_tokens,
+            draft_token_ids,
+            draft_probs,
+            target_probs,
+            bonus_token_ids,
+            recovered_token_ids,
+            uniform_probs,
+            is_greedy,
+            max_spec_len)
+
+        assert torch.all(output_token_ids == output_token_ids_v1)
 
     return output_token_ids
 
@@ -400,31 +393,70 @@ def compute_probs(
         return logits
 
     num_tokens = logits.shape[0]
-    temperature = expand_batch_to_tokens(
+    temperature = torch.empty(size=[num_tokens], device=logits.device)
+    torch.ops._C.expand_batch_to_tokens(
+        temperature,
         sampling_metadata.temperature,
         cu_num_draft_tokens,
         num_tokens,
         replace_from=GREEDY_TEMPERATURE,
         replace_to=1,
     )
+    
+    if gcu_envs.VLLM_GCU_REJECT_SAMPLER_CHECK:
+        temperature_new = torch.empty(size=[num_tokens], device=logits.device)
+        temperature_new = expand_batch_to_tokens(
+            sampling_metadata.temperature,
+            cu_num_draft_tokens,
+            num_tokens,
+            replace_from=GREEDY_TEMPERATURE,
+            replace_to=1,
+        )
+
+        assert torch.all(temperature == temperature_new)
     # NOTE(woosuk): Update `logits` in place to avoid allocating a new tensor.
     logits.div_(temperature.unsqueeze(-1))
 
     # Get expanded top_k and top_p tensors.
     top_k = None
     if sampling_metadata.top_k is not None:
-        top_k = expand_batch_to_tokens(
-            sampling_metadata.top_k,
+        top_k = torch.empty(size=[num_tokens], device=logits.device,dtype=torch.int32)
+        torch.ops._C.expand_batch_to_tokens(
+            top_k,
+            sampling_metadata.top_k.to(dtype=torch.int32),
             cu_num_draft_tokens,
             num_tokens,
+            replace_from=0,
+            replace_to=0,
         )
+
+        if gcu_envs.VLLM_GCU_REJECT_SAMPLER_CHECK:
+            top_k_new = expand_batch_to_tokens(
+                sampling_metadata.top_k,
+                cu_num_draft_tokens,
+                num_tokens,
+            )
+            
+            assert torch.all(top_k == top_k_new)
     top_p = None
     if sampling_metadata.top_p is not None:
-        top_p = expand_batch_to_tokens(
+        top_p = torch.empty(size=[num_tokens], device=logits.device)
+        torch.ops._C.expand_batch_to_tokens(
+            top_p,
             sampling_metadata.top_p,
             cu_num_draft_tokens,
             num_tokens,
+            replace_from = 0,
+            replace_to = 0,
         )
+
+        if gcu_envs.VLLM_GCU_REJECT_SAMPLER_CHECK:
+            top_p_new = expand_batch_to_tokens(
+                sampling_metadata.top_p,
+                cu_num_draft_tokens,
+                num_tokens,
+            )
+            assert torch.all(top_p == top_p_new)
 
     # NOTE(woosuk): `apply_top_k_top_p` uses sorting to calculate the mask,
     # which is slow for large vocab sizes. This may cause performance issues.

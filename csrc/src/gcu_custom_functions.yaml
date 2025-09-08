@@ -187,6 +187,9 @@
 - func: dynamic_split(Tensor[] out, Tensor input, Tensor size, int[] split_sizes, int dim) -> ()
   variants: function
 
+- func: expand_batch_to_tokens(Tensor(a!) output, Tensor input, Tensor cu_num_tokens, int num_tokens, float replace_from, float replace_to) -> ()
+  variants: function
+
 - func: dynamic_per_token_group_fp8_quant(Tensor(a!) out, Tensor(a!) scale, Tensor input, int group_size) -> ()
   variants: function
 
@@ -245,4 +248,14 @@
   variants: function
 
 - func: mul_static_fp8_quant(Tensor(a!) out, Tensor input, Tensor scale, Tensor real_num_tokens) -> ()
+  variants: function
+
+- func: rejection_greedy_sample(Tensor(a!) output_token_ids, Tensor cu_num_draft_tokens, Tensor draft_token_ids, Tensor target_argmax, Tensor bonus_token_ids, Tensor is_greedy) -> ()
+  variants: function
+
+- func: rejection_random_sample(Tensor(a!) output_token_ids, Tensor cu_num_draft_tokens, Tensor draft_token_ids, Tensor draft_probs, Tensor target_probs, Tensor bonus_token_ids, Tensor recovered_token_ids, Tensor uniform_probs, Tensor is_greedy) -> ()
+  variants: function
+  tags: nondeterministic_seeded
+
+- func: sample_recovered_tokens(Tensor(a!) output_token_ids, Tensor cu_num_draft_tokens, Tensor draft_token_ids, Tensor target_probs, Tensor q, Tensor? draft_probs) -> ()
   variants: function

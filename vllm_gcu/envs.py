@@ -24,6 +24,9 @@ environment_variables: Dict[str, Callable[[], Any]] = {
     "VLLM_GCU_ENABLE_COMPILE_DUMP": lambda: bool(
         int(os.getenv("VLLM_GCU_ENABLE_COMPILE_DUMP", "0"))
     ),
+    "VLLM_GCU_REJECT_SAMPLER_CHECK": lambda: bool(
+        int(os.getenv("VLLM_GCU_REJECT_SAMPLER_CHECK", "0"))
+    ),
 }
 
 
