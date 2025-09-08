@@ -5,11 +5,13 @@ import torch
 import torch_gcu
 
 from vllm.model_executor.layers.fused_moe.config import FusedMoEQuantConfig
-from vllm.model_executor.layers.fused_moe.modular_kernel import FusedMoEActivationFormat, FusedMoEPrepareAndFinalize
+from vllm.model_executor.layers.fused_moe.modular_kernel import FusedMoEActivationFormat, FusedMoEPrepareAndFinalize, ExpertTokensMetadata
 from vllm.model_executor.layers.fused_moe.utils import moe_kernel_quantize_input
 from vllm.distributed import get_ep_group
 from vllm.platforms import current_platform
 from vllm.forward_context import ForwardContext, get_forward_context
+from vllm.model_executor.layers.fused_moe.topk_weight_and_reduce import (
+    TopKWeightAndReduceNoOP)
 
 from vllm_gcu.distributed.parallel_state import all_to_all_v2
 import vllm_gcu.envs as gcu_envs
@@ -61,12 +63,13 @@ class MoEPrepareAndFinalizeNoEP(FusedMoEPrepareAndFinalize):
             a1, a1_scale, quant_config.quant_dtype,
             quant_config.per_act_token_quant, quant_config.block_shape)
 
-        total_tokens = torch.full(
+        total_tokens = ExpertTokensMetadata(
+        torch.full(
             (1, ),
             a1.shape[0],
             dtype=torch.int32,
             device=a1.device,
-        )
+        ), None)
         shared_output = None
         if self.shared_experts is not None:
             shared_output = self.shared_experts(a1)
@@ -80,7 +83,9 @@ class MoEPrepareAndFinalizeNoEP(FusedMoEPrepareAndFinalize):
         topk_weights: torch.Tensor,
         topk_ids: torch.Tensor,
         apply_router_weight_on_input: bool,
+        weight_and_reduce_impl,
     ) -> None:
+        assert isinstance(weight_and_reduce_impl, TopKWeightAndReduceNoOP)
         fused_expert_output.mul_(self.routed_scaling_factor)
         output.add_(fused_expert_output)
 
@@ -317,9 +322,10 @@ class AlltoAllStaticShape(AlltoAllPrepareAndFinalize):
             )
 
             shared_output = None
-            if self.shared_experts is not None and hidden_states_ori.shape[
-                    0] > 0:
-                if a1_scale is not None and not input_static_quant:
+            if self.shared_experts is not None:
+                if hidden_states_ori.shape[0] == 0:
+                    shared_output = torch.empty_like(hidden_states_ori)
+                elif a1_scale is not None and not input_static_quant:
                     shared_output = self.shared_experts(
                         hidden_states, a1_scale)
                 else:
@@ -340,7 +346,8 @@ class AlltoAllStaticShape(AlltoAllPrepareAndFinalize):
         self.ep_split_size = ep_split_size
         self.sp_split_size = sp_split_size
 
-        return hidden_states, a1_scale, recv_token_total, topk_ids, topk_weights, shared_output
+        return hidden_states, a1_scale, ExpertTokensMetadata(
+            recv_token_total, None), topk_ids, topk_weights, shared_output
 
     def finalize(
         self,
@@ -349,6 +356,7 @@ class AlltoAllStaticShape(AlltoAllPrepareAndFinalize):
         topk_weights: torch.Tensor,
         topk_ids: torch.Tensor,
         apply_router_weight_on_input: bool,
+        weight_and_reduce_impl,
     ) -> None:
         """
         Perform any combine plus apply weights and perform a reduction on the
@@ -361,8 +369,7 @@ class AlltoAllStaticShape(AlltoAllPrepareAndFinalize):
         - apply_router_weight_on_input: When False, apply the weights to
           fused_expert_output.
         """
-        # NOTE: we assume output is shared_output or zeros out
-
+        assert isinstance(weight_and_reduce_impl, TopKWeightAndReduceNoOP)
         sp_hidden_states = torch.zeros(
             (self.ep_token_indices.shape[0], fused_expert_output.shape[1]),
             dtype=fused_expert_output.dtype,
@@ -518,7 +525,8 @@ class AlltoAllDynamicShape(AlltoAllPrepareAndFinalize):
         self.ep_split_size = ep_split_size
         self.sp_split_size = sp_split_size
 
-        return hidden_states, a1_scale, recv_token_total, topk_ids, topk_weights, shared_output
+        return hidden_states, a1_scale, ExpertTokensMetadata(
+            recv_token_total, None), topk_ids, topk_weights, shared_output
 
     def finalize(
         self,
@@ -527,6 +535,7 @@ class AlltoAllDynamicShape(AlltoAllPrepareAndFinalize):
         topk_weights: torch.Tensor,
         topk_ids: torch.Tensor,
         apply_router_weight_on_input: bool,
+        weight_and_reduce_impl,
     ) -> None:
         """
         Perform any combine plus apply weights and perform a reduction on the
@@ -539,7 +548,7 @@ class AlltoAllDynamicShape(AlltoAllPrepareAndFinalize):
         - apply_router_weight_on_input: When False, apply the weights to
           fused_expert_output.
         """
-        # NOTE: we assume output is shared_output or zeros out
+        assert isinstance(weight_and_reduce_impl, TopKWeightAndReduceNoOP)
         sp_hidden_states = torch.zeros(
             (self.ep_token_indices.shape[0], fused_expert_output.shape[1]),
             dtype=fused_expert_output.dtype,

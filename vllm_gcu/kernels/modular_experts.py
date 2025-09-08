@@ -9,6 +9,8 @@ from vllm.model_executor.layers.fused_moe.config import FusedMoEQuantConfig
 from vllm.model_executor.layers.fused_moe.utils import _resize_cache
 from vllm.model_executor.layers.fused_moe.fused_moe import get_config_dtype_str
 from vllm_gcu.kernels.fused_moe import get_default_config, invoke_fused_moe_kernel, moe_align_block_size
+from vllm.model_executor.layers.fused_moe.topk_weight_and_reduce import (
+    TopKWeightAndReduceNoOP)
 
 
 def _resize_cache_with_dtype(x: torch.Tensor, v: tuple[int, ...], dtype: torch.dtype) -> torch.Tensor:
@@ -30,6 +32,7 @@ class TritonExpertsPad(mk.FusedMoEPermuteExpertsUnpermute):
         use_int8_w8a8: bool = False,
         use_int8_w8a16: bool = False,
         use_int4_w4a16: bool = False,
+        use_mxfp4_w4a4: bool = False,
         per_act_token_quant: bool = False,
         block_shape: Optional[list[int]] = None,
     ):
@@ -39,6 +42,7 @@ class TritonExpertsPad(mk.FusedMoEPermuteExpertsUnpermute):
                 use_int8_w8a8=use_int8_w8a8,
                 use_int8_w8a16=use_int8_w8a16,
                 use_int4_w4a16=use_int4_w4a16,
+                use_mxfp4_w4a4=use_mxfp4_w4a4,
                 per_act_token_quant=per_act_token_quant,
                 block_shape=block_shape,
             ))
@@ -47,6 +51,7 @@ class TritonExpertsPad(mk.FusedMoEPermuteExpertsUnpermute):
         self.use_int4_w4a16 = use_int4_w4a16
         self.use_int8_w8a8 = use_int8_w8a8
         self.use_int8_w8a16 = use_int8_w8a16
+        self.use_mxfp4_w4a4 = use_mxfp4_w4a4
 
     @property
     def activation_formats(
@@ -61,6 +66,9 @@ class TritonExpertsPad(mk.FusedMoEPermuteExpertsUnpermute):
     def supports_expert_map(self) -> bool:
         return True
 
+    def finalize_weight_and_reduce_impl(self) -> mk.TopKWeightAndReduce:
+        return TopKWeightAndReduceNoOP()
+
     def workspace_shapes(
         self,
         a: torch.Tensor,
@@ -71,6 +79,7 @@ class TritonExpertsPad(mk.FusedMoEPermuteExpertsUnpermute):
         topk: int,
         global_num_experts: int,
         local_num_experts: int,
+        expert_tokens_meta: Optional[mk.ExpertTokensMetadata],
     ) -> tuple[tuple[int, ...], tuple[int, ...], tuple[int, ...], torch.dtype]:
         workspace1 = (M, topk, max(N // 2, K))
         workspace2 = (M, topk, max(N, K))
@@ -96,11 +105,12 @@ class TritonExpertsPad(mk.FusedMoEPermuteExpertsUnpermute):
         a2_scale: Optional[torch.Tensor],
         workspace13: torch.Tensor,
         workspace2: torch.Tensor,
-        expert_num_tokens: Optional[torch.Tensor],
+        expert_tokens_meta: Optional[mk.ExpertTokensMetadata],
         apply_router_weight_on_input: bool,
         a1q_scale_rec: Optional[torch.Tensor],
         a2_scale_rec: Optional[torch.Tensor],
     ):
+        expert_num_tokens = expert_tokens_meta.expert_num_tokens
         # TODO:bias
         # Check constraints.
         if self.use_int4_w4a16:

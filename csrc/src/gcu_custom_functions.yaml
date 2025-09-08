@@ -142,12 +142,6 @@
 - func: dispatch_bgmv_low_level(Tensor(a!) y, Tensor x, Tensor w, Tensor indicies, int layer_idx, float scale, int h_in, int h_out, int y_offset) -> ()
   variants: function
 
-- func: advance_step_flashattn(int num_seqs, int num_queries, int block_size, Tensor(a!) input_tokens, Tensor(a!) sampled_token_ids, Tensor(a!) input_positions, Tensor(a!) seq_lens, Tensor(a!) slot_mapping, Tensor(a!) block_tables) -> ()
-  variants: function
-
-- func: advance_step_xformers(int num_seqs, int num_queries, int block_size, Tensor(a!) input_tokens, Tensor(a!) sampled_token_ids, Tensor(a!) input_positions, Tensor(a!) seq_lens, Tensor(a!) slot_mapping, Tensor(a!) block_tables) -> ()
-  variants: function
-
 - func: weak_ref_tensor(Tensor x) -> Tensor
   variants: function
 
@@ -239,6 +233,9 @@
   variants: function
   
 - func: gather_cache(Tensor src_cache, Tensor dst, Tensor block_table, Tensor cu_seq_lens, int batch_size, Tensor seq_starts) -> ()
+  variants: function
+
+- func: gather_and_maybe_dequant_cache(Tensor src_cache, Tensor dst, Tensor block_table, Tensor cu_seq_lens, int batch_size, str kv_cache_dtype, Tensor scale, Tensor? seq_starts) -> ()
   variants: function
 
 - func: dynamic_per_token_group_fp8_quant_with_size(Tensor(a!) output, Tensor(a!) scale, Tensor input, Tensor real_size, int group_size) -> ()

@@ -137,7 +137,6 @@ class GCUMLAFusionImpl(GCUMLAImpl):
         alibi_slopes: Optional[List[float]],
         sliding_window: Optional[int],
         kv_cache_dtype: str,
-        blocksparse_params: Optional[Dict[str, Any]],
         logits_soft_cap: Optional[float],
         attn_type: str,
         kv_sharing_target_layer_name: Optional[str] = None,
@@ -153,7 +152,6 @@ class GCUMLAFusionImpl(GCUMLAImpl):
             alibi_slopes,
             sliding_window,
             kv_cache_dtype,
-            blocksparse_params,
             logits_soft_cap,
             attn_type,
             kv_sharing_target_layer_name,
@@ -176,7 +174,6 @@ class GCUMLAFusionImpl(GCUMLAImpl):
 
     def _k_up_proj(self, out, q_nope):
         B, N, P = q_nope.shape
-        q_nope = q_nope
         # Multiply (B, N, P) x (N, P, L) -> (B, N, L)
         torch.bmm(q_nope.transpose(0, 1), self.W_UK_T, out=out.transpose(0, 1))
 
@@ -190,7 +187,12 @@ class GCUMLAFusionImpl(GCUMLAImpl):
         attn_metadata,
         output=None,
         output_scale=None,
+        output_block_scale: Optional[torch.Tensor] = None,
     ):
+        if output_scale is not None or output_block_scale is not None:
+            raise NotImplementedError(
+                "fused output quantization is not yet supported"
+                " for MLAImplBase")
         if attn_metadata is None:
             if output is not None:
                 return output

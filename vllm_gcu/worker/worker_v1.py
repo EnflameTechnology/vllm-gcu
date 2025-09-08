@@ -4,14 +4,15 @@ import os
 import gc
 import contextlib
 import numpy as np
-from typing import Optional, Union
+from typing import Optional, Union, Any
 from importlib.util import find_spec
 
 # import vllm.device_allocator
-from vllm.utils import MemorySnapshot, GiB_bytes
+from vllm.utils import MemorySnapshot, GiB_bytes, cdiv
 from vllm.model_executor import set_random_seed
 from vllm.distributed.parallel_state import get_pp_group, get_ep_group, prepare_communication_buffer_for_model
-from vllm.config import VllmConfig
+from vllm.config import CUDAGraphMode, VllmConfig
+from vllm.platforms import current_platform
 from vllm.v1.core.sched.output import SchedulerOutput
 from vllm.v1.kv_cache_interface import KVCacheConfig
 
@@ -19,6 +20,9 @@ from vllm.v1.utils import report_usage_stats
 from vllm.v1.outputs import ModelRunnerOutput
 from vllm.sequence import IntermediateTensors
 
+from vllm.v1.attention.backends.utils import CommonAttentionMetadata
+from vllm.forward_context import BatchDescriptor
+from vllm.v1.spec_decode.eagle import EagleProposer
 from vllm_gcu import gcumem
 from vllm_gcu.utils import (set_gcu_forward_context,
                             dump_memory_snapshot_when_exception,
@@ -42,76 +46,137 @@ class GCUModelRunner(GPUModelRunner):
     def _dummy_run(
         self,
         num_tokens: int,
-        capture_attn_cudagraph: bool = False,
+        cudagraph_runtime_mode: CUDAGraphMode = CUDAGraphMode.NONE,
+        force_attention: bool = False,
+        uniform_decode: bool = False,
         skip_eplb: bool = False,
         is_profile: bool = False,
+        remove_lora: bool = True,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        from vllm.v1.attention.backends.utils import CommonAttentionMetadata
-        from vllm.v1.spec_decode.eagle import EagleProposer
+        """
+        Run a dummy forward pass to warm up/profile run or capture the
+        CUDA graph for the model.
+
+        Args:
+            num_tokens: Number of tokens to run the dummy forward pass.
+            cudagraph_runtime_mode: used to control the behavior.
+                - CUDAGraphMode.NONE: No cudagraph, for warm up and profile run
+                - CUDAGraphMode.PIECEWISE: Piecewise cudagraph.
+                - CUDAGraphMode.FULL: Full cudagraph, attention metadata is
+                    needed.
+            force_attention: If True, always create attention metadata. Used to
+                warm up attention backend when mode is NONE.
+            uniform_decode: If True, the batch is a uniform decode batch.
+            skip_eplb: If True, skip EPLB state update.
+            is_profile: If True, this is a profile run.
+            remove_lora: If False, dummy LoRAs are not destroyed after the run
+        """
+        assert cudagraph_runtime_mode in {
+            CUDAGraphMode.NONE, CUDAGraphMode.PIECEWISE, CUDAGraphMode.FULL
+        }
 
         # Padding for DP
         num_pad, num_tokens_across_dp = self.get_dp_padding(num_tokens)
         num_tokens += num_pad
-        if num_tokens > 0:
 
-            # Set num_scheduled_tokens based on num_tokens and max_num_seqs
-            # for dummy run with LoRA so that the num_reqs collectively
-            # has num_tokens in total.
-            assert num_tokens <= self.scheduler_config.max_num_batched_tokens
-            max_num_reqs = self.scheduler_config.max_num_seqs
+        # If cudagraph_mode.decode_mode() == FULL and
+        # cudagraph_mode.separate_routine(). This means that we are using
+        # different graphs and/or modes for mixed prefill-decode batches vs.
+        # uniform decode batches. A uniform decode batch means that all
+        # requests have identical query length, except a potential virtual
+        # request (shorter) in the batch account for padding.
+        # Uniform decode batch could either be common pure decode, where
+        # max_query_len == 1, or speculative decode, where
+        # max_query_len == 1 + num_spec_decode_tokens.
+
+        # When setting max_query_len = 1, we switch to and capture the optimized
+        # routine of FA2 for pure decode, i.e., Flashdecode + an optimization
+        # for GQA/MQA.
+        max_query_len = self.uniform_decode_query_len if uniform_decode else \
+                                                                num_tokens
+
+        # Set num_scheduled_tokens based on num_tokens and max_num_seqs
+        # for dummy run with LoRA so that the num_reqs collectively
+        # has num_tokens in total.
+        assert num_tokens <= self.scheduler_config.max_num_batched_tokens
+        max_num_reqs = self.scheduler_config.max_num_seqs
+        if num_tokens == 0:
+            num_reqs = 1
+            num_scheduled_tokens_list = []
+        elif uniform_decode:
+            num_reqs = cdiv(num_tokens, max_query_len)
+            assert num_reqs <= max_num_reqs, \
+                "Do not capture num_reqs > max_num_reqs for uniform batch"
+            num_scheduled_tokens_list = [max_query_len] * num_reqs
+            if num_tokens % max_query_len != 0:
+                num_scheduled_tokens_list[-1] = num_tokens % max_query_len
+        else:
             num_reqs = min(num_tokens, max_num_reqs)
             min_tokens_per_req = num_tokens // num_reqs
             num_scheduled_tokens_list = [min_tokens_per_req] * num_reqs
             num_scheduled_tokens_list[-1] += num_tokens % num_reqs
-            assert sum(num_scheduled_tokens_list) == num_tokens
-            assert len(num_scheduled_tokens_list) == num_reqs
-            num_scheduled_tokens = np.array(num_scheduled_tokens_list, dtype=np.int32)
-        else:
-            num_reqs = 1
-            num_scheduled_tokens = np.array([], dtype=np.int32)
 
-        attn_metadata = None
-        if capture_attn_cudagraph:
+        assert sum(num_scheduled_tokens_list) == num_tokens
+        # assert len(num_scheduled_tokens_list) == num_reqs
+        num_scheduled_tokens = np.array(num_scheduled_tokens_list,
+                                        dtype=np.int32)
+
+        attn_metadata: Optional[dict[str, Any]] = None
+
+        # If force_attention is True, we always capture attention. Otherwise,
+        # it only happens for cudagraph_runtime_mode=FULL.
+        if force_attention or cudagraph_runtime_mode == CUDAGraphMode.FULL:
             attn_metadata = {}
 
-            query_start_loc = self.query_start_loc[: num_reqs + 1]
             # Make sure max_model_len is used at the graph capture time.
-            self.seq_lens_np[:num_reqs] = self.max_model_len
-            self.seq_lens_np[num_reqs:] = 0
-            self.seq_lens[:num_reqs].copy_(
-                self.seq_lens_cpu[:num_reqs], non_blocking=True
-            )
-            seq_lens = self.seq_lens[:num_reqs]
-
-            common_attn_metadata = CommonAttentionMetadata(
-                query_start_loc=query_start_loc,
-                seq_lens=seq_lens,
-                num_reqs=num_reqs,
-                num_actual_tokens=num_tokens,
-                max_query_len=num_tokens,
-            )
+            self.seq_lens.np[:num_reqs] = self.max_model_len
+            self.seq_lens.np[num_reqs:] = 0
+            self.seq_lens.copy_to_gpu()
 
             for kv_cache_group_id, kv_cache_group_spec in enumerate(
-                self.kv_cache_config.kv_cache_groups
-            ):
-                attn_metadata_i = self.attn_metadata_builders[
-                    kv_cache_group_id
-                ].build_for_cudagraph_capture(common_attn_metadata)
-                for layer_name in kv_cache_group_spec.layer_names:
-                    attn_metadata[layer_name] = attn_metadata_i
+                    self.kv_cache_config.kv_cache_groups):
+                common_attn_metadata = CommonAttentionMetadata(
+                    query_start_loc=self.query_start_loc.gpu[:num_reqs + 1],
+                    query_start_loc_cpu=self.query_start_loc.cpu[:num_reqs +
+                                                                 1],
+                    seq_lens=self.seq_lens.gpu[:num_reqs],
+                    seq_lens_cpu=self.seq_lens.cpu[:num_reqs],
+                    num_computed_tokens_cpu=self.input_batch.
+                    num_computed_tokens_cpu_tensor[:num_reqs],
+                    num_reqs=num_reqs,
+                    num_actual_tokens=num_tokens,
+                    max_query_len=max_query_len,
+                    max_seq_len=self.max_model_len,
+                    block_table_tensor=self.input_batch.block_table[
+                        kv_cache_group_id].get_device_tensor()[:num_reqs],
+                    slot_mapping=self.input_batch.
+                    block_table[kv_cache_group_id].slot_mapping[:num_tokens],
+                    causal=True)
 
-        with self.maybe_dummy_run_with_lora(self.lora_config, num_scheduled_tokens):
-            model = self.model
-            if self.is_multimodal_model:
+                for attn_group in self.attn_groups[kv_cache_group_id]:
+                    attn_metadata_i = attn_group.metadata_builder\
+                        .build_for_cudagraph_capture(common_attn_metadata)
+                    for layer_name in kv_cache_group_spec.layer_names:
+                        attn_metadata[layer_name] = attn_metadata_i
+
+        with self.maybe_dummy_run_with_lora(self.lora_config,
+                                            num_scheduled_tokens, remove_lora):
+            if self.supports_mm_inputs:
                 input_ids = None
-                inputs_embeds = self.inputs_embeds[:num_tokens]
+                inputs_embeds = self.inputs_embeds.gpu[:num_tokens]
+                model_kwargs = {
+                    **self._init_model_kwargs(num_tokens),
+                    **self._dummy_mm_kwargs(num_reqs),
+                }
             else:
-                input_ids = self.input_ids[:num_tokens]
+                input_ids = self.input_ids.gpu[:num_tokens]
                 inputs_embeds = None
+                model_kwargs = self._init_model_kwargs(num_tokens)
+
             if self.uses_mrope:
-                positions = self.mrope_positions[:, :num_tokens]
+                positions = self.mrope_positions.gpu[:, :num_tokens]
             else:
-                positions = self.positions[:num_tokens]
+                positions = self.positions.gpu[:num_tokens]
 
             if get_pp_group().is_first_rank:
                 intermediate_tensors = None
@@ -121,29 +186,38 @@ class GCUModelRunner(GPUModelRunner):
                         self.model.make_empty_intermediate_tensors(
                             batch_size=self.max_num_tokens,
                             dtype=self.model_config.dtype,
-                            device=self.device,
-                        )
-                    )
+                            device=self.device))
 
                 intermediate_tensors = self.sync_and_slice_intermediate_tensors(
-                    num_tokens, None, False
-                )
+                    num_tokens, None, False)
+            if cudagraph_runtime_mode == CUDAGraphMode.NONE:
+                batch_descriptor = None
+            else:
+                # filter out the valid batch descriptor
+                _cg_mode, batch_descriptor = \
+                    self.cudagraph_dispatcher.dispatch(
+                        BatchDescriptor(num_tokens=num_tokens,
+                                        uniform_decode=uniform_decode))
+                # sanity check
+                assert cudagraph_runtime_mode == _cg_mode, (
+                    f"Cudagraph runtime mode mismatch at dummy_run. "
+                    f"Expected {_cg_mode}, but got {cudagraph_runtime_mode}.")
 
-            with (
-                self.maybe_randomize_inputs(input_ids),
-                set_gcu_forward_context(
+            with self.maybe_randomize_inputs(input_ids), set_gcu_forward_context(
                     attn_metadata,
                     self.vllm_config,
                     num_tokens=num_tokens,
                     num_tokens_across_dp=num_tokens_across_dp,
-                ),
-            ):
-                outputs = model(
+                    cudagraph_runtime_mode=cudagraph_runtime_mode,
+                    batch_descriptor=batch_descriptor):
+                outputs = self.model(
                     input_ids=input_ids,
                     positions=positions,
                     intermediate_tensors=intermediate_tensors,
                     inputs_embeds=inputs_embeds,
+                    **model_kwargs,
                 )
+
             if self.use_aux_hidden_state_outputs:
                 hidden_states, _ = outputs
             else:
@@ -165,7 +239,7 @@ class GCUModelRunner(GPUModelRunner):
 
         logit_indices = np.cumsum(num_scheduled_tokens) - 1
         return hidden_states, hidden_states[logit_indices]
-    
+
     @torch.inference_mode()
     @dump_memory_snapshot_when_exception('step')
     def execute_model(
@@ -207,8 +281,8 @@ class GCUModelRunner(GPUModelRunner):
         )), "Some layers are not correctly initialized"
         return kv_cache_raw_tensors
 
-    def load_model(self) -> None:
-        super().load_model()
+    def load_model(self, eep_scale_up: bool = False) -> None:
+        super().load_model(eep_scale_up)
         if get_ep_group().world_size == 1:
             prepare_communication_buffer_for_model_noep(self.model)
         if hasattr(self, "drafter") and hasattr(self.drafter, 'model'):
@@ -256,6 +330,8 @@ class GCUWorker(Worker):
 
         self.device = torch.device(f"gcu:{self.local_rank}")
         torch.gcu.set_device(self.device)
+
+        current_platform.check_if_supports_dtype(self.model_config.dtype)
         gc.collect()
         torch.gcu.empty_cache()
 
@@ -277,7 +353,8 @@ class GCUWorker(Worker):
             )
 
         init_worker_distributed_environment(
-            self.vllm_config, self.rank, self.distributed_init_method, self.local_rank
+            self.vllm_config, self.rank, self.distributed_init_method, self.local_rank,
+            current_platform.dist_backend,
         )
         # Set random seed.
         set_random_seed(self.model_config.seed)

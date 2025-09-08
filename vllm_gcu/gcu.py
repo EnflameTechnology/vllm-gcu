@@ -4,7 +4,7 @@ import os
 import random
 import types
 from functools import lru_cache
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union, TYPE_CHECKING
 
 import numpy as np
 import torch
@@ -20,6 +20,8 @@ from vllm.logger import init_logger
 
 import vllm_gcu.envs as gcu_envs
 
+if TYPE_CHECKING:
+    from vllm.config import ModelConfig
 
 logger = init_logger(__name__)
 
@@ -29,6 +31,7 @@ class GCUPlatform(Platform):
     device_name: str = "GCU"
     device_type: str = "gcu"
     dispatch_key: str = "PrivateUse1"
+    dist_backend: str = "eccl"
     ray_device_key: str = "GPU"
     device_control_env_var: str = "TOPS_VISIBLE_DEVICES"
     simple_compile_backend: str = "topsgraph"
@@ -48,6 +51,24 @@ class GCUPlatform(Platform):
     def is_cuda_alike(self) -> bool:
         return True
 
+    def get_vit_attn_backend(cls, support_fa: bool = False) -> _Backend:
+        if envs.VLLM_USE_V1:
+            if support_fa:
+                return _Backend.FLASH_ATTN
+            else:
+                return _Backend.TORCH_SDPA
+        if cls.has_device_capability(140):
+            if not support_fa:
+                return _Backend.TORCH_SDPA
+            return _Backend.FLASH_ATTN
+        elif cls.has_device_capability(130):
+            return _Backend.XFORMERS
+        raise NotImplementedError
+
+    @classmethod
+    def opaque_attention_op(cls) -> bool:
+        return True
+
     @classmethod
     def get_attn_backend_cls(
         cls,
@@ -58,6 +79,7 @@ class GCUPlatform(Platform):
         block_size: int,
         use_v1: bool,
         use_mla: bool,
+        has_sink: bool,
     ) -> str:
         if use_mla:
             if use_v1:
@@ -174,18 +196,11 @@ class GCUPlatform(Platform):
         compilation_config = vllm_config.compilation_config
 
         if parallel_config.worker_cls == "auto":
-            if scheduler_config.is_multi_step:
-                parallel_config.worker_cls = (
-                    "vllm_gcu.worker.multi_step_worker.GCUMultiStepWorker"
-                )
-            elif vllm_config.speculative_config:
+            if vllm_config.speculative_config:
                 if envs.VLLM_USE_V1:
                     parallel_config.worker_cls = "vllm_gcu.worker.worker_v1.GCUWorker"
                 else:
-                    parallel_config.worker_cls = (
-                        "vllm_gcu.worker.spec_decode.spec_decode_worker.create_spec_worker"
-                    )
-                    parallel_config.sd_worker_cls = "vllm_gcu.worker.worker.GCUWorker"
+                    raise NotImplementedError
             else:
                 if envs.VLLM_USE_V1:
                     parallel_config.worker_cls = "vllm_gcu.worker.worker_v1.GCUWorker"
@@ -278,7 +293,7 @@ class GCUPlatform(Platform):
         num_redundant_experts = additional_config.get("num_redundant_experts", 0)
         if num_redundant_experts > 0:
             assert parallel_config.enable_eplb, "EPLB must be enabled"
-            parallel_config.num_redundant_experts = num_redundant_experts
+            parallel_config.eplb_config.num_redundant_experts = num_redundant_experts
 
         # TODO: v1
         if not envs.VLLM_USE_V1 and \
@@ -353,9 +368,27 @@ class GCUPlatform(Platform):
         return False
 
     @classmethod
-    def get_piecewise_backend_cls(cls) -> str:
-        return "vllm_gcu.compilation.gcu_piecewise_backend.GCUPiecewiseBackend"  # noqa
+    def get_static_graph_wrapper_cls(cls) -> str:
+        return "vllm.compilation.cuda_graph.CUDAGraphWrapper"
 
     @classmethod
     def default_v1(cls, model_config) -> bool:
         return cls.supports_v1(model_config)
+
+    @classmethod
+    def is_kv_cache_dtype_supported(cls, kv_cache_dtype: str,
+                                    model_config: "ModelConfig") -> bool:
+        fp8_attention = kv_cache_dtype.startswith("fp8")
+        if fp8_attention and not cls.supports_fp8():
+            return False
+        return True
+
+    @classmethod
+    def check_if_supports_dtype(cls, torch_dtype: torch.dtype):
+        if torch_dtype in [torch.float8_e4m3fn] and not cls.supports_fp8():
+            return False
+        return True
+
+    @classmethod
+    def support_hybrid_kv_cache(cls) -> bool:
+        return True

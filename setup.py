@@ -44,7 +44,8 @@ else:
     except ImportError:
         VLLM_VERSION = "0.8.0"
     tops_version = get_tops_version(f"{ROOT_DIR}/.version")
-    VERSION = f"{VLLM_VERSION}+{get_tag(ROOT_DIR, tops_version)}"
+    sp = '+' if '+' not in VLLM_VERSION else '.'
+    VERSION = f"{VLLM_VERSION}{sp}{get_tag(ROOT_DIR, tops_version)}"
 
 
 try:
@@ -357,7 +358,7 @@ setup(
     python_requires=">=3.8",
     install_requires=[
         "python-multipart==0.0.20",
-        "transformers==4.51.1",
+        "transformers==4.55.2",
         "numpy<2.0",
         "cloudpickle==3.1.1",
     ],

@@ -40,9 +40,7 @@ from vllm.model_executor.model_loader.tensorizer import TensorizerConfig
 from vllm.model_executor.models import supports_lora, supports_multimodal
 from vllm.model_executor.models.utils import set_cpu_offload_max_bytes
 from vllm.multimodal import MULTIMODAL_REGISTRY, MultiModalKwargs, MultiModalRegistry
-from vllm.prompt_adapter.layers import PromptAdapterMapping
-from vllm.prompt_adapter.request import PromptAdapterRequest
-from vllm.prompt_adapter.worker_manager import LRUCacheWorkerPromptAdapterManager
+
 from vllm.sampling_params import SamplingParams, SamplingType
 from vllm.sequence import (
     CompletionSequenceGroupOutput,
@@ -186,7 +184,6 @@ class GCUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
         self.model: nn.Module  # Set after load_model
         # Set after load_model.
         self.lora_manager: Optional[LRUCacheWorkerLoRAManager] = None
-        self.prompt_adapter_manager: LRUCacheWorkerPromptAdapterManager = None
         self.sampler = get_sampler()
 
         set_cpu_offload_max_bytes(int(self.cache_config.cpu_offload_gb * 1024**3))
@@ -256,17 +253,6 @@ class GCUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
 
         prepare_communication_buffer_for_model_noep(self.model)
 
-        if self.prompt_adapter_config:
-            self.prompt_adapter_manager = LRUCacheWorkerPromptAdapterManager(
-                self.scheduler_config.max_num_seqs,
-                self.scheduler_config.max_num_batched_tokens,
-                self.device,
-                self.prompt_adapter_config,
-            )
-            self.model = self.prompt_adapter_manager.create_prompt_adapter_manager(
-                self.model
-            )
-
         if (
             self.vllm_config.compilation_config.level == CompilationLevel.DYNAMO_AS_IS
             and supports_dynamo()
@@ -294,8 +280,7 @@ class GCUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
         pattern: Optional[str] = None,
         max_size: Optional[int] = None,
     ) -> None:
-        from vllm.model_executor.model_loader.loader import ShardedStateLoader
-
+        from vllm.model_executor.model_loader import ShardedStateLoader
         ShardedStateLoader.save_model(
             self.model,
             path,
@@ -307,11 +292,11 @@ class GCUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
         self,
         tensorizer_config: TensorizerConfig,
     ) -> None:
-        from vllm.model_executor.model_loader.loader import TensorizerLoader
-
+        from vllm.model_executor.model_loader import TensorizerLoader
         TensorizerLoader.save_model(
             self.model,
             tensorizer_config=tensorizer_config,
+            model_config=self.model_config,
         )
 
     def get_max_block_per_batch(self) -> int:
@@ -544,42 +529,6 @@ class GCUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
             raise RuntimeError("LoRA is not enabled.")
         return self.lora_manager.list_adapters()
 
-    def remove_all_prompt_adapters(self):
-        if not self.prompt_adapter_manager:
-            raise RuntimeError("PromptAdapter is not enabled.")
-        self.prompt_adapter_manager.remove_all_adapters()
-
-    def set_active_prompt_adapters(
-        self,
-        prompt_adapter_requests: Set[PromptAdapterRequest],
-        prompt_adapter_mapping: PromptAdapterMapping,
-    ) -> None:
-        if not self.prompt_adapter_manager:
-            raise RuntimeError("PromptAdapter is not enabled.")
-        self.prompt_adapter_manager.set_active_adapters(
-            prompt_adapter_requests, prompt_adapter_mapping
-        )
-
-    def add_prompt_adapter(self, prompt_adapter_request: PromptAdapterRequest) -> bool:
-        if not self.prompt_adapter_manager:
-            raise RuntimeError("PromptAdapter is not enabled.")
-        return self.prompt_adapter_manager.add_adapter(prompt_adapter_request)
-
-    def remove_prompt_adapter(self, prompt_adapter_id: int) -> bool:
-        if not self.prompt_adapter_manager:
-            raise RuntimeError("PromptAdapter is not enabled.")
-        return self.prompt_adapter_manager.remove_adapter(prompt_adapter_id)
-
-    def pin_prompt_adapter(self, prompt_adapter_id: int) -> bool:
-        if not self.prompt_adapter_manager:
-            raise RuntimeError("PromptAdapter is not enabled.")
-        return self.prompt_adapter_manager.pin_adapter(prompt_adapter_id)
-
-    def list_prompt_adapters(self) -> Set[int]:
-        if not self.prompt_adapter_manager:
-            raise RuntimeError("PromptAdapter is not enabled.")
-        return self.prompt_adapter_manager.list_adapters()
-
     @torch.inference_mode()
     def capture_model(self, kv_caches: List[List[torch.Tensor]]) -> None:
         """Gcu graph capture a model.
@@ -692,12 +641,6 @@ class GCUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
                         )
                         self.set_active_loras(set([dummy_lora_request]), lora_mapping)
 
-                    if self.prompt_adapter_config:
-                        prompt_adapter_mapping = PromptAdapterMapping(
-                            [-1] * batch_size,
-                            [-1] * batch_size,
-                        )
-                        self.set_active_prompt_adapters(set(), prompt_adapter_mapping)
                     graph_runner = GCUGraphRunner(
                         self.model,
                         self.attn_backend.get_name(),
@@ -911,13 +854,6 @@ class GCUModelRunner(GCUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
             assert model_input.lora_requests is not None
             assert model_input.lora_mapping is not None
             self.set_active_loras(model_input.lora_requests, model_input.lora_mapping)
-
-        if self.prompt_adapter_config:
-            assert model_input.prompt_adapter_requests is not None
-            assert model_input.prompt_adapter_mapping is not None
-            self.set_active_prompt_adapters(
-                model_input.prompt_adapter_requests, model_input.prompt_adapter_mapping
-            )
 
         # TODO: draft runner also do this
         if model_input.attn_metadata is not None:

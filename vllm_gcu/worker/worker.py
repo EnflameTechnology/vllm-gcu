@@ -21,6 +21,7 @@ from vllm.distributed import (
 from vllm.distributed.kv_transfer import ensure_kv_transfer_initialized
 from vllm.logger import init_logger
 from vllm.model_executor import set_random_seed
+from vllm.platforms import current_platform
 from vllm.utils import GiB_bytes, memory_profiling, MemorySnapshot
 from vllm.worker.model_runner import GPUModelRunnerBase
 from vllm.worker.worker import Worker
@@ -28,6 +29,7 @@ from vllm.sequence import ExecuteModelRequest
 
 from vllm_gcu.worker.model_runner import GCUModelRunner
 import vllm_gcu.envs as gcu_envs
+
 
 
 logger = init_logger(__name__)
@@ -78,7 +80,8 @@ class GCUWorker(Worker):
             )
             or (
                 speculative_config.draft_model_config.hf_config.model_type
-                not in ("medusa", "mlp_speculator", "eagle", "deepseek_mtp")
+                not in ("medusa", "mlp_speculator", "eagle", "deepseek_mtp",
+                        "glm4_moe_mtp", "mimo_mtp", "ernie_mtp")
             )
             else {"return_hidden_states": True}
         )
@@ -235,7 +238,7 @@ def init_worker_distributed_environment(
         rank,
         distributed_init_method,
         local_rank,
-        backend="eccl",
+        backend=current_platform.dist_backend,
     )
 
     # ugly WA as bug in 0.8.0
@@ -243,6 +246,7 @@ def init_worker_distributed_environment(
     ensure_model_parallel_initialized(
         parallel_config.tensor_parallel_size,
         parallel_config.pipeline_parallel_size,
+        parallel_config.decode_context_parallel_size,
     )
     parallel_config.world_size = (
         parallel_config.pipeline_parallel_size * parallel_config.tensor_parallel_size

@@ -214,81 +214,6 @@ class GCUXFormersMetadata(XFormersMetadata):
             self._cached_decode_metadata.query_start_loc = qs - qs[0]
         return self._cached_decode_metadata
 
-    def advance_step(
-        self,
-        model_input: "ModelInputForGPUWithSamplingMetadata",
-        sampled_token_ids: Optional[torch.Tensor],
-        block_size: int,
-        num_seqs: int,
-        num_queries: int,
-        turn_prefills_into_decodes: bool = False,
-    ):
-
-        # When using graph, the num_seqs is padded to the next captured
-        # batch sized, but num_queries tracks the actual number of requests in
-        # the batch. For --enforce-eager mode, num_seqs == num_queries
-        if num_seqs != num_queries:
-            assert num_seqs > num_queries
-            assert self.use_cuda_graph
-
-        if turn_prefills_into_decodes:
-            # When Multi-Step is enabled with Chunked-Prefill, prefills and
-            # decodes are scheduled together. In the first step, all the
-            # prefills turn into decodes. This update reflects that
-            # conversion.
-            assert self.num_decode_tokens + self.num_prefills == num_seqs
-            self.num_decode_tokens += self.num_prefills
-            self.num_prefills = 0
-            self.num_prefill_tokens = 0
-            self.max_prefill_seq_len = 0
-            self.max_query_len = 1
-
-            self.slot_mapping = self.slot_mapping[:num_seqs]
-        else:
-            assert self.seq_lens is not None
-            assert self.max_decode_seq_len == max(self.seq_lens)
-
-        assert self.num_prefills == 0
-        assert self.num_prefill_tokens == 0
-        assert self.num_decode_tokens == num_seqs
-        assert self.slot_mapping.shape == (num_seqs,)
-
-        assert self.seq_lens is not None
-        assert len(self.seq_lens) == num_seqs
-        assert self.seq_lens_tensor is not None
-        assert self.seq_lens_tensor.shape == (num_seqs,)
-        assert self.max_query_len == 1
-        assert self.max_prefill_seq_len == 0
-        assert self.max_decode_seq_len == max(self.seq_lens)
-
-        assert self.block_tables is not None
-        assert self.block_tables.shape[0] == num_seqs
-
-        # only support decoder-only
-        assert self.encoder_seq_lens is None
-        assert self.encoder_seq_lens_tensor is None
-        assert self.num_encoder_tokens is None or self.num_encoder_tokens == 0
-        assert self.cross_slot_mapping is None
-        assert self.cross_block_tables is None
-
-        # Update query lengths. Note that we update only queries and not seqs,
-        # since tensors may be padded due to captured cuda graph batch size
-        for i in range(num_queries):
-            self.seq_lens[i] += 1
-        self.max_decode_seq_len = max(self.seq_lens)
-
-        torch.ops._C.advance_step_flashattn(
-            num_seqs=num_seqs,
-            num_queries=num_queries,
-            block_size=block_size,
-            input_tokens=model_input.input_tokens,
-            sampled_token_ids=sampled_token_ids,
-            input_positions=model_input.input_positions,
-            seq_lens=self.seq_lens_tensor,
-            slot_mapping=self.slot_mapping,
-            block_tables=self.block_tables,
-        )
-
 
 class GCUXFormersMetadataBuilder(CommonMetadataBuilder[GCUXFormersMetadata]):
 
@@ -305,7 +230,13 @@ class GCUXFormersImpl(XFormersImpl):
         kv_cache: torch.Tensor,
         attn_metadata: "GCUXFormersMetadata",
         output: Optional[torch.Tensor] = None,
+        output_scale: Optional[torch.Tensor] = None,
+        output_block_scale: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        if output_scale is not None or output_block_scale is not None:
+            raise NotImplementedError(
+                "fused output quantization is not yet supported"
+                " for XFormersImpl")
         if query.numel() == 0:
             return query.view(-1, self.num_heads * self.head_size)
 

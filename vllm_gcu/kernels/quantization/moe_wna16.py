@@ -9,6 +9,7 @@ from vllm.model_executor.layers.fused_moe.layer import (
     FusedMoE,
     FusedMoEMethodBase,
     FusedMoeWeightScaleSupported,
+    FusedMoEConfig,
 )
 from vllm.model_executor.layers.linear import LinearBase, UnquantizedLinearMethod
 from vllm.model_executor.layers.quantization.kv_cache import BaseKVCacheMethod
@@ -114,7 +115,7 @@ class MoeWNA16GCUConfig(QuantizationConfig):
             else:
                 raise ValueError("moe_wna16_gcu only support gptq and awq.")
         elif isinstance(layer, FusedMoE):
-            return MoeWNA16GCUMethod(self)
+            return MoeWNA16GCUMethod(self, layer.moe_config)
         elif isinstance(layer, Attention):
             return BaseKVCacheMethod(self)
         return None
@@ -131,7 +132,8 @@ class MoeWNA16GCUConfig(QuantizationConfig):
 
 class MoeWNA16GCUMethod(FusedMoEMethodBase):
 
-    def __init__(self, quant_config: MoeWNA16GCUConfig):
+    def __init__(self, quant_config: MoeWNA16GCUConfig, moe: FusedMoEConfig):
+        super().__init__(moe)
         self.quant_config = quant_config
 
         from vllm.config import get_current_vllm_config
@@ -547,6 +549,7 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
         self,
         prepare_finalize,
         moe,
+        layer,
     ):
         weight_bits = self.quant_config.weight_bits
         return TritonExpertsPad(
@@ -569,6 +572,7 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
         expert_map: Optional[torch.Tensor] = None,
         custom_routing_function: Optional[Callable] = None,
         scoring_func: str = "softmax",
+        routed_scaling_factor: float = 1.0,
         e_score_correction_bias: Optional[torch.Tensor] = None,
         apply_router_weight_on_input: bool = False,
         activation: str = "silu",
@@ -591,7 +595,9 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
             num_expert_group=num_expert_group,
             custom_routing_function=custom_routing_function,
             scoring_func=scoring_func,
+            routed_scaling_factor=routed_scaling_factor,
             e_score_correction_bias=e_score_correction_bias,
+            indices_type=self.topk_indices_dtype,
         )
 
         has_zp = self.quant_config.has_zp

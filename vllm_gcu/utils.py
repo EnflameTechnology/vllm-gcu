@@ -2,6 +2,7 @@
 # coding=utf-8
 from functools import wraps
 from contextlib import contextmanager
+from typing import Optional
 
 import torch
 import importlib
@@ -9,8 +10,8 @@ from packaging import version
 from packaging.version import Version
 from vllm.utils import round_up
 import vllm_gcu.envs as gcu_envs
-from vllm.config import VllmConfig
-from vllm.forward_context import set_forward_context, get_forward_context
+from vllm.config import VllmConfig, CUDAGraphMode
+from vllm.forward_context import set_forward_context, get_forward_context, BatchDescriptor
 
 STR_DTYPE_TO_TORCH_DTYPE = {
     "half": torch.half,
@@ -117,7 +118,8 @@ def set_gcu_forward_context(
     virtual_engine=0,
     num_tokens=None,
     num_tokens_across_dp=None,
-    skip_cuda_graphs=False,
+    cudagraph_runtime_mode: CUDAGraphMode = CUDAGraphMode.NONE,
+    batch_descriptor: Optional[BatchDescriptor] = None
 ):
     with set_forward_context(
         attn_metadata,
@@ -125,7 +127,8 @@ def set_gcu_forward_context(
         virtual_engine,
         num_tokens,
         num_tokens_across_dp,
-        skip_cuda_graphs,
+        cudagraph_runtime_mode,
+        batch_descriptor,
     ) as ctx:
         forward_context = get_forward_context()
         threshold = ep_alltoall_threshold(vllm_config)
@@ -145,7 +148,8 @@ def set_gcu_forward_context(
                 # for v1 attention backends or no attn_metadata
                 total_tokens = num_tokens or 0
         use_all2all_v = total_tokens <= threshold
-        forward_context.skip_cuda_graphs |= not use_all2all_v
+        if not use_all2all_v:
+            forward_context.cudagraph_runtime_mode = CUDAGraphMode.NONE
         setattr(forward_context, "all2allv_threshold", None if not use_all2all_v else threshold)
 
         try:

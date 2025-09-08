@@ -25,7 +25,7 @@ class Fp8GCUConfig(Fp8Config):
                 return UnquantizedLinearMethod()
             return Fp8GCULinearMethod(self)
         elif isinstance(layer, FusedMoE):
-            return Fp8GCUMoEMethod(self)
+            return Fp8GCUMoEMethod(self, layer)
         return super().get_quant_method(layer, prefix)
 
     @classmethod
@@ -69,16 +69,17 @@ class Fp8GCULinearMethod(Fp8LinearMethod):
 
 class Fp8GCUMoEMethod(Fp8MoEMethod):
 
-    def __init__(self, quant_config: Fp8Config):
+    def __init__(self, quant_config: Fp8Config, layer: torch.nn.Module):
         import vllm.model_executor.layers.fused_moe
         from vllm.model_executor.layers.fused_moe.fused_moe import fused_experts
         setattr(vllm.model_executor.layers.fused_moe, 'fused_experts', fused_experts)
-        super().__init__(quant_config)
+        super().__init__(quant_config, layer)
 
     def select_gemm_impl(
         self,
         prepare_finalize,
         moe,
+        layer,
     ):
         return TritonExpertsPad(
             use_fp8_w8a8=True,
@@ -99,6 +100,7 @@ class Fp8GCUMoEMethod(Fp8MoEMethod):
         expert_map: Optional[torch.Tensor] = None,
         custom_routing_function: Optional[Callable] = None,
         scoring_func: str = "softmax",
+        routed_scaling_factor: float = 1.0,
         e_score_correction_bias: Optional[torch.Tensor] = None,
         apply_router_weight_on_input: bool = False,
         activation: str = "silu",
@@ -124,6 +126,7 @@ class Fp8GCUMoEMethod(Fp8MoEMethod):
             num_expert_group=num_expert_group,
             custom_routing_function=custom_routing_function,
             scoring_func=scoring_func,
+            routed_scaling_factor=routed_scaling_factor,
             e_score_correction_bias=e_score_correction_bias,
             indices_type=self.topk_indices_dtype,
             enable_eplb=enable_eplb,

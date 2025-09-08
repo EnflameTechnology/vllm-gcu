@@ -235,6 +235,7 @@ def grouped_topk(
     num_expert_group: int = 0,
     topk_group: int = 0,
     scoring_func: str = "softmax",
+    routed_scaling_factor: float = 1.0,
     e_score_correction_bias: Optional[torch.Tensor] = None,
 ):
     assert hidden_states.shape[0] == gating_output.shape[0], "Number of tokens mismatch"
@@ -260,6 +261,7 @@ def grouped_topk(
         e_score_correction_bias,
         scoring_func,
     )
+
     return topk_weights, topk_ids
 
 

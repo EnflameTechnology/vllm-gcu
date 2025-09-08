@@ -7,10 +7,12 @@ import torch
 
 from vllm.logger import init_logger
 from vllm.attention.backends.abstract import AttentionLayer
+from vllm.attention.ops.common import cp_lse_ag_out_rs
+from vllm.distributed.parallel_state import get_dcp_group
 from vllm.model_executor.layers.rotary_embedding import RotaryEmbedding
-import vllm_gcu.kernels._custom_ops as ops
 from vllm_gcu.attention.backends.mla_v1 import GCUMLABackend, GCUMLAImpl, GCUMLAMetadata
 from vllm_gcu.attention.backends.mla_fusion import RopeWithKVCache
+import vllm_gcu.kernels._custom_ops as ops
 
 logger = init_logger(__name__)
 
@@ -33,7 +35,6 @@ class GCUMLAFusionImpl(GCUMLAImpl):
             alibi_slopes: Optional[list[float]],
             sliding_window: Optional[int],
             kv_cache_dtype: str,
-            blocksparse_params: Optional[dict[str, Any]],
             logits_soft_cap: Optional[float],
             attn_type: str,
             kv_sharing_target_layer_name: Optional[str],
@@ -45,7 +46,7 @@ class GCUMLAFusionImpl(GCUMLAImpl):
 
         super().__init__(num_heads, head_size, scale, num_kv_heads,
                          alibi_slopes, sliding_window, kv_cache_dtype,
-                         blocksparse_params, logits_soft_cap, attn_type,
+                         logits_soft_cap, attn_type,
                          kv_sharing_target_layer_name, **mla_args)
         self.rotary_emb = rotary_emb
         self.kv_a_layernorm = kv_a_layernorm
@@ -77,7 +78,6 @@ class GCUMLAFusionImpl(GCUMLAImpl):
 
     def _k_up_proj(self, out, q_nope):
         B, N, P = q_nope.shape
-        q_nope = q_nope
         # Multiply (B, N, P) x (N, P, L) -> (B, N, L)
         torch.bmm(q_nope.transpose(0, 1), self.W_UK_T, out=out.transpose(0, 1))
 
@@ -91,11 +91,12 @@ class GCUMLAFusionImpl(GCUMLAImpl):
         attn_metadata: GCUMLAMetadata,
         output: Optional[torch.Tensor] = None,
         output_scale: Optional[torch.Tensor] = None,
+        output_block_scale: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
 
         assert output is not None, "Output tensor must be provided."
 
-        if output_scale is not None:
+        if output_scale is not None or output_block_scale is not None:
             raise NotImplementedError(
                 "fused output quantization is not yet supported"
                 " for MLACommonImpl")
@@ -105,6 +106,11 @@ class GCUMLAFusionImpl(GCUMLAImpl):
             # to ensure all ranks within a DP group compute the
             # same expert outputs.
             return output.fill_(0)
+
+        if self.dcp_world_size is None:
+            self.dcp_world_size = get_dcp_group().world_size
+
+        fp8_attention = self.kv_cache_dtype.startswith("fp8")
 
         num_actual_toks = attn_metadata.num_actual_tokens
 
@@ -151,11 +157,11 @@ class GCUMLAFusionImpl(GCUMLAImpl):
                 dtype=kv_c_and_k_pe.dtype,
                 device=kv_c_and_k_pe.device,
             )
-            self.rope_with_kvcache(
-                prefill_q_pe, prefill_k_pe,
-                prefill_q_pe, prefill_kv_c_and_k_pe, kv_cache,
-                prefill_slot_mapping.flatten(), prefill_input_positions,
-                layer._k_scale, prefill_k_c_normed)
+            self.rope_with_kvcache(prefill_q_pe, prefill_k_pe, prefill_q_pe,
+                                   prefill_kv_c_and_k_pe, kv_cache,
+                                   prefill_slot_mapping.flatten(),
+                                   prefill_input_positions, layer._k_scale,
+                                   prefill_k_c_normed)
 
         if has_decode:
             decode_q_nope, decode_q_pe = decode_q.split(
@@ -181,56 +187,22 @@ class GCUMLAFusionImpl(GCUMLAImpl):
         if has_prefill:
             output[num_decode_tokens:] = self._forward_prefill(
                 prefill_q, prefill_k_c_normed, prefill_k_pe, kv_cache,
-                attn_metadata)
+                attn_metadata, layer._k_scale)
 
         if has_decode:
-            output[:num_decode_tokens] = self._forward_decode(
-                decode_q_concat, kv_cache, attn_metadata, layer._k_scale_float)
+            if self.dcp_world_size > 1:
+                assert not fp8_attention, "DCP not support fp8 kvcache now."
+                # decode_q do allgather in head dim.
+                decode_q_concat = get_dcp_group().all_gather(decode_q_concat,
+                                                             dim=1)
+            attn_out, lse = self._forward_decode(decode_q_concat, kv_cache,
+                                                 attn_metadata, layer)
+
+            # recorect dcp attn_out with lse.
+            if self.dcp_world_size > 1:
+                attn_out = cp_lse_ag_out_rs(attn_out, lse, get_dcp_group())
+
+            # v_up projection
+            output[:num_decode_tokens] = self._v_up_proj(attn_out)
 
         return output_padded
-
-    def _forward_decode(
-        self,
-        decode_q_concat: torch.Tensor,
-        kv_c_and_k_pe_cache: torch.Tensor,
-        attn_metadata: GCUMLAMetadata,
-        k_scale: float
-    ) -> torch.Tensor:
-        assert kv_c_and_k_pe_cache.numel() > 0
-        # if self.kv_cache_dtype.startswith("fp8"):
-        #     raise NotImplementedError("FP8 MLA not yet supported")
-
-        decode_meta = attn_metadata.decode
-        assert decode_meta is not None
-
-        B = decode_q_concat.shape[0]
-
-        q = decode_q_concat
-        o = torch.zeros(B,
-                        self.num_heads,
-                        self.kv_lora_rank,
-                        dtype=q.dtype,
-                        device=q.device)
-        q_scale=None
-        if self.kv_cache_dtype=="fp8":
-            q, q_scale = ops.scaled_fp8_quant(q, q_scale, scale_ub=None, use_per_token_if_dynamic=True)
-        ops.paged_attention_v1(
-            out=o,
-            query=q,
-            key_cache=kv_c_and_k_pe_cache,
-            value_cache=None,
-            num_kv_heads=1,
-            scale=self.scale,
-            block_tables=decode_meta.block_table,
-            seq_lens=decode_meta.seq_lens,
-            block_size=kv_c_and_k_pe_cache.size(1),
-            max_seq_len=decode_meta.max_query_len,
-            alibi_slopes=None,
-            kv_cache_dtype=self.kv_cache_dtype,
-            k_scale_float=k_scale,
-            v_scale_float=k_scale,
-            out_scales=None,
-            query_scales=q_scale
-        )
-
-        return self._v_up_proj(o)

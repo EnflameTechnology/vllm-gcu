@@ -1,8 +1,6 @@
 #include <torch/library.h>
 
 #include "registration.h"
-#include "src/advance_step_flashattn.h"
-#include "src/advance_step_xformers.h"
 #include "src/awq_dequantize.h"
 #include "src/awq_gemm_gcu.h"
 #include "src/batched_rotary_embedding.h"
@@ -33,6 +31,7 @@
 #include "src/fused_moe_quant_kernel_ex.h"
 #include "src/fused_qkv_gemm_quant.h"
 #include "src/fused_qkv_proj.h"
+#include "src/gather_and_maybe_dequant_cache.h"
 #include "src/gather_cache.h"
 #include "src/gelu_and_mul.h"
 #include "src/gelu_asym_quant.h"
@@ -219,31 +218,6 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
     ops.def("gelu_quick(Tensor! out, Tensor input) -> ()");
   }
   ops.impl("gelu_quick", torch::kPrivateUse1, &gelu_quick);
-
-  // prepare_inputs advance_step
-  handle = c10::Dispatcher::singleton().findSchema(
-      {"_C::advance_step_xformers", ""});
-  if (!handle.has_value()) {
-    ops.def(
-        "advance_step_xformers(int num_seqs, int num_queries, int block_size, "
-        "Tensor! input_tokens, Tensor sampled_token_ids, "
-        "Tensor! input_positions, Tensor! seq_lens, Tensor! slot_mapping, "
-        "Tensor block_tables) -> ()");
-  }
-  ops.impl("advance_step_xformers", torch::kPrivateUse1,
-           &advance_step_xformers);
-
-  handle = c10::Dispatcher::singleton().findSchema(
-      {"_C::advance_step_flashattn", ""});
-  if (!handle.has_value()) {
-    ops.def(
-        "advance_step_flashattn(int num_seqs, int num_queries, int block_size, "
-        "Tensor! input_tokens, Tensor sampled_token_ids, "
-        "Tensor! input_positions, Tensor! seq_lens, Tensor! slot_mapping, "
-        "Tensor block_tables) -> ()");
-  }
-  ops.impl("advance_step_flashattn", torch::kPrivateUse1,
-           &advance_step_flashattn);
 
   // Layernorm
   // Apply Root Mean Square (RMS) Normalization to the input tensor.
@@ -1339,6 +1313,18 @@ TORCH_LIBRARY_FRAGMENT(CONCAT(TORCH_EXTENSION_NAME, _cache_ops),
         "int batch_size, Tensor(a!) seq_starts) -> ()");
   }
   cache_ops.impl("gather_cache", torch::kPrivateUse1, &gather_cache);
+  handle = c10::Dispatcher::singleton().findSchema(
+      {"_C_cache_ops::gather_and_maybe_dequant_cache", ""});
+  if (!handle.has_value()) {
+    cache_ops.def(
+      "gather_and_maybe_dequant_cache(Tensor src_cache, Tensor! dst, "
+      "                               Tensor block_table, Tensor cu_seq_lens, "
+      "                               int batch_size, "
+      "                               str kv_cache_dtype, "
+      "                               Tensor scale, Tensor? seq_starts) -> ()");
+  }
+  cache_ops.impl("gather_and_maybe_dequant_cache", torch::kPrivateUse1,
+                 &gather_and_maybe_dequant_cache);
 }
 
 TORCH_LIBRARY_FRAGMENT(CONCAT(_moe, TORCH_EXTENSION_NAME), moe_ops) {

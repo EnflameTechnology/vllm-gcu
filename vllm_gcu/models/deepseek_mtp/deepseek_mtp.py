@@ -24,7 +24,7 @@ from vllm.model_executor.models.utils import maybe_prefix
 from vllm.distributed import get_tp_group
 
 import vllm_gcu.envs as gcu_envs
-from vllm_gcu.models.deepseek_v3.deepseek_v3 import DeepseekV2DecoderLayer
+from vllm_gcu.models.deepseek_v3.deepseek_v3 import DeepseekV2DecoderLayer, scatter
 
 
 class SharedHead(nn.Module):
@@ -87,20 +87,20 @@ class DeepSeekMultiTokenPredictorLayer(nn.Module):
         hidden_states = self.eh_proj(
             torch.cat([inputs_embeds, previous_hidden_states], dim=-1))[0]
 
-        actual_seqlen = hidden_states.shape[0]
+        tp_group = get_tp_group()
+        scatter_counts = scatter(hidden_states.shape[0], tp_group.world_size)
 
         hidden_states, residual = self.mtp_block(positions=positions,
                                                  hidden_states=hidden_states,
                                                  residual=None,
-                                                 actual_seqlen=actual_seqlen)
+                                                 scatter_counts=scatter_counts)
         hidden_states = residual + hidden_states
 
         if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
             vllm_config = get_current_vllm_config().parallel_config
             if vllm_config.tensor_parallel_size > 1:
-                hidden_states = get_tp_group().all_gather(hidden_states, dim=0)[
-                    :actual_seqlen
-                ]
+                hidden_states = torch.ops.vllm.all_gather_v(
+                    hidden_states, scatter_counts, tp_group.unique_name)
 
         return hidden_states
 
@@ -180,15 +180,14 @@ class DeepSeekMTP(nn.Module):
         self,
         input_ids: torch.Tensor,
         positions: torch.Tensor,
-        previous_hidden_states: torch.Tensor,
+        hidden_states: torch.Tensor,
         intermediate_tensors: Optional[IntermediateTensors] = None,
         inputs_embeds: Optional[torch.Tensor] = None,
         spec_step_idx: int = 0,
     ) -> torch.Tensor:
         with set_current_vllm_config(self.vllm_config):
-            hidden_states = self.model(input_ids, positions,
-                                   previous_hidden_states, inputs_embeds,
-                                   spec_step_idx)
+            hidden_states = self.model(input_ids, positions, hidden_states,
+                                       inputs_embeds, spec_step_idx)
         return hidden_states
 
     def compute_logits(
@@ -231,7 +230,7 @@ class DeepSeekMTP(nn.Module):
             if "mlp.shared_experts" in name and name not in params_dict:
                 # shared_experts was setattr to self.experts when not in params_dict
                 name = name.replace(
-                    "mlp.shared_experts", "mlp.experts.shared_experts._orig_mod"
+                    "mlp.shared_experts", "mlp.shared_experts._orig_mod"
                 )
             for (param_name, weight_name, shard_id) in stacked_params_mapping:
                 # Skip non-stacked layers and experts (experts handled below).
@@ -243,11 +242,7 @@ class DeepSeekMTP(nn.Module):
                 # name will be updated to mlp.experts[0].gate_up_proj, which
                 # will then be updated below in expert_params_mapping
                 # for mlp.experts[0].gate_gate_up_proj, which breaks load.
-                if (
-                    ("mlp.experts." in name)
-                    and ("shared_experts." not in name)
-                    and name not in params_dict
-                ):
+                if (("mlp.experts." in name) and name not in params_dict):
                     continue
                 name = name.replace(weight_name, param_name)
                 # Skip loading extra bias for GPTQ models.
