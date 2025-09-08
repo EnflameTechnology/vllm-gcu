@@ -25,7 +25,9 @@ class GCUMLAFusionBackend(GCUMLABackend):
 @CustomOp.register("rope_with_kvcache")
 class RopeWithKVCache(CustomOp):
     cos_sin_cache = None
-    def __init__(self, rotary_emb, kv_a_layernorm, kv_lora_rank, qk_rope_head_dim, kv_cache_dtype):
+
+    def __init__(self, rotary_emb, kv_a_layernorm, kv_lora_rank,
+                 qk_rope_head_dim, kv_cache_dtype):
         super().__init__()
         self.rotary_emb = rotary_emb
         self.kv_a_layernorm = kv_a_layernorm
@@ -38,44 +40,53 @@ class RopeWithKVCache(CustomOp):
                 dtype=torch.float32,
             )
 
-    def forward(self,
-                q_pe_out,
-                k_pe_out,
-                q_pe,
-                kv_c_and_k_pe,
-                kv_cache,
-                slot_mapping,
-                input_positions,
-                kv_scale,):
+    def forward(
+        self,
+        q_pe_out,
+        k_pe_out,
+        q_pe,
+        kv_c_and_k_pe,
+        kv_cache,
+        slot_mapping,
+        input_positions,
+        kv_scale,
+        k_c_normed_out=None,
+    ):
         dispatch = super().forward
-        support_platform = [130, 140]
-        if current_platform.get_device_capability().to_int() not in support_platform \
-                or k_pe_out is not None:
+        prefill_support_platform = [140]
+        if current_platform.get_device_capability().to_int() not in prefill_support_platform \
+                and k_pe_out is not None:
             # prefill use native impl since op interface lack outputs.
             dispatch = self.forward_native
-        return dispatch(q_pe_out,
-                        k_pe_out,
-                        q_pe,
-                        kv_c_and_k_pe,
-                        kv_cache,
-                        slot_mapping,
-                        input_positions,
-                        kv_scale,)
-
-    def forward_native(self,
-                       q_pe_out,
-                       k_pe_out,
-                       q_pe,
-                       kv_c_and_k_pe,
-                       kv_cache,
-                       slot_mapping,
-                       input_positions,
-                       kv_scale,
-                       ):
-        kv_c, k_pe = kv_c_and_k_pe.split(
-            [self.kv_lora_rank, self.qk_rope_head_dim], dim=-1
+        return dispatch(
+            q_pe_out,
+            k_pe_out,
+            q_pe,
+            kv_c_and_k_pe,
+            kv_cache,
+            slot_mapping,
+            input_positions,
+            kv_scale,
+            k_c_normed_out,
         )
+
+    def forward_native(
+        self,
+        q_pe_out,
+        k_pe_out,
+        q_pe,
+        kv_c_and_k_pe,
+        kv_cache,
+        slot_mapping,
+        input_positions,
+        kv_scale,
+        k_c_normed_out=None,
+    ):
+        kv_c, k_pe = kv_c_and_k_pe.split(
+            [self.kv_lora_rank, self.qk_rope_head_dim], dim=-1)
         k_c_normed = self.kv_a_layernorm(kv_c)
+        if k_c_normed_out is not None:
+            k_c_normed_out.copy_(k_c_normed)
         k_pe = k_pe.unsqueeze(1)
 
         q_pe_out[...], k_pe[...] = self.rotary_emb(input_positions, q_pe, k_pe)
@@ -93,25 +104,26 @@ class RopeWithKVCache(CustomOp):
                 kv_cache_dtype=self.kv_cache_dtype,
                 scale=kv_scale,
             )
-        if k_pe_out is not None:
-            return k_c_normed
 
-    def forward_oot(self,
-                    q_pe_out,
-                    k_pe_out,
-                    q_pe,
-                    kv_c_and_k_pe,
-                    kv_cache,
-                    slot_mapping,
-                    input_positions,
-                    kv_scale,
-                    ):
+    def forward_oot(
+        self,
+        q_pe_out,
+        k_pe_out,
+        q_pe,
+        kv_c_and_k_pe,
+        kv_cache,
+        slot_mapping,
+        input_positions,
+        kv_scale,
+        k_c_normed_out=None,
+    ):
         torch.ops._C.rotary_embedding_with_kv_cache(
-            q_pe_out, kv_cache, q_pe, kv_c_and_k_pe, input_positions,
-            RopeWithKVCache.cos_sin_cache, self.kv_a_layernorm.weight.data,
-            slot_mapping, kv_scale, self.kv_a_layernorm.variance_epsilon,
-            [self.kv_lora_rank, self.qk_rope_head_dim], self.kv_cache_dtype
-        )
+            q_pe_out, kv_cache, k_pe_out, k_c_normed_out, q_pe, kv_c_and_k_pe,
+            input_positions, RopeWithKVCache.cos_sin_cache,
+            self.kv_a_layernorm.weight.data, slot_mapping, kv_scale,
+            self.kv_a_layernorm.variance_epsilon,
+            [self.kv_lora_rank, self.qk_rope_head_dim], self.kv_cache_dtype)
+
 
 
 class GCUMLAFusionImpl(GCUMLAImpl):
@@ -217,11 +229,16 @@ class GCUMLAFusionImpl(GCUMLAImpl):
             # k_v_prefill = torch.empty((num_prefill_tokens, self.num_heads, self.qk_head_dim + self.v_head_dim))
             # prefill_k_pe = k_v_prefill[:, :, self.v_head_dim+self.qk_nope_head_dim]
             prefill_k_pe = torch.empty(
-                (num_prefill_tokens, self.num_heads, self.qk_rope_head_dim),
+                (num_prefill_tokens, 1, self.qk_rope_head_dim),
                 dtype=kv_c_and_k_pe.dtype,
                 device=kv_c_and_k_pe.device,
             )
-            prefill_k_c_normed = self.rope_with_kvcache(
+            prefill_k_c_normed = torch.empty(
+                (num_prefill_tokens, self.kv_lora_rank),
+                dtype=kv_c_and_k_pe.dtype,
+                device=kv_c_and_k_pe.device,
+            )
+            self.rope_with_kvcache(
                 prefill_q_pe,
                 prefill_k_pe,
                 prefill_q_pe,
@@ -229,7 +246,8 @@ class GCUMLAFusionImpl(GCUMLAImpl):
                 kv_cache,
                 prefill_slot_mapping.flatten(),
                 prefill_input_positions,
-                layer._k_scale
+                layer._k_scale,
+                prefill_k_c_normed,
             )
 
         if has_decode:

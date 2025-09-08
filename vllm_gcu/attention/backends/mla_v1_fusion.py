@@ -141,16 +141,21 @@ class GCUMLAFusionImpl(GCUMLAImpl):
             # k_v_prefill = torch.empty((num_prefill_tokens, self.num_heads, self.qk_head_dim + self.v_head_dim))
             # prefill_k_pe = k_v_prefill[:, :, self.v_head_dim+self.qk_nope_head_dim]
             prefill_k_pe = torch.empty(
-                (num_actual_toks - num_decode_tokens, self.num_heads,
+                (num_actual_toks - num_decode_tokens, 1,
                  self.qk_rope_head_dim),
                 dtype=kv_c_and_k_pe.dtype,
                 device=kv_c_and_k_pe.device,
             )
-            prefill_k_c_normed = self.rope_with_kvcache(
+            prefill_k_c_normed = torch.empty(
+                (num_actual_toks - num_decode_tokens, self.kv_lora_rank),
+                dtype=kv_c_and_k_pe.dtype,
+                device=kv_c_and_k_pe.device,
+            )
+            self.rope_with_kvcache(
                 prefill_q_pe, prefill_k_pe,
                 prefill_q_pe, prefill_kv_c_and_k_pe, kv_cache,
                 prefill_slot_mapping.flatten(), prefill_input_positions,
-                layer._k_scale)
+                layer._k_scale, prefill_k_c_normed)
 
         if has_decode:
             decode_q_nope, decode_q_pe = decode_q.split(
