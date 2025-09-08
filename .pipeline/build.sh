@@ -84,12 +84,10 @@ function zx_normal_build() {
     GIT_LFS_SKIP_SMUDGE=1 git clone ${PROJECT_GIT_URL}/caps_binary.git
   fi
   cd -
-  cmake vllm --preset ci_all -B cmake_build -DPROJECT_GIT_URL=${PROJECT_GIT_URL}
+  cmake vllm --preset ci_all -B cmake_build -DPROJECT_GIT_URL=${PROJECT_GIT_URL} -DDISABLE_GIT_SUBMODULE_CHECK=ON
   cd ${BUILD_ROOT_DIR}/cmake_build
   ninja -j4 install
   ninja -j4 package_all
-  cd ${BUILD_ROOT_DIR}
-  ./vllm/.pipeline/copy_packages.sh
 }
 
 function zx_local_config() {
