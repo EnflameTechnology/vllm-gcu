@@ -199,7 +199,7 @@
 - func: silu_mul_per_token_group_quant_with_size(Tensor(a!) out, Tensor(a!) scale, Tensor input, Tensor size, int group_size) -> ()
   variants: function
 
-- func: rotary_embedding_with_kv_cache(Tensor(a!) q_out, Tensor(a!) kv_cache, Tensor q, Tensor kv, Tensor positions, Tensor cos_sin_cache, Tensor weight, Tensor slot_mapping, Tensor scale, float eps, int[] split_size, str kv_cache_dtype) -> ()
+- func: rotary_embedding_with_kv_cache(Tensor(a!) q_out, Tensor(a!) kv_cache, Tensor? k_pe_out, Tensor? k_c_normed, Tensor q, Tensor kv, Tensor positions, Tensor cos_sin_cache, Tensor weight, Tensor slot_mapping, Tensor scale, float eps, int[] split_size, str kv_cache_dtype) -> ()
   variants: function
 
 - func: fused_dispatch_decode(Tensor(a!)[] outputs, Tensor recv_packed, Tensor sp_split_size, int[] split_sizes) -> ()

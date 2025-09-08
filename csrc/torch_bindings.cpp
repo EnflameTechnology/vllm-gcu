@@ -1091,6 +1091,7 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
   if (!handle.has_value()) {
     ops.def(
         "rotary_embedding_with_kv_cache(Tensor! q_out, Tensor! kv_cache, "
+        "Tensor? k_pe_out, Tensor? k_c_normed, "
         "Tensor q, Tensor kv, Tensor positions, Tensor cos_sin_cache, "
         "Tensor weight, Tensor slot_mapping, Tensor scale, "
         "float eps, int[] split_size, str kv_cache_dtype) -> ()");
