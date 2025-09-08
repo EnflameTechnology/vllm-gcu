@@ -19,6 +19,7 @@
 #include "src/dynamic_scaled_fp8_quant.h"
 #include "src/dynamic_scaled_int8_quant.h"
 #include "src/dynamic_split.h"
+#include "src/expand_batch_to_tokens.h"
 #include "src/exts_moe_align_block_size.h"
 #include "src/fatrelu_and_mul.h"
 #include "src/fused_add_rms_norm.h"
@@ -61,7 +62,10 @@
 #include "src/mul_and_silu.h"
 #include "src/paged_attention_v1.h"
 #include "src/paged_attention_v2.h"
+#include "src/rejection_greedy_sample.h"
+#include "src/rejection_random_sample.h"
 #include "src/reshape_and_cache_flash.h"
+#include "src/sample_recovered_tokens.h"
 #include "src/rms_norm.h"
 #include "src/rms_norm_per_token_group_quant_fp8.h"
 #include "src/rms_norm_static_fp8_quant.h"
@@ -1052,6 +1056,18 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
   }
   ops.impl("dynamic_split", c10::kPrivateUse1, &dynamic_split);
 
+  // Expand batch dimension to tokens dimension.
+  handle = c10::Dispatcher::singleton().findSchema(
+      {"_C::expand_batch_to_tokens", ""});
+  if (!handle.has_value()) {
+    ops.def(
+        "expand_batch_to_tokens(Tensor! output, Tensor input, "
+        "Tensor cu_num_tokens, int num_tokens, float replace_from, "
+        "float replace_to) -> ()");
+  }
+  ops.impl("expand_batch_to_tokens", c10::kPrivateUse1,
+            &expand_batch_to_tokens);
+
   handle = c10::Dispatcher::singleton().findSchema(
       {"_C::dynamic_per_token_group_fp8_quant", ""});
   if (!handle.has_value()) {
@@ -1186,6 +1202,44 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
         "weight, Tensor scale, Tensor zeros, int group_size) -> ()");
   }
   ops.impl("fused_qkv_gemm_quant", torch::kPrivateUse1, &fused_qkv_gemm_quant);
+
+  // Rejection greedy sampling for speculative decoding.
+  handle = c10::Dispatcher::singleton().findSchema(
+    {"_C::rejection_greedy_sample", ""});
+  if (!handle.has_value()) {
+  ops.def(
+      "rejection_greedy_sample(Tensor! output_token_ids, "
+      "Tensor cu_num_draft_tokens, Tensor draft_token_ids, "
+      "Tensor target_argmax, Tensor bonus_token_ids, Tensor is_greedy) -> ()");
+  }
+  ops.impl("rejection_greedy_sample", torch::kPrivateUse1,
+        &rejection_greedy_sample);
+
+  // Rejection random sampling for speculative decoding.
+  handle = c10::Dispatcher::singleton().findSchema(
+    {"_C::rejection_random_sample", ""});
+  if (!handle.has_value()) {
+  ops.def(
+      "rejection_random_sample(Tensor! output_token_ids, "
+      "Tensor cu_num_draft_tokens, Tensor draft_token_ids, "
+      "Tensor draft_probs, Tensor target_probs, Tensor bonus_token_ids, "
+      "Tensor recovered_token_ids, Tensor uniform_probs,"
+      "Tensor is_greedy) -> ()");
+  }
+  ops.impl("rejection_random_sample", torch::kPrivateUse1,
+        &rejection_random_sample);
+
+  // Sample recovered tokens for speculative decoding.
+  handle = c10::Dispatcher::singleton().findSchema(
+    {"_C::sample_recovered_tokens", ""});
+  if (!handle.has_value()) {
+  ops.def(
+      "sample_recovered_tokens(Tensor! output_token_ids, "
+      "Tensor cu_num_draft_tokens, Tensor draft_token_ids, "
+      "Tensor target_probs, Tensor q, Tensor? draft_probs) -> ()");
+  }
+  ops.impl("sample_recovered_tokens", torch::kPrivateUse1,
+        &sample_recovered_tokens);
 }
 
 // TORCH_LIBRARY_FRAGMENT(CONCAT(_cache_ops, TORCH_EXTENSION_NAME), cache_ops) {
