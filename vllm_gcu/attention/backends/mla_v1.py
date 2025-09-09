@@ -208,11 +208,13 @@ class GCUMLAImpl(MLACommonImpl[GCUMLAMetadata]):
             )
 
             if prefill_metadata.chunked_context.workspace.dtype != kv_c_and_k_pe_cache.dtype:
-                workspace = workspace.to(prefill_metadata.chunked_context.workspace.dtype)
+                workspace_gathered = workspace.to(prefill_metadata.chunked_context.workspace.dtype)
+            else:
+                workspace_gathered = workspace
 
-            kv_c_normed = workspace[:toks]\
+            kv_c_normed = workspace_gathered[:toks]\
                 [..., :self.kv_lora_rank]
-            k_pe = workspace[:toks]\
+            k_pe = workspace_gathered[:toks]\
                 [..., self.kv_lora_rank:].unsqueeze(1)
 
             kv_nope = self.kv_b_proj(kv_c_normed)[0].view( \
