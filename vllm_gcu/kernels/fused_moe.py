@@ -411,6 +411,7 @@ def forward_oot(
     activation: str = "silu",
 ) -> torch.Tensor:
 
+    activation += f"_{layer.layer_name}"
     topk_weights, topk_ids = FusedMoE.select_experts(
         hidden_states=x,
         router_logits=router_logits,
