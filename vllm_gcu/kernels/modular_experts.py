@@ -3,6 +3,7 @@ from typing import Optional
 import torch
 
 
+from vllm.forward_context import get_forward_context
 import vllm.model_executor.layers.fused_moe.modular_kernel as mk
 from vllm.model_executor.layers.fused_moe.config import FusedMoEQuantConfig
 from vllm.model_executor.layers.fused_moe.utils import _resize_cache
@@ -143,6 +144,11 @@ class TritonExpertsPad(mk.FusedMoEPermuteExpertsUnpermute):
             block_shape=self.block_shape,
         )
 
+        forward_context = get_forward_context()
+        all2allv_threshold = forward_context.all2allv_threshold if hasattr(
+            forward_context, "all2allv_threshold") else None
+        is_static = all2allv_threshold is not None
+
         # We can reuse the memory between these because by the time we need
         # cache3, we're done with cache1
         intermediate_cache1 = _resize_cache(workspace2,
@@ -180,7 +186,7 @@ class TritonExpertsPad(mk.FusedMoEPermuteExpertsUnpermute):
             use_int4_w4a16=self.use_int4_w4a16,
             per_channel_quant=self.per_act_token_quant,
             block_shape=self.block_shape,
-            real_token_num=expert_num_tokens,
+            real_token_num=expert_num_tokens if is_static else None,
         )
 
         if activation == "silu":
@@ -246,7 +252,7 @@ class TritonExpertsPad(mk.FusedMoEPermuteExpertsUnpermute):
             use_int4_w4a16=self.use_int4_w4a16,
             per_channel_quant=self.per_act_token_quant,
             block_shape=self.block_shape,
-            real_token_num=expert_num_tokens,
+            real_token_num=expert_num_tokens if is_static else None,
         )
 
         torch.ops._moe_C.moe_sum_pad(
