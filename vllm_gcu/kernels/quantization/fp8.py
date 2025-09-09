@@ -152,8 +152,10 @@ def apply_w8a8_block_fp8_linear(
         weight_scale,
         block_size,
         output_dtype=output_dtype,
-        bias=bias,
+        bias=None,
     )
+    if bias is not None:
+        output += bias
     return output.to(dtype=output_dtype).view(*output_shape)
 
 

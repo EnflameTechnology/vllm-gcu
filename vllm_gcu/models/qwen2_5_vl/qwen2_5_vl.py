@@ -70,6 +70,7 @@ from vllm.model_executor.models.utils import (AutoWeightsLoader, WeightsMapper,
                     merge_multimodal_embeddings)
 from vllm.model_executor.layers.layernorm import RMSNorm
 from vllm_gcu.kernels import _custom_ops as ops
+from vllm_gcu.kernels.quantization.fp8 import Fp8GCUConfig
 from vllm.attention.selector import (backend_name_to_enum,
                                      get_global_forced_attn_backend)
 import vllm.envs as envs
@@ -902,7 +903,7 @@ class Qwen2_5_VLForConditionalGeneration(nn.Module, SupportsMultiModal,
     def _maybe_ignore_quant_config(self, quant_config: QuantizationConfig):
         # GPTQ configs do not have a list of ignored modules, however AutoGPTQ
         # seems to avoid vision encoder sections for some models.
-        if isinstance(quant_config, (GPTQConfig, GPTQMarlinConfig)):
+        if isinstance(quant_config, (GPTQConfig, GPTQMarlinConfig, Fp8GCUConfig)):
             return None
         return quant_config
 
