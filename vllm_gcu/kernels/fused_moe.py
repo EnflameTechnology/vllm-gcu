@@ -395,6 +395,30 @@ def fused_experts_impl(
                                      block_shape)
     modular = FusedMoEModularKernel(prepare_finalize=prepare_finalize,
                                     fused_experts=fused_experts)
+
+    if use_ep and gcu_envs.VLLM_GCU_FORCE_EP_BALANCE:
+        from vllm.distributed import get_ep_group
+        ep_rank = get_ep_group().rank
+
+        num_tokens, num_topk = topk_ids.shape
+        local_num_experts = w1.size(0)
+        ep_size = global_num_experts // local_num_experts
+
+        num_tokens_across_ranks = get_ep_group().all_gather(torch.ones(1, device=topk_ids.device) * num_tokens, dim=0)
+        token_start_loc = torch.zeros(ep_size + 1, device=topk_ids.device, dtype=topk_ids.dtype)
+        token_start_loc[1:] = num_tokens_across_ranks.cumsum(dim=0)
+
+        step = global_num_experts // num_topk
+        base_expert_ids = torch.arange(0, global_num_experts, step,
+                                       device=topk_ids.device, dtype=topk_ids.dtype)
+
+        token_indices = torch.arange(num_tokens, device=topk_ids.device, dtype=topk_ids.dtype)
+
+        row_offsets = (token_indices + token_start_loc[ep_rank]) % step
+
+        topk_ids = base_expert_ids.unsqueeze(0) + row_offsets.unsqueeze(1)
+        topk_ids = torch.remainder(topk_ids, global_num_experts)
+
     return modular(
         hidden_states,
         w1,
