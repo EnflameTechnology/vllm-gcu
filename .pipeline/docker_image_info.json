@@ -76,5 +76,14 @@
                 }
             }
         }
+    },
+    "GONGFENG": {
+        "BUILD": {
+            "TLINUX": {
+                "X86_DEFAULT": {
+                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/tlinux/qic_tlinux_31_gcc11:1.0.1"
+                }
+            }
+        }
     }
 }
