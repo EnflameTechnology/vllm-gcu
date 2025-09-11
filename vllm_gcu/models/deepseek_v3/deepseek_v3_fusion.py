@@ -91,8 +91,7 @@ class DeepseekFusedQKVProj(MergedReplicatedLinear):
             torch.ops._C.fused_qkv_gemm_quant(outs[0], outs[1], x, qweight, scales,
                                               qzeros, self.quant_config.group_size)
             return outs
-        #elif self.quant_config.get_name() in ['fp8_gcu']:
-        elif False:
+        elif self.quant_config.get_name() in ['fp8_gcu']:
             assert self.quant_config.weight_block_size is not None
             outs = tuple(torch.empty(x.shape[:-1]+(i,),
                                      dtype=x.dtype, device=x.device)
