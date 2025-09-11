@@ -12,7 +12,7 @@ from distutils.command.clean import clean
 from typing import List
 
 import torch
-from build_utils import get_tag, get_tops_version
+from build_utils import get_tag, get_tops_version, get_coverage_flag
 
 from setuptools import Extension, find_packages, setup
 from setuptools.command.install import install
@@ -88,6 +88,14 @@ TOPSCC_FLAGS = [
 if DEBUG:
     CXX_FLAGS += ["-UNDEBUG"]
 
+extra_link_args_list = [
+            "-Wl,--disable-new-dtags",
+            "-Wl,-rpath,$ORIGIN/../tops_extension/lib:$ORIGIN/../torch_gcu/lib",
+        ] + (["-Wl,-rpath,$ORIGIN/../torch_custom_op_native"] if DEBUG else [])
+
+if get_coverage_flag():
+    CXX_FLAGS += ["-fprofile-arcs", "-ftest-coverage"]
+    extra_link_args_list += ["-lgcov"]
 
 def get_path(*filepath) -> str:
     return os.path.join(ROOT_DIR, *filepath)
@@ -303,10 +311,7 @@ ext_modules.append(
             "cxx": CXX_FLAGS,
             "topscc": TOPSCC_FLAGS.copy(),
         },
-        extra_link_args=[
-            "-Wl,--disable-new-dtags",
-            "-Wl,-rpath,$ORIGIN/../tops_extension/lib:$ORIGIN/../torch_gcu/lib",
-        ] + (["-Wl,-rpath,$ORIGIN/../torch_custom_op_native"] if DEBUG else []),
+        extra_link_args=extra_link_args_list,
         py_limited_api=True,
         **_get_include_and_library_dirs(),
     )
