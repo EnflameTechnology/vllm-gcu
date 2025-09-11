@@ -16,13 +16,25 @@ from build_utils import get_tag, get_tops_version, get_coverage_flag
 
 from setuptools import Extension, find_packages, setup
 from setuptools.command.install import install
+from wheel.bdist_wheel import bdist_wheel
+
+try:
+    import torch_gcu
+    _TORCH_GCU_PATH = torch_gcu.__path__[0]
+except ImportError:
+    _TORCH_GCU_PATH = os.getenv("TORCH_GCU_PATH", None)
+
+try:
+    import tops_extension
+    _TOPS_EXTENSION_PATH = tops_extension.__path__[0]
+except ImportError:
+    _TOPS_EXTENSION_PATH = os.getenv("TOPS_EXTENSION_PATH", None)
+
+ROOT_DIR = os.path.dirname(__file__)
 
 from tops_extension import TopsBuildExtension
 from tops_extension.torch import TopsTorchExtension
 from tops_extension.torch.codegen_utils import gen_custom_ops
-from wheel.bdist_wheel import bdist_wheel
-
-ROOT_DIR = os.path.dirname(__file__)
 
 try:
     from tops_extension import TOPSATEN_HOME as _TOPSATEN_HOME
@@ -34,6 +46,11 @@ try:
 except ImportError:
     _TOPSRT_HOME = os.getenv("TOPSRT_HOME", None)
 
+_WITH_LMCACHE = bool(int(os.getenv("WITH_LMCACHE", "0")))
+if _WITH_LMCACHE:
+    assert os.path.exists(
+        os.path.join(_TOPSATEN_HOME, "include", "gcu", "topslmc"))
+
 if os.getenv("PY_PACKAGE_VERSION"):
     VERSION = os.getenv("PY_PACKAGE_VERSION")
 else:
@@ -42,25 +59,9 @@ else:
 
         VLLM_VERSION = vllm.__version__
     except ImportError:
-        VLLM_VERSION = "0.8.0"
+        VLLM_VERSION = "0.9.2"
     tops_version = get_tops_version(f"{ROOT_DIR}/.version")
     VERSION = f"{VLLM_VERSION}+{get_tag(ROOT_DIR, tops_version)}"
-
-
-try:
-    import tops_extension
-
-    _TOPS_EXTENSION_PATH = tops_extension.__path__[0]
-except ImportError:
-    _TOPS_EXTENSION_PATH = os.getenv("TOPS_EXTENSION_PATH", None)
-
-try:
-    import torch_gcu
-
-    _TORCH_GCU_PATH = torch_gcu.__path__[0]
-except ImportError:
-    _TORCH_GCU_PATH = os.getenv("TORCH_GCU_PATH", None)
-
 
 DEBUG = os.getenv("BUILD_VLLM_DEBUG", False)
 sanitizer = os.getenv("SANITIZER")
@@ -116,9 +117,10 @@ def get_library_path(library_name):
     UN_KNOWN_VERSION = "Unknown"
 
     command = [f"python{python_version}", "-m", "pip", "show", library_name]
-    result = subprocess.run(
-        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
-    )
+    result = subprocess.run(command,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            text=True)
     if result.returncode != 0:
         print(f"Error occurred when running pip show {library_name}:")
         print(result.stderr)
@@ -141,6 +143,7 @@ def read_readme() -> str:
 
 
 def read_requirements():
+
     def _read_requirements(filename: str) -> List[str]:
         with open(get_path(filename)) as f:
             requirements = f.read().strip().split("\n")
@@ -156,20 +159,16 @@ def read_requirements():
     return requirements
 
 
-ext_modules = []
-
-
 class VllmBuildExtension(TopsBuildExtension):
+
     def build_extension(self, ext: Extension) -> None:
         yaml_files = list(filter(lambda f: f.endswith(".yaml"), ext.sources))
         for yaml_file in yaml_files:
             src_dir, filename = os.path.split(yaml_file)
-            gen_custom_ops(
-                custom_src_dir=src_dir,
-                namespace="vllm_gcu::llm_ops",
-                python_output_dir=None,
-                include_dir=src_dir,
-                header="""
+
+            if ext.name == "vllm_gcu._C":
+                namespace = "vllm_gcu::llm_ops"
+                header = """
 #pragma once
 
 #include <ATen/ATen.h>
@@ -184,19 +183,33 @@ namespace ${namespace} {
 ${declarations};
 
 } // namespace ${namespace}
-""",
+"""
+            elif ext.name == "lmcache.c_ops":
+                namespace = "lmcache"
+                header = None
+
+            gen_custom_ops(
+                custom_src_dir=src_dir,
+                namespace=namespace,
+                python_output_dir=None,
+                include_dir=src_dir,
+                header=header,
             )
-        ext.sources = list(filter(lambda f: not f.endswith(".yaml"), ext.sources))
+
+        ext.sources = list(
+            filter(lambda f: not f.endswith(".yaml"), ext.sources))
         return TopsBuildExtension.build_extension(self, ext)
 
 
 class VllmBdistWheel(bdist_wheel):
+
     def initialize_options(self):
         bdist_wheel.initialize_options(self)
         self.py_limited_api = "cp38"
 
 
 class VllmPackageBuild(build_py, object):
+
     def build_module(self, module, module_file, package):
         if package == "benchmarks":
             package = "vllm_utils"
@@ -223,12 +236,14 @@ class VllmPackageBuild(build_py, object):
 
 
 class VllmInstall(install):
+
     def run(self):
         self.run_command("build_py")
         super().run()
 
 
 class VllmClean(clean):
+
     def run(self):
         if os.path.exists(".gitignore"):
             with open(".gitignore", "r") as f_ignore:
@@ -245,24 +260,28 @@ class VllmClean(clean):
 
         clean.run(self)
 
-        try:
-            import torchgen
-            import torchgen.gen
+        def clean_generated(src_path):
+            try:
+                import torchgen
+                import torchgen.gen
 
-            src_path = os.path.join(ROOT_DIR, "csrc", "src")
-            custom_functions = torchgen.gen.parse_native_yaml(
-                os.path.join(src_path, "gcu_custom_functions.yaml"),
-                os.path.join(
-                    torchgen.__path__[0], "packaged", "ATen", "native", "tags.yaml"
-                ),
-            ).native_functions
+                custom_functions = torchgen.gen.parse_native_yaml(
+                    os.path.join(src_path, "gcu_custom_functions.yaml"),
+                    os.path.join(torchgen.__path__[0], "packaged", "ATen",
+                                 "native", "tags.yaml"),
+                ).native_functions
 
-            for fn in custom_functions:
-                header = os.path.join(src_path, f"{fn.root_name}.h")
-                if os.path.exists(header):
-                    os.remove(header)
-        except ImportError:
-            pass
+                for fn in custom_functions:
+                    header = os.path.join(src_path, f"{fn.root_name}.h")
+                    if os.path.exists(header):
+                        os.remove(header)
+            except ImportError:
+                pass
+
+        src_path = os.path.join(ROOT_DIR, "csrc", "src")
+        clean_generated(src_path)
+        lmcsrc_path = os.path.join(ROOT_DIR, "lmcache", "csrc")
+        clean_generated(lmcsrc_path)
 
 
 def _get_all_sources(path: str):
@@ -276,7 +295,8 @@ def _get_all_sources(path: str):
         "/**/gcu_custom_functions.yaml",
     ]
     return [
-        f for pattern in patterns for f in glob.glob(path + pattern, recursive=True)
+        f for pattern in patterns
+        for f in glob.glob(path + pattern, recursive=True)
     ]
 
 
@@ -288,7 +308,8 @@ def _get_include_and_library_dirs():
     include_dirs = library_dirs = []
 
     include_dirs.append(os.path.join(_TOPS_EXTENSION_PATH, "include"))
-    include_dirs.append(os.path.join(_TOPS_EXTENSION_PATH, "include", "tops_extension"))
+    include_dirs.append(
+        os.path.join(_TOPS_EXTENSION_PATH, "include", "tops_extension"))
     include_dirs.append(os.path.join(_TOPSATEN_HOME, "include", "gcu"))
     include_dirs.append(os.path.join(_TORCH_GCU_PATH, "include"))
 
@@ -298,13 +319,13 @@ def _get_include_and_library_dirs():
 
     if DEBUG:
         library_dirs.append(
-            os.path.join(
-                os.path.dirname(_TOPS_EXTENSION_PATH), "torch_custom_op_native"
-            )
-        )
+            os.path.join(os.path.dirname(_TOPS_EXTENSION_PATH),
+                         "torch_custom_op_native"))
 
     return {"include_dirs": include_dirs, "library_dirs": library_dirs}
 
+
+ext_modules = []
 
 ext_modules.append(
     TopsTorchExtension(
@@ -317,14 +338,29 @@ ext_modules.append(
             "torch_gcu",
         ] + (["vllm_custom_ops"] if DEBUG else []),
         extra_compile_args={
-            "cxx": CXX_FLAGS,
+            "cxx": CXX_FLAGS.copy(),
             "topscc": TOPSCC_FLAGS.copy(),
         },
         extra_link_args=extra_link_args_list,
         py_limited_api=True,
         **_get_include_and_library_dirs(),
-    )
-)
+    ))
+
+if _WITH_LMCACHE:
+    ext_modules.append(
+        TopsTorchExtension(
+            name="lmcache.c_ops",
+            sources=_get_all_sources("lmcache/csrc"),
+            libraries=[
+                "torch_extension", "tops_extension", "topslmc", "torch_gcu"
+            ],
+            extra_compile_args={
+                "cxx": CXX_FLAGS.copy(),
+            },
+            extra_link_args=extra_link_args_list,
+            py_limited_api=True,
+            **_get_include_and_library_dirs(),
+        ))
 
 setup(
     name="vllm_gcu",
@@ -371,11 +407,9 @@ setup(
     },
     extras_require={},
     entry_points={
-        "vllm.general_plugins": [
-            "register_custom_models = vllm_gcu.models:register_custom_models"
-        ],
-        "vllm.platform_plugins": [
-            "register_platform_plugins = vllm_gcu:register_platform_plugins"
-        ],
+        "vllm.general_plugins":
+        ["register_custom_models = vllm_gcu.models:register_custom_models"],
+        "vllm.platform_plugins":
+        ["register_platform_plugins = vllm_gcu:register_platform_plugins"],
     },
 )

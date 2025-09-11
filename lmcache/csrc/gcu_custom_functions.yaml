@@ -1,0 +1,29 @@
+- func: encode_cuda_new(Tensor cdf, Tensor input_sym, Tensor(a!) output_buffer, Tensor output_lengths) -> ()
+  variants: function
+
+- func: decode_cuda_new(Tensor cdf, Tensor bytestreams, Tensor lengths, Tensor(a!) output) -> ()
+  variants: function
+
+- func: decode_cuda_prefsum(Tensor cfg, Tensor bytestreams, Tensor lengths, Tensor(a!) output) -> ()
+  variants: function
+
+- func: calculate_cdf(Tensor input, int max_bins) -> Tensor
+  variants: function
+
+- func: rotary_embedding_k_fused(Tensor old_positions, Tensor new_positions, Tensor(a!) key, int head_size, Tensor cos_sin_cache, bool is_noex) -> ()
+  variants: function
+
+- func: multi_layer_kv_transfer(Tensor(a!) key_value, Tensor key_value_ptrs, Tensor slot_mapping, Device paged_memory_device, int page_buffer_size, bool direction, bool use_mla) -> ()
+  variants: function
+
+- func: multi_layer_kv_transfer_unilateral(Tensor(a!) key_value, Tensor key_value_ptrs, Tensor slot_mapping, Device paged_memory_device, int page_buffer_size, bool direction, bool use_mla) -> ()
+  variants: function
+
+- func: single_layer_kv_transfer(Tensor(a!) lmc_key_value_cache, Tensor(b!) vllm_key_value_cache, Tensor(c!) slot_mapping, bool direction, bool token_major=false, bool vllm_two_major=false) -> ()
+  variants: function
+
+- func: load_and_reshape_flash(Tensor(a!) key_value, Tensor(b!) key_cache, Tensor(c!) value_cache, Tensor(d!) slot_mapping, int layer_idx) -> ()
+  variants: function
+
+- func: reshape_and_cache_back_flash(Tensor(a!) key_value, Tensor(b!) key_cache, Tensor(c!) value_cache, Tensor(d!) slot_mapping, int layer_idx) -> ()
+  variants: function
