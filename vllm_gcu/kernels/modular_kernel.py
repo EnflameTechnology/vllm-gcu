@@ -160,8 +160,7 @@ class FusedMoEModularKernel(torch.nn.Module):
             workspace13 = torch.empty(prod(workspace13_shape),
                                       device=a1.device,
                                       dtype=workspace_dtype)
-            ##TODO(dakuang): workaround for math accuracy has random
-            workspace2 = torch.zeros(prod(workspace2_shape),
+            workspace2 = torch.empty(prod(workspace2_shape),
                                      device=a1.device,
                                      dtype=workspace_dtype)
 
