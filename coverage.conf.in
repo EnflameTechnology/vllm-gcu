@@ -1,0 +1,12 @@
+# ./scripts/coverage_dir.sh -t ../coverage_test_tar/ -P http://sse-ci.enflame.cn/job/checkin_coverage/423/ -s coverage_site -C 3a1f7d_20230221.423
+
+exclude="./3rdparty/*;./2nd/*;./_deps/*;./third_party/*;"
+directories=''
+source_dir=@CMAKE_SOURCE_DIR@
+result="result.tar"
+project="ModuleCoverage"
+parallel=10
+retry='10,20' # 10 times * 20 sec
+
+site='vllm'
+name='coverage_vllm_all'

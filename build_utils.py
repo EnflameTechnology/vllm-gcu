@@ -17,3 +17,11 @@ def get_tops_version(version_file_path):
     with open(version_file_path, 'r') as file:
         tops_version = file.read().strip()
     return tops_version
+
+def get_coverage_flag():
+    coverage_flag = False
+    if os.getenv('USE_COVERAGE',
+                 default='0').upper() in ['ON', '1', 'YES', 'TRUE', 'Y']:
+        coverage_flag = True
+
+    return coverage_flag

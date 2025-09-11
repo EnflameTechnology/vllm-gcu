@@ -102,6 +102,16 @@ function zx_local_packaging() {
   echo zx local packaging
 }
 
+function coverage_build(){
+  echo "Current build job: $FUNCNAME"
+  echo `pwd`
+  sudo python3.12 -m pip install --index-url http://data-oceanus.enflame.cn/artifactory/api/pypi/pypi_virtual/simple --trusted-host data-oceanus.enflame.cn torch==$TORCH_VERSION+cpu patch pyyaml packaging
+  cmake ${project_name} --preset ci_all -B cmake_build -DNEED_DAILY_TEST_CASE=TRUE -DENABLE_CODE_COVERAGE=ON -DPACKAGE_VERSION=$PY_PACKAGE_VERSION
+  cd ${BUILD_ROOT_DIR}/cmake_build
+  ninja -j4 install
+  ninja -j4 package_all
+}
+
 function main() {
   set -x
   $build_job_name
