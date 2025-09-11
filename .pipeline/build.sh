@@ -102,7 +102,7 @@ function zx_local_packaging() {
   echo zx local packaging
 }
 
-function coverage_build(){
+function coverage_build() {
   echo "Current build job: $FUNCNAME"
   echo `pwd`
   sudo python3.12 -m pip install --index-url http://data-oceanus.enflame.cn/artifactory/api/pypi/pypi_virtual/simple --trusted-host data-oceanus.enflame.cn torch==$TORCH_VERSION+cpu patch pyyaml packaging
@@ -110,6 +110,27 @@ function coverage_build(){
   cd ${BUILD_ROOT_DIR}/cmake_build
   ninja -j4 install
   ninja -j4 package_all
+}
+
+function vllm_gcc11_sanitizer_build() {
+  export SANITIZER=${1:-"address"}
+  export BUILD_VLLM_DEBUG=True
+  echo "Current build job: $FUNCNAME, SANITIZER: $SANITIZER"
+
+  sudo python3.12 -m pip install --index-url http://data-oceanus.enflame.cn/artifactory/api/pypi/pypi_virtual/simple --trusted-host data-oceanus.enflame.cn torch==$TORCH_VERSION+cpu patch pyyaml packaging
+  cmake ${project_name} --preset ci_all -B cmake_build -DNEED_DAILY_TEST_CASE=TRUE -DPACKAGE_VERSION=$PY_PACKAGE_VERSION
+  ninja -j${cpu_count} install
+  ninja -j${cpu_count} package_all
+}
+
+function vllm_gcc11_asan_build() {
+  echo "Current build job: $FUNCNAME"
+  vllm_gcc11_sanitizer_build "address"
+}
+
+function vllm_gcc11_tsan_build() {
+  echo "Current build job: $FUNCNAME"
+  vllm_gcc11_sanitizer_build "thread"
 }
 
 function main() {
