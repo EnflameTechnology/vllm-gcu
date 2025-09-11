@@ -9,7 +9,7 @@ function arm_normal_build() {
   echo "Current build job: $FUNCNAME"
   echo `pwd`
   sudo python3.12 -m pip install torch==$TORCH_VERSION
-  cmake ${project_name} --preset ci_all -B cmake_build
+  cmake ${project_name} --preset ci_all -B cmake_build -DPACKAGE_VERSION=$PY_PACKAGE_VERSION
   cd cmake_build
   ninja -j${cpu_count} install
   ninja -j${cpu_count} package_all
@@ -24,7 +24,7 @@ function x86_normal_build() {
   echo "Current build job: $FUNCNAME"
   echo `pwd`
   sudo python3.12 -m pip install --index-url http://data-oceanus.enflame.cn/artifactory/api/pypi/pypi_virtual/simple --trusted-host data-oceanus.enflame.cn torch==$TORCH_VERSION+cpu patch pyyaml packaging
-  cmake ${project_name} --preset ci_all -B cmake_build
+  cmake ${project_name} --preset ci_all -B cmake_build -DPACKAGE_VERSION=$PY_PACKAGE_VERSION
   cd cmake_build
   ninja -j${cpu_count} install
   ninja -j${cpu_count} package_all
@@ -35,7 +35,7 @@ function x86_normal_daily_build() {
   echo "Current build job: $FUNCNAME"
   echo `pwd`
   sudo python3.12 -m pip install --index-url http://data-oceanus.enflame.cn/artifactory/api/pypi/pypi_virtual/simple --trusted-host data-oceanus.enflame.cn torch==$TORCH_VERSION+cpu patch pyyaml packaging
-  cmake ${project_name} --preset ci_all -B cmake_build -DNEED_DAILY_TEST_CASE=TRUE
+  cmake ${project_name} --preset ci_all -B cmake_build -DNEED_DAILY_TEST_CASE=TRUE -DPACKAGE_VERSION=$PY_PACKAGE_VERSION
   cd cmake_build
   ninja -j${cpu_count} install
   ninja -j${cpu_count} package_all
