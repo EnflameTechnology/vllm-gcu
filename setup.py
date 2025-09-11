@@ -63,6 +63,7 @@ except ImportError:
 
 
 DEBUG = os.getenv("BUILD_VLLM_DEBUG", False)
+sanitizer = os.getenv("SANITIZER")
 
 ABI = 1 if torch._C._GLIBCXX_USE_CXX11_ABI else 0
 # Compiler flags.
@@ -85,17 +86,25 @@ TOPSCC_FLAGS = [
     "-D__GCU_ARCH__=300",
     "-D__KRT_ARCH__=300",
 ]
+extra_link_args_list = [
+    "-Wl,--disable-new-dtags",
+    "-Wl,-rpath,$ORIGIN/../tops_extension/lib:$ORIGIN/../torch_gcu/lib",
+] + (["-Wl,-rpath,$ORIGIN/../torch_custom_op_native"] if DEBUG else [])
+
 if DEBUG:
     CXX_FLAGS += ["-UNDEBUG"]
-
-extra_link_args_list = [
-            "-Wl,--disable-new-dtags",
-            "-Wl,-rpath,$ORIGIN/../tops_extension/lib:$ORIGIN/../torch_gcu/lib",
-        ] + (["-Wl,-rpath,$ORIGIN/../torch_custom_op_native"] if DEBUG else [])
 
 if get_coverage_flag():
     CXX_FLAGS += ["-fprofile-arcs", "-ftest-coverage"]
     extra_link_args_list += ["-lgcov"]
+
+if sanitizer:
+    if sanitizer == "address":
+        CXX_FLAGS += ['-fsanitize=address', '-fno-omit-frame-pointer']
+        extra_link_args_list += ['-fsanitize=address']
+    elif sanitizer == "thread":
+        CXX_FLAGS += ['-fsanitize=thread', '-fno-omit-frame-pointer']
+        extra_link_args_list += ['-fsanitize=thread']
 
 def get_path(*filepath) -> str:
     return os.path.join(ROOT_DIR, *filepath)
