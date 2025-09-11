@@ -16,3 +16,5 @@ if is_torch_equal_or_newer("2.6"):
 
 if is_nixl_equal('0.5.0'):
     from vllm_gcu.patch import nixl_0_5_0
+
+from vllm_gcu.patch import patch_lmcache
