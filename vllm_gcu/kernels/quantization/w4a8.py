@@ -448,7 +448,8 @@ class MoeW4A8Method(FusedMoEMethodBase):
         def moe_w4a8_weight_loader(param: torch.nn.Parameter,
                                     loaded_weight: torch.Tensor,
                                     weight_name: str=None, shard_id: str=None,
-                                    expert_id: int=None):
+                                    expert_id: int=None,
+                                    return_success: bool = False):
             # for input_scale
             if weight_name is None:
                 assert param.size() == loaded_weight.size(), (
@@ -456,9 +457,9 @@ class MoeW4A8Method(FusedMoEMethodBase):
                 f"into parameter ({param.size()})")
 
                 param.data.copy_(1.0/loaded_weight)
-                return
+                return True if return_success else None
 
             weight_loader(param, loaded_weight, weight_name, shard_id,
-                              expert_id)
+                              expert_id, return_success)
 
         return moe_w4a8_weight_loader
