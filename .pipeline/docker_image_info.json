@@ -11,7 +11,7 @@
         "TEST": {
             "UBUNTU_2204": {
                 "X86_GCC11": {
-                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/test_2204:1.2.0",
+                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/test_2204:1.3.5",
                     "TORCH_2_3_0": "artifact.enflame.cn/enflame_docker_images/ubuntu/test_2204:1.0.8"
                 }
             }
