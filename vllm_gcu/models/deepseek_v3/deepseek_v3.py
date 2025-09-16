@@ -81,12 +81,14 @@ from vllm.model_executor.sampling_metadata import SamplingMetadata
 from vllm.sequence import IntermediateTensors, SequenceData
 
 import vllm_gcu.envs as gcu_envs
+import vllm_gcu.distributed.parallel_state  # noqa
 from vllm_gcu.kernels.linear import MergedReplicatedLinear, CustomMergedColumnParallelLinear
 from vllm_gcu.models.deepseek_v3.deepseek_v3_fusion import DeepseekV2MLAAttentionFusion
 
 
-def align_up(seqlen, size):
-    return (seqlen + size - 1) // size * size
+def scatter(seqlen, size):
+    indices = list(range(size))
+    return [(seqlen + indices[i]) // size - indices[i] // size for i in range(size)]
 
 
 def custom_pass(graph: torch.fx.Graph) -> torch.fx.Graph:
@@ -720,7 +722,7 @@ class DeepseekV2DecoderLayer(nn.Module):
         positions: torch.Tensor,
         hidden_states: torch.Tensor,
         residual: Optional[torch.Tensor],
-        actual_seqlen: Optional[int],
+        scatter_counts: Optional[list[int]],
     ) -> torch.Tensor:
 
         # Self Attention
@@ -730,23 +732,16 @@ class DeepseekV2DecoderLayer(nn.Module):
         else:
             hidden_states, residual = self.input_layernorm(hidden_states, residual)
 
-        tp_group = get_tp_group().device_group
-        pad_size = align_up(actual_seqlen, tp_group.size()) - actual_seqlen
+        tp_group = get_tp_group()
 
         if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
+            assert scatter_counts is not None
             # add mtp layer
             if self.layer_idx % self.config.num_hidden_layers == 0:
-                residual = torch.nn.functional.pad(
-                    residual,
-                    (0, 0, 0, pad_size),
-                    mode="constant",
-                    value=0,
-                )
-                residual_list = list(residual.chunk(tp_group.size(), dim=0))
-                residual = residual_list[tp_group.rank()].clone()
+                residual = residual[sum(scatter_counts[:tp_group.local_rank]): sum(scatter_counts[:tp_group.local_rank + 1])].clone()
             else:
-                hidden_states = get_tp_group().all_gather(hidden_states, dim=0)
-                hidden_states = hidden_states[:actual_seqlen]
+                hidden_states = torch.ops.vllm.all_gather_v(
+                    hidden_states, scatter_counts, tp_group.unique_name)
 
         hidden_states = self.self_attn(
             positions=positions,
@@ -754,23 +749,11 @@ class DeepseekV2DecoderLayer(nn.Module):
         )
 
         if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
-            hidden_states = torch.nn.functional.pad(
+            hidden_states = torch.ops.vllm.reduce_scatter_v(
                 hidden_states,
-                (0, 0, 0, pad_size),
-                mode="constant",
-                value=0,
+                scatter_counts,
+                tp_group.unique_name,
             )
-            sp_hidden_states = torch.empty(
-                hidden_states.shape[0] // tp_group.size(), *hidden_states.shape[1:],
-                device=hidden_states.device,
-                dtype=hidden_states.dtype
-            )
-            torch.distributed.reduce_scatter_tensor(
-                sp_hidden_states,
-                hidden_states,
-                group=tp_group,
-            )
-            hidden_states = sp_hidden_states
 
         # Fully Connected
         hidden_states, residual = self.post_attention_layernorm(hidden_states, residual)
@@ -857,7 +840,8 @@ class DeepseekV2Model(nn.Module):
             hidden_states = intermediate_tensors["hidden_states"]
             residual = intermediate_tensors["residual"]
 
-        actual_seqlen = hidden_states.shape[0]
+        tp_group = get_tp_group()
+        scatter_counts = scatter(hidden_states.shape[0], tp_group.world_size)
 
         for i in range(self.start_layer, self.end_layer):
             layer = self.layers[i]
@@ -865,7 +849,7 @@ class DeepseekV2Model(nn.Module):
                 positions,
                 hidden_states,
                 residual,
-                actual_seqlen,
+                scatter_counts,
             )
 
         if not get_pp_group().is_last_rank:
@@ -876,9 +860,8 @@ class DeepseekV2Model(nn.Module):
         hidden_states, _ = self.norm(hidden_states, residual)
 
         if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
-            hidden_states = get_tp_group().all_gather(hidden_states, dim=0)[
-                :actual_seqlen
-            ]
+            hidden_states = torch.ops.vllm.all_gather_v(
+                hidden_states, scatter_counts, tp_group.unique_name)
         return hidden_states
 
 
