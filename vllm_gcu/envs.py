@@ -30,6 +30,9 @@ environment_variables: Dict[str, Callable[[], Any]] = {
     "VLLM_GCU_FORCE_EP_BALANCE": lambda: bool(
         int(os.getenv("VLLM_GCU_FORCE_EP_BALANCE", "0"))
     ),
+    "VLLM_GCU_NIXL_ENABLE_FULL_KV_TRANSFER": lambda: bool(
+        int(os.getenv("VLLM_GCU_NIXL_ENABLE_FULL_KV_TRANSFER", "0"))
+    ),
 }
 
 
