@@ -44,7 +44,6 @@ class SharedHead(nn.Module):
         return self.norm(hidden_states)
 
 
-@support_torch_compile
 class DeepSeekMultiTokenPredictorLayer(nn.Module):
 
     def __init__(
@@ -105,7 +104,7 @@ class DeepSeekMultiTokenPredictorLayer(nn.Module):
 
         return hidden_states
 
-
+@support_torch_compile
 class DeepSeekMultiTokenPredictor(nn.Module):
 
     def __init__(self, *, vllm_config: VllmConfig, prefix: str = ""):
