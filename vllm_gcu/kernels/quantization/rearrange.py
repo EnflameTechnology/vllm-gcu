@@ -76,7 +76,7 @@ def rearrange_uint4_int32_uint8_awq(
     ), f"unpacked qweight shape error: {qweight_shape} and {iweights.shape}"
     
     # unpacking columnwise
-    if qzeros:
+    if qzeros is not None:
         izeros = torch.bitwise_right_shift(qzeros[:, :, None], shifts[None, None, :]).to(
             torch.int8  # smallest dtype available
         )
@@ -93,7 +93,7 @@ def rearrange_uint4_int32_uint8_awq(
     reverse_order_tensor = reverse_order_tensor[:, AWQ_REVERSE_ORDER]
     reverse_order_tensor = reverse_order_tensor.view(-1)
     iweights = iweights[:, reverse_order_tensor]
-    if qzeros:
+    if qzeros is not None:
         izeros = izeros[:, reverse_order_tensor]
         izeros = torch.bitwise_and(izeros, (2**method.quant_config.weight_bits) - 1)
         # optimize: set zeros to int8
