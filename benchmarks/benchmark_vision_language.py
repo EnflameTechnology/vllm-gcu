@@ -389,7 +389,7 @@ if __name__ == "__main__":
 
     # sampling args
     parser.add_argument("--temperature", type=float, default=0.0)
-    parser.add_argument("--top_p", type=float, default=1.0)
+    parser.add_argument("--top-p", type=float, default=1.0)
     parser.add_argument(
         "--presence-penalty",
         type=float,
