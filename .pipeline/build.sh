@@ -23,7 +23,7 @@ function x86_normal_ci_build() {
 function x86_normal_build() {
   echo "Current build job: $FUNCNAME"
   echo `pwd`
-  sudo python3.12 -m pip install --index-url http://data-oceanus.enflame.cn/artifactory/api/pypi/pypi_virtual/simple --trusted-host data-oceanus.enflame.cn torch==$TORCH_VERSION+cpu patch pyyaml packaging
+  sudo python3.12 -m pip install torch==$TORCH_VERSION patch pyyaml packaging
   cmake ${project_name} --preset ci_all -B cmake_build -DPACKAGE_VERSION=$PY_PACKAGE_VERSION
   cd cmake_build
   ninja -j${cpu_count} install
@@ -34,7 +34,7 @@ function x86_normal_build() {
 function x86_normal_daily_build() {
   echo "Current build job: $FUNCNAME"
   echo `pwd`
-  sudo python3.12 -m pip install --index-url http://data-oceanus.enflame.cn/artifactory/api/pypi/pypi_virtual/simple --trusted-host data-oceanus.enflame.cn torch==$TORCH_VERSION+cpu patch pyyaml packaging
+  sudo python3.12 -m pip install torch==$TORCH_VERSION patch pyyaml packaging
   cmake ${project_name} --preset ci_all -B cmake_build -DNEED_DAILY_TEST_CASE=TRUE -DPACKAGE_VERSION=$PY_PACKAGE_VERSION
   cd cmake_build
   ninja -j${cpu_count} install
@@ -105,7 +105,7 @@ function zx_local_packaging() {
 function coverage_build() {
   echo "Current build job: $FUNCNAME"
   echo `pwd`
-  sudo python3.12 -m pip install --index-url http://data-oceanus.enflame.cn/artifactory/api/pypi/pypi_virtual/simple --trusted-host data-oceanus.enflame.cn torch==$TORCH_VERSION+cpu patch pyyaml packaging
+  sudo python3.12 -m pip install torch==$TORCH_VERSION patch pyyaml packaging
   cmake ${project_name} --preset ci_all -B cmake_build -DNEED_DAILY_TEST_CASE=TRUE -DENABLE_CODE_COVERAGE=ON -DPACKAGE_VERSION=$PY_PACKAGE_VERSION
   cd ${BUILD_ROOT_DIR}/cmake_build
   ninja -j4 install
@@ -117,7 +117,7 @@ function vllm_gcc11_sanitizer_build() {
   export BUILD_VLLM_DEBUG=True
   echo "Current build job: $FUNCNAME, SANITIZER: $SANITIZER"
 
-  sudo python3.12 -m pip install --index-url http://data-oceanus.enflame.cn/artifactory/api/pypi/pypi_virtual/simple --trusted-host data-oceanus.enflame.cn torch==$TORCH_VERSION+cpu patch pyyaml packaging
+  sudo python3.12 -m pip install torch==$TORCH_VERSION patch pyyaml packaging
   cmake ${project_name} --preset ci_all -B cmake_build -DNEED_DAILY_TEST_CASE=TRUE -DPACKAGE_VERSION=$PY_PACKAGE_VERSION
   ninja -j${cpu_count} install
   ninja -j${cpu_count} package_all
