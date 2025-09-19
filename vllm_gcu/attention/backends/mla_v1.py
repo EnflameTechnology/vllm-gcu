@@ -101,6 +101,54 @@ class GCUMLAImpl(MLACommonImpl[GCUMLAMetadata]):
         self.W_UV = self.W_UV.contiguous()
         self.W_UK_T = self.W_UK_T.contiguous()
 
+
+    def _compute_prefill_context_flashmla(
+        self,
+        q: torch.Tensor,           # [num_prefill_tokens, num_heads, qk_head_dim(qk_nope_head_dim + qk_rope_head_dim)]
+        kv_c_and_k_pe_cache: torch.Tensor,
+        attn_metadata: MLACommonMetadata,
+    ):
+        from vllm.attention.ops.flashmla import flash_mla_with_kvcache
+
+        assert attn_metadata.prefill is not None
+        prefill_metadata = attn_metadata.prefill
+        assert prefill_metadata.chunked_context is not None
+
+        num_mtp_prefills = attn_metadata.num_prefills  # true in this case
+
+        prefill_q_nope, prefill_q_pe = q.split(
+            [self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1)
+        # Convert from (B, N, P) to (N, B, P)
+        prefill_q_nope = prefill_q_nope.transpose(0, 1)
+        # Multiply (N, B, P) x (N, P, L) -> (N, B, L)
+        prefill_ql_nope = torch.bmm(prefill_q_nope, self.W_UK_T)
+        # Convert from (N, B, L) to (B, N, L)
+        prefill_ql_nope = prefill_ql_nope.transpose(0, 1)
+
+        q = torch.cat([prefill_ql_nope, prefill_q_pe], dim=-1)  # [num_tokens, num_heads, head_size]
+
+        q = q.view(num_mtp_prefills, -1,  *q.shape[1:])         # [num_mtp_prefills, query_len, num_heads, head_size]
+
+        #  attn_output: [num_mtp_prefills, query_len, num_heads, head_size_v]
+        #  attn_softmax_lse: [num_mtp_prefills, num_heads, query_len]
+        attn_output, attn_softmax_lse = flash_mla_with_kvcache(
+            q=q,                                                                          #  num_mtp_prefills x query_len x num_heads x head_size
+            k_cache=kv_c_and_k_pe_cache.unsqueeze(-2),  # Add head dim of 1                  num_blocks x page_block_size x num_heads_k x head_size
+            block_table=prefill_metadata.block_table,                                     #  num_mtp_prefills x max_num_blocks_per_seq
+            cache_seqlens=torch.diff(prefill_metadata.chunked_context.cu_seq_lens[0]),    #  [num_mtp_prefills]  batch_size
+            head_dim_v=self.kv_lora_rank,
+            tile_scheduler_metadata=None,
+            num_splits=None,
+            softmax_scale=self.scale,
+            causal=False,
+        )
+
+        attn_output = self._v_up_proj(attn_output.view(-1, *attn_output.shape[2:])).view((-1, self.num_heads, self.v_head_dim))  # [num_mtp_prefill_tokens, num_heads, head_size_v]
+        attn_softmax_lse = attn_softmax_lse.transpose(0, 1).view(self.num_heads, -1)      # [num_mtp_prefills, num_heads, query_len] -> [num_heads, num_mtp_prefill_tokens]
+
+        return attn_output, attn_softmax_lse
+
+
     def forward(
         self,
         layer,
@@ -183,6 +231,13 @@ class GCUMLAImpl(MLACommonImpl[GCUMLAMetadata]):
         kv_c_and_k_pe_cache: torch.Tensor,
         attn_metadata: MLACommonMetadata,
     ):
+        # conditions: 1. no chunks 2. query len of each seq are the same
+        if len(attn_metadata.prefill.chunked_context.seq_tot) == 1 \
+            and attn_metadata.num_prefills * attn_metadata.prefill.max_query_len \
+                == attn_metadata.num_actual_tokens:
+                context_output, context_lse = self._compute_prefill_context_flashmla(q, kv_c_and_k_pe_cache, attn_metadata)
+                return context_output, context_lse
+
         assert attn_metadata.prefill is not None
         prefill_metadata = attn_metadata.prefill
         assert prefill_metadata.chunked_context is not None
