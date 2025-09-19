@@ -57,6 +57,8 @@ class FusedMoEModularKernel(torch.nn.Module):
         a1_scale: Optional[torch.Tensor] = None,
         a2_scale: Optional[torch.Tensor] = None,
         apply_router_weight_on_input: bool = False,
+        a1_scale_rec: Optional[torch.Tensor] = None,
+        a2_scale_rec: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         This function computes a Mixture of Experts (MoE) layer using two sets
@@ -222,6 +224,8 @@ class FusedMoEModularKernel(torch.nn.Module):
                     expert_num_tokens=expert_num_tokens,
                     apply_router_weight_on_input=
                     apply_router_weight_on_input,  # vllm_gcu added
+                    a1q_scale_rec=a1_scale_rec,   # vllm_gcu for w4a8
+                    a2_scale_rec=a2_scale_rec,   # vllm_gcu for w4a8
                 )
             else:
                 # The leading output dimension may not be equal to M, so
@@ -280,6 +284,8 @@ class FusedMoEModularKernel(torch.nn.Module):
                         expert_num_tokens=valid_in_chunk,
                         apply_router_weight_on_input=
                         apply_router_weight_on_input,
+                        a1q_scale_rec=a1_scale_rec,   # vllm_gcu for w4a8
+                        a2_scale_rec=a2_scale_rec,   # vllm_gcu for w4a8
                     )
 
         self.prepare_finalize.finalize(output, fused_out, topk_weights,

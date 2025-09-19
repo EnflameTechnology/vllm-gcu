@@ -217,6 +217,20 @@ class MoeW4A8Method(FusedMoEMethodBase):
             shape2 = layer.w2_qweight.data.shape
             layer.w2_qweight.data = layer.w2_qweight.data.view((shape2[0], shape2[2], shape2[1]))
 
+        # input scale reciprocal
+        w13_input_scale_rec = torch.nn.Parameter(torch.ones(
+            1,
+            dtype=torch.float32, device=layer.w13_input_scale.device),
+            requires_grad=False)
+        layer.register_parameter("w13_input_scale_rec", w13_input_scale_rec)
+        w2_input_scale_rec = torch.nn.Parameter(torch.ones(
+            1,
+            dtype=torch.float32, device=layer.w2_input_scale.device),
+            requires_grad=False)
+        layer.register_parameter("w2_input_scale_rec", w2_input_scale_rec)
+        layer.w13_input_scale_rec.data.copy_(1.0/layer.w13_input_scale.data)
+        layer.w2_input_scale_rec.data.copy_(1.0/layer.w2_input_scale.data)
+
 
     def create_weights_v1(self, layer: torch.nn.Module, num_experts: int,
                        hidden_size: int, intermediate_size_per_partition: int,
@@ -446,6 +460,8 @@ class MoeW4A8Method(FusedMoEMethodBase):
             a1_scale=layer.w13_input_scale,
             a2_scale=layer.w2_input_scale,
             apply_router_weight_on_input=apply_router_weight_on_input,
+            a1_scale_rec=layer.w13_input_scale_rec,
+            a2_scale_rec=layer.w2_input_scale_rec,
         )
 
     @staticmethod
