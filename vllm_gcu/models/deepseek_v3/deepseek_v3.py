@@ -89,6 +89,32 @@ def align_up(seqlen, size):
     return (seqlen + size - 1) // size * size
 
 
+def custom_pass(graph: torch.fx.Graph) -> torch.fx.Graph:
+    from vllm_gcu.compilation.fusion import GCUFusionPass
+
+    vllm_config = get_current_vllm_config()
+    GCUFusionPass.instance(
+        vllm_config
+    ).patterns.apply(graph)
+    graph.eliminate_dead_code()
+    return graph
+
+
+def custom_backend(
+    graph: torch.fx.GraphModule, example_inputs: list[torch.Tensor]
+):
+    from torch._inductor import config
+    from torch._inductor.compile_fx import compile_fx
+
+    current_config = config.get_config_copy()
+    current_config["post_grad_custom_post_pass"] = custom_pass
+    current_config["enable_auto_functionalized_v2"] = False
+
+    return compile_fx(
+        graph, example_inputs, config_patches=current_config
+    )
+
+
 class DeepseekV2MLP(nn.Module):
 
     def __init__(
@@ -246,31 +272,6 @@ class DeepseekV2MoE(nn.Module):
             )
 
             if quant_config is not None:
-
-                def custom_pass(graph: torch.fx.Graph) -> torch.fx.Graph:
-                    from vllm_gcu.compilation.fusion import GCUFusionPass
-
-                    vllm_config = get_current_vllm_config()
-                    GCUFusionPass.instance(
-                        vllm_config
-                    ).patterns.apply(graph)
-                    graph.eliminate_dead_code()
-                    return graph
-
-                def custom_backend(
-                    graph: torch.fx.GraphModule, example_inputs: list[torch.Tensor]
-                ):
-                    from torch._inductor import config
-                    from torch._inductor.compile_fx import compile_fx
-
-                    current_config = config.get_config_copy()
-                    current_config["post_grad_custom_post_pass"] = custom_pass
-                    current_config["enable_auto_functionalized_v2"] = False
-
-                    return compile_fx(
-                        graph, example_inputs, config_patches=current_config
-                    )
-
                 self.experts.shared_experts = torch.compile(
                     backend=custom_backend, dynamic=True
                 )(self.shared_experts)

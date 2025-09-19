@@ -177,7 +177,7 @@ def invoke_fused_moe_kernel(
                 C,
                 A,
                 B,
-                1.0/A_scale,
+                A_scale.reciprocal(),
                 B_scale,
                 B_zp,
                 None, # bias
