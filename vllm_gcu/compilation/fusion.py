@@ -1138,7 +1138,7 @@ class SiluMulStaticQuantPattern(FusedQuantPattern):
 
 
 def dump(x: torch.Tensor, name: str) -> torch.Tensor:
-    print(f"name: {name}, shape: {x.shape}, value: {x}")
+    print(f"name: {name}, shape: {x.shape}, value: {x}",flush=True)
     return x
 
 
