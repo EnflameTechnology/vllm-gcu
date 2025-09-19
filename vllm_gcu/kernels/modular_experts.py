@@ -98,6 +98,8 @@ class TritonExpertsPad(mk.FusedMoEPermuteExpertsUnpermute):
         workspace2: torch.Tensor,
         expert_num_tokens: Optional[torch.Tensor],
         apply_router_weight_on_input: bool,
+        a1q_scale_rec: Optional[torch.Tensor],
+        a2_scale_rec: Optional[torch.Tensor],
     ):
         # TODO:bias
         # Check constraints.
@@ -188,6 +190,7 @@ class TritonExpertsPad(mk.FusedMoEPermuteExpertsUnpermute):
             per_channel_quant=self.per_act_token_quant,
             block_shape=self.block_shape,
             real_token_num=expert_num_tokens if is_static else None,
+            A_scale_rec=a1q_scale_rec,
         )
 
         if activation == "silu":
@@ -254,6 +257,7 @@ class TritonExpertsPad(mk.FusedMoEPermuteExpertsUnpermute):
             per_channel_quant=self.per_act_token_quant,
             block_shape=self.block_shape,
             real_token_num=expert_num_tokens if is_static else None,
+            A_scale_rec=a2_scale_rec,
         )
 
         torch.ops._moe_C.moe_sum_pad(

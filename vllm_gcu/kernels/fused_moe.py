@@ -131,6 +131,7 @@ def invoke_fused_moe_kernel(
     real_token_num=None,
     per_channel_quant=False,
     bias=None,
+    A_scale_rec=None,
 ) -> None:
     assert topk_weights.stride(1) == 1
     assert sorted_token_ids.stride(0) == 1
@@ -167,11 +168,12 @@ def invoke_fused_moe_kernel(
             raise NotImplementedError
         if use_fp8_w8a8 and B.dtype == torch.int8:
             # w4a8-fp8
+            assert A_scale_rec is not None
             torch.ops._C.fused_moe_quant_kernel_ex(
                 C,
                 A,
                 B,
-                A_scale.reciprocal(),
+                A_scale_rec, # vllm_gcu w4a8 input_scale_rep
                 B_scale,
                 B_zp,
                 None, # bias
