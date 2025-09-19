@@ -39,7 +39,8 @@ python3 -m vllm_utils.benchmark_test \
  --demo=te \
  --dtype=bfloat16 \
  --device gcu \
- --trust-remote-code
+ --trust-remote-code \
+ --disable-async-output-proc
 ```
 
 #### serving模式
@@ -56,7 +57,8 @@ python3 -m vllm.entrypoints.openai.api_server \
  --block-size=64 \
  --dtype=bfloat16 \
  --device gcu \
- --enable-chunked-prefill
+ --enable-chunked-prefill \
+ --disable-async-output-proc
 
 
 # 启动客户端
@@ -114,7 +116,8 @@ export VLLM_ATTENTION_BACKEND=XFORMERS
   --output-len=128 \
   --demo=te \
   --dtype=bfloat16 \
-  --device gcu
+  --device gcu \
+  --disable-async-output-proc
 ```
 
 #### serving模式
@@ -132,7 +135,8 @@ export VLLM_ATTENTION_BACKEND=XFORMERS
   --trust-remote-code \
   --gpu-memory-utilization=0.9 \
   --enable-chunked-prefill \
-  --rope-scaling '{"rope_type":"yarn","factor":4.0,"original_max_position_embeddings":32768}'
+  --rope-scaling '{"rope_type":"yarn","factor":4.0,"original_max_position_embeddings":32768}' \
+  --disable-async-output-proc
 
 
 # 启动客户端
@@ -192,7 +196,8 @@ export VLLM_ATTENTION_BACKEND=XFORMERS
  --num-prompts 1 \
  --block-size=64 \
  --gpu-memory-utilization 0.9 \
- --trust-remote-code
+ --trust-remote-code \
+ --disable-async-output-proc
 ```
 
 #### serving模式
@@ -208,7 +213,8 @@ export VLLM_ATTENTION_BACKEND=XFORMERS
   --disable-log-requests \
   --gpu-memory-utilization 0.9 \
   --block-size=64 \
-  --dtype=bfloat16
+  --dtype=bfloat16 \
+  --disable-async-output-proc
 
 
 # 启动客户端

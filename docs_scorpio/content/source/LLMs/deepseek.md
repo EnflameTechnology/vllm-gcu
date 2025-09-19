@@ -37,7 +37,8 @@ python3 -m vllm_utils.benchmark_test \
  --dtype=bfloat16 \
  --device gcu \
  --gpu-memory-utilization 0.9 \
- --trust-remote-code
+ --trust-remote-code \
+ --disable-async-output-proc
 ```
 
 #### serving模式
@@ -52,7 +53,8 @@ python3 -m vllm.entrypoints.openai.api_server  \
  --gpu-memory-utilization 0.9 \
  --block-size=64 \
  --dtype=bfloat16 \
- --device gcu
+ --device gcu \
+ --disable-async-output-proc
 
 
 # 启动客户端

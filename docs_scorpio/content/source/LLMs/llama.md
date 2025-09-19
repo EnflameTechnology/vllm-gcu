@@ -40,7 +40,8 @@ python3 -m vllm_utils.benchmark_test \
  --device=gcu \
  --max-model-len=32768 \
  --tensor-parallel-size 1 \
- --gpu-memory-utilization 0.9
+ --gpu-memory-utilization 0.9 \
+ --disable-async-output-proc
 ```
 
 #### 性能测试

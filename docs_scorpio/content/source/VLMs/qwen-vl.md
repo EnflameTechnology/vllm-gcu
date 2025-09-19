@@ -43,7 +43,8 @@ python3 -m vllm_utils.benchmark_vision_language \
  --tensor-parallel-size 1 \
  --max-model-len 32768 \
  --trust-remote-code \
- --block-size=64
+ --block-size=64 \
+ --disable-async-output-proc
 ```
 ##### 视频推理
 ```shell
@@ -61,7 +62,8 @@ python3 -m vllm_utils.benchmark_vision_language \
  --tensor-parallel-size 1 \
  --max-model-len 32768 \
  --trust-remote-code \
- --block-size=64
+ --block-size=64 \
+ --disable-async-output-proc
 ```
 注：
 * 默认为graph mode推理，若想使用eager mode，请添加`--enforce-eager`；
@@ -83,7 +85,8 @@ python3 -m vllm_utils.benchmark_vision_language \
  --max-model-len 32768 \
  --trust-remote-code \
  --block-size=64 \
- --gpu-memory-utilization 0.9
+ --gpu-memory-utilization 0.9 \
+ --disable-async-output-proc
 ```
 注：
 * 默认为graph mode推理，若想使用eager mode，请添加`--enforce-eager`；

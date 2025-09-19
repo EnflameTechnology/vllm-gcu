@@ -33,7 +33,7 @@ export VLLM_ATTENTION_BACKEND=XFORMERS
 python3 -m vllm_utils.benchmark_test \
  --model=[path of GLM-Z1-32B-0414-GPTQ-Int4] \
  --demo=te \
- --dtype=float16 \
+ --dtype=bfloat16 \
  --quantization=gptq_gcu \
  --tensor-parallel-size=1 \
  --output-len=128 \
@@ -41,7 +41,8 @@ python3 -m vllm_utils.benchmark_test \
  --max-model-len=32768 \
  --gpu-memory-utilization=0.9 \
  --trust-remote-code \
- --device gcu
+ --device gcu \
+ --disable-async-output-proc
 ```
 
 #### serving模式
@@ -57,8 +58,9 @@ python3 -m vllm_utils.benchmark_test \
   --disable-log-requests \
   --gpu-memory-utilization 0.9 \
   --block-size=64 \
-  --dtype=float16 \
-  --quantization=gptq_gcu
+  --dtype=bfloat16 \
+  --quantization=gptq_gcu \
+  --disable-async-output-proc
 
 
 # 启动客户端

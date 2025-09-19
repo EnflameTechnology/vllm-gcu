@@ -39,7 +39,8 @@ python3 -m vllm.entrypoints.openai.api_server \
  --seed 0 \
  --tensor-parallel-size 2 \
  --allowed-local-media-path=[absolute path of your image folder] \
- --served-model-name=deepseek-vl2
+ --served-model-name=deepseek-vl2 \
+ --disable-async-output-proc
 
 # 启动客户端
 curl "http://0.0.0.0:8000/v1/chat/completions" \
@@ -94,7 +95,8 @@ python3 -m vllm_utils.benchmark_vision_language --perf \
  --device=gcu \
  --hf-overrides='{"architectures": ["DeepseekVLV2ForCausalLM"]}' \
  --repetition-penalty=1.05 \
- --top_p=0.01
+ --top_p=0.01 \
+ --disable-async-output-proc
 ```
 注：
 * 默认为graph mode推理，若想使用eager mode，请添加`--enforce-eager`；
