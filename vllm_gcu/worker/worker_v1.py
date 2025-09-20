@@ -131,6 +131,7 @@ class GCUModelRunner(GPUModelRunner):
                     self.vllm_config,
                     num_tokens=num_tokens,
                     num_tokens_across_dp=num_tokens_across_dp,
+                    is_dummy=True,
                 ),
             ):
                 outputs = model(

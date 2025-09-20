@@ -3,6 +3,7 @@
 from functools import wraps
 from contextlib import contextmanager
 
+import sys
 import torch
 import importlib
 from packaging import version
@@ -11,6 +12,11 @@ from vllm.utils import round_up
 import vllm_gcu.envs as gcu_envs
 from vllm.config import VllmConfig
 from vllm.forward_context import set_forward_context, get_forward_context
+if sys.version_info < (3, 10):
+    from importlib_metadata import entry_points
+else:
+    from importlib.metadata import entry_points
+
 
 STR_DTYPE_TO_TORCH_DTYPE = {
     "half": torch.half,
@@ -118,6 +124,7 @@ def set_gcu_forward_context(
     num_tokens=None,
     num_tokens_across_dp=None,
     skip_cuda_graphs=False,
+    is_dummy=False,
 ):
     with set_forward_context(
         attn_metadata,
@@ -127,6 +134,13 @@ def set_gcu_forward_context(
         num_tokens_across_dp,
         skip_cuda_graphs,
     ) as ctx:
+        # invoke hooks
+        discovered_hooks = entry_points(group="vllm_gcu.hooks")
+        if len(discovered_hooks) > 0:
+            for hook in discovered_hooks:
+                func = hook.load()
+                func(attn_metadata, vllm_config, num_tokens, num_tokens_across_dp, is_dummy)
+
         forward_context = get_forward_context()
         threshold = ep_alltoall_threshold(vllm_config)
         dp_metadata = forward_context.dp_metadata
