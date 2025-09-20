@@ -209,7 +209,8 @@ class GCUModelRunner(GPUModelRunner):
                     num_tokens=num_tokens,
                     num_tokens_across_dp=num_tokens_across_dp,
                     cudagraph_runtime_mode=cudagraph_runtime_mode,
-                    batch_descriptor=batch_descriptor):
+                    batch_descriptor=batch_descriptor,
+                    is_dummy=True):
                 outputs = self.model(
                     input_ids=input_ids,
                     positions=positions,
