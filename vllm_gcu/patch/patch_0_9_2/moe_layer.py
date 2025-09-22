@@ -24,8 +24,9 @@ def init_prepare_finalize(self, moe: FusedMoEConfig,
         return FusedMoEMethodBase.init_prepare_finalize(
             self, moe, quant_config)
 
-    all2all_manager = get_ep_group().device_communicator.all2all_manager
-    assert all2all_manager is not None
+    # We allow no ep use modular kernel.
+    # all2all_manager = get_ep_group().device_communicator.all2all_manager
+    # assert all2all_manager is not None
 
     self.moe = moe
 

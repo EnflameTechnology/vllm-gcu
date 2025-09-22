@@ -54,8 +54,8 @@ class RopeWithKVCache(CustomOp):
     ):
         dispatch = super().forward
         prefill_support_platform = [140]
-        if current_platform.get_device_capability().to_int() not in prefill_support_platform \
-                and k_pe_out is not None:
+        if (current_platform.get_device_capability().to_int() not in prefill_support_platform \
+                and k_pe_out is not None) or kv_cache.numel() == 0:
             # prefill use native impl since op interface lack outputs.
             dispatch = self.forward_native
         return dispatch(

@@ -10,7 +10,7 @@ from importlib.util import find_spec
 # import vllm.device_allocator
 from vllm.utils import MemorySnapshot, GiB_bytes
 from vllm.model_executor import set_random_seed
-from vllm.distributed.parallel_state import get_pp_group
+from vllm.distributed.parallel_state import get_pp_group, get_ep_group
 from vllm.config import VllmConfig
 from vllm.v1.core.sched.output import SchedulerOutput
 from vllm.v1.kv_cache_interface import KVCacheConfig
@@ -20,7 +20,9 @@ from vllm.v1.outputs import ModelRunnerOutput
 from vllm.sequence import IntermediateTensors
 
 from vllm_gcu import gcumem
-from vllm_gcu.utils import set_gcu_forward_context, dump_memory_snapshot_when_exception
+from vllm_gcu.utils import (set_gcu_forward_context,
+                            dump_memory_snapshot_when_exception,
+                            prepare_communication_buffer_for_model_noep,)
 import vllm_gcu.envs as gcu_envs
 
 with patch("vllm.forward_context.set_forward_context", set_gcu_forward_context):
@@ -30,7 +32,10 @@ with patch("vllm.forward_context.set_forward_context", set_gcu_forward_context):
 class GCUModelRunner(GPUModelRunner):
     def get_dp_padding(self,
                        num_tokens: int) -> tuple[int, Optional[torch.Tensor]]:
-        return 0, None
+        if self.vllm_config.parallel_config.enable_expert_parallel:
+            return 0, None
+        else:
+            return super().get_dp_padding(num_tokens)
 
     @torch.inference_mode()
     @dump_memory_snapshot_when_exception('step')
@@ -46,8 +51,8 @@ class GCUModelRunner(GPUModelRunner):
 
         # Padding for DP
         num_pad, num_tokens_across_dp = self.get_dp_padding(num_tokens)
+        num_tokens += num_pad
         if num_tokens > 0:
-            num_tokens += num_pad
 
             # Set num_scheduled_tokens based on num_tokens and max_num_seqs
             # for dummy run with LoRA so that the num_reqs collectively
@@ -202,6 +207,11 @@ class GCUModelRunner(GPUModelRunner):
         assert layer_names == set(kv_cache_raw_tensors.keys(
         )), "Some layers are not correctly initialized"
         return kv_cache_raw_tensors
+
+    def load_model(self) -> None:
+        super().load_model()
+        if get_ep_group().world_size == 1:
+            prepare_communication_buffer_for_model_noep(self.model)
 
 
 with patch("vllm.device_allocator", "cumem", gcumem):
