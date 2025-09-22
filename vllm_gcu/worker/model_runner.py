@@ -70,7 +70,11 @@ from vllm.worker.model_runner_base import InputProcessingError, ModelRunnerBase
 
 import vllm_gcu.envs as gcu_envs
 
-from vllm_gcu.utils import dump_memory_snapshot_when_exception, ep_alltoall_threshold
+from vllm_gcu.utils import (
+    dump_memory_snapshot_when_exception,
+    ep_alltoall_threshold,
+    prepare_communication_buffer_for_model_noep,
+)
 
 
 logger = init_logger(__name__)
@@ -249,6 +253,8 @@ class GCUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
             self.model_memory_usage / float(2**30),
             (time_after_load - time_before_load),
         )
+
+        prepare_communication_buffer_for_model_noep(self.model)
 
         if self.prompt_adapter_config:
             self.prompt_adapter_manager = LRUCacheWorkerPromptAdapterManager(
