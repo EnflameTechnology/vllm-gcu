@@ -1,224 +1,108 @@
-## deepseek
+# deepseek
 
-### DeepSeek-R1
-本模型推理及性能测试需要8张enflame gcu。
+## DeepSeek-R1
+本模型推理及性能测试，需要16张enflame gcu。
 
-#### 模型下载
-*  url: [DeepSeek-R1](https://huggingface.co/deepseek-ai/DeepSeek-R1)
+### 模型下载
+*  url: [DeepSeek-R1](https://huggingface.co/deepseek-ai/DeepSeek-R1/tree/main)
 
 *  branch: `main`
 
-*  commit id: `fe1c5d0d`
+*  commit id: `56d4cbb`
 
 将上述url设定的路径下的内容全部下载到`DeepSeek-R1`文件夹中。
 
-#### 使用EP+DP的并行方案部署模型
 
-##### offline测试
+### 使用DP+TP+SP+EP的并行方案部署模型 - 天河V3服务器（16卡）
 
-* offline测试脚本，将下述代码拷贝到**offline.py**文件内
-```python
-import os
-import argparse
-from vllm import LLM, SamplingParams
-
-
-def get_args_parser(add_help=True):
-    parser = argparse.ArgumentParser(description='DeepSeek-R1 inference',
-                                     add_help=add_help)
-    parser.add_argument('--model',
-                        default='./DeepSeek-R1',
-                        help='model path')
-    return parser
-
-if __name__ == '__main__':
-    args = get_args_parser().parse_args()
-    prompts = [
-        "The president of the United States is",
-        "The capital of France is",
-        "The future of AI is",
-        "9.11和9.8哪个数字大",
-        "strawberry中有几个r?",
-        "How many r in strawberry.",
-    ]
-    
-    # Create a sampling params object.
-    sampling_params = SamplingParams(temperature=0.0, top_p=1.0, max_tokens=32, seed=0, ignore_eos=False)
-    
-    llm = LLM(model=args.model,
-            max_num_seqs=2,
-            device='gcu',
-            trust_remote_code=True,
-            tensor_parallel_size=1,
-            disable_log_stats=False,
-            max_model_len=8192,
-            dtype='bfloat16',
-            enforce_eager=False,
-            quantization='fp8',
-            seed=0,
-            gpu_memory_utilization=0.8,
-            enable_expert_parallel=True,
-            compilation_config={"level":3},
-        )
-
-    outputs = llm.generate(prompts, sampling_params)
-    for output in outputs:
-        prompt = output.prompt
-        generated_text = output.outputs[0].text
-        print(f"Prompt: {prompt!r}, Generated text: {generated_text!r}")
-```
-* offline启动脚本，将下述代码拷贝到**offline.sh**文件内
-```shell
-pkill -9 python
-sleep 5
-
-valid_ip=$1
-dp_size=8
-DEVICE_IDS=("0" "1" "2" "3" "4" "5" "6" "7")
-log_folder="./output"
-mkdir -p "$log_folder"
-
-# 获取本机IP地址和网卡名
-HOST_IP=$(hostname -I | awk '{print $1}')
-INTERFACE_NAME=$(ifconfig -a | grep -B1 "inet ${HOST_IP}[^0-9]" | head -n 1 | awk '{print $1}' | cut -d: -f1)
-echo ${HOST_IP}
-echo ${INTERFACE_NAME}
-
-if "$HOST_IP" != "$valid_ip"; then
-    echo "Error: Unsupported IP address $HOST_IP, $valid_ip"
-    exit 1
-fi
-
-for i in $(seq 0 7); do
-    echo rank: ${i}
-    echo interface_name: ${INTERFACE_NAME}
-    echo ip: ${valid_ip}
-    TORCH_ECCL_AVOID_RECORD_STREAMS=1 \
-    TOPS_VISIBLE_DEVICES=${DEVICE_IDS[i]} \
-    GLOO_SOCKET_IFNAME=${INTERFACE_NAME} \
-    VLLM_USE_V1=0 \
-    VLLM_DP_MASTER_IP=${valid_ip} \
-    VLLM_DP_MASTER_PORT=54999 \
-    VLLM_DP_SIZE=${dp_size} \
-    VLLM_DP_RANK=${i} \
-    python3.10 offline.py --model ${2} &> ${log_folder}/rank_${i}.log &
-done
-```
-* 启动测试
-```shell
-bash ./offline.sh [IP] [path of DeepSeek-R1]
-```
-* 说明：
-  * `[IP]`: 服务器的ip
-  * `[patch of DeepSeek-R1]`: 模型路径
-
-##### 性能测试
+#### 性能测试
 
 * server测试脚本，将下述代码放在**server.sh**文件内
 
 ```shell
+set -x
 pkill -9 python
 sleep 5
+rm -r /root/.cache/vllm/torch_compile_cache/
 
 valid_ip=$1
-model_name=$2
-max_model_len=$3
-dp_size=8
-DEVICE_IDS=("0" "1" "2" "3" "4" "5" "6" "7")
- 
+dp_size=4
+tp_size=4
 base_port=7555
+model_name=$2
+max_model_len=65536
+max_num_seqs=256
+max_num_batched_tokens=28024
 
-log_folder="./output"
-mkdir -p "$log_folder"
-  
-# 获取本机IP地址和网卡名
 HOST_IP=$(hostname -I | awk '{print $1}')
-INTERFACE_NAME=$(ifconfig -a | grep -B1 "inet ${HOST_IP}[^0-9]" | head -n 1 | awk '{print $1}' | cut -d: -f1)
 echo ${HOST_IP}
-echo ${INTERFACE_NAME}
+dt=`date +'%Y%m%d%H%M'`
+name="$(date +%m%d)_online"
 
-if [ "$HOST_IP" != "$valid_ip" ]; then
-    echo "Error: Unsupported IP address $HOST_IP, $valid_ip"
+log_folder="./logs/${name}/${dt}_server"
+mkdir -p "$log_folder"
+
+valid=false
+host_index=-1
+for idx in "${!valid_ips[@]}"; do
+    if [[ "$HOST_IP" == "${valid_ips[idx]}" ]]; then
+        valid=true
+        host_index=$idx
+        break
+    fi
+done
+ 
+if ! $valid; then
+    echo "Error: Unsupported IP address $HOST_IP"
     exit 1
 fi
 
-for i in $(seq 0 7); do
-    echo rank: ${i}
-    echo interface_name: ${INTERFACE_NAME}
-    echo ip: ${valid_ip}
- 
-    TORCH_ECCL_AVOID_RECORD_STREAMS=1 \
-    TOPS_VISIBLE_DEVICES=${DEVICE_IDS[i]} \
-    GLOO_SOCKET_IFNAME=${INTERFACE_NAME} \
-    VLLM_USE_V1=0 \
-    VLLM_DP_MASTER_IP=${valid_ip} \
-    VLLM_DP_MASTER_PORT=54999 \
-    VLLM_DP_SIZE=${dp_size} \
-    VLLM_DP_RANK=${i} \
-    python3 -m vllm.entrypoints.openai.api_server \
-        --host ${HOST_IP} \
-        --port $((i + base_port)) \
-        --model ${model_name} \
-        --max-model-len=${max_model_len} \
-        --block-size=64 \
-        --dtype=bfloat16 \
-        --trust-remote-code \
-        --enable-expert-parallel \
-        --gpu-memory-utilization=0.9 \
-        --quantization='fp8' \
-        --scheduling-policy priority \
-        --num-scheduler-steps 8 \
-        --max-num-seqs 32 \
-        -O3 &> ${log_folder}/rank_${i}.log &
-done
+EFRT_ENABLE_CTX_SYNC_FOR_FREE=true \
+EFRT_STREAM_SYNC_USE_POLLING=true \
+TOPS_STREAM_SCHEDULE_CREDIT=4 \
+PYTORCH_GCU_ALLOC_CONF=backend:topsMallocAsync \
+VLLM_GCU_RANK_LOG_PATH=${log_folder} \
+VLLM_USE_V1=1 \
+VLLM_GCU_DEEPSEEK_FUSION=1 \
+VLLM_GCU_ENABLE_SEQUENCE_PARALLEL=1 \
+PYTORCH_EFML_BASED_GCU_CHECK=1 \
+TORCHGCU_INDUCTOR_ENABLE=0 \
+TORCH_ECCL_AVOID_RECORD_STREAMS=1 \
+vllm serve ${model_name} \
+    --host ${HOST_IP} \
+    --port ${base_port} \
+    --max-model-len ${max_model_len} \
+    --max-seq-len-to-capture ${max_model_len} \
+    --max-num-batched-tokens ${max_num_batched_tokens} \
+    --no-enable-prefix-caching \
+    --block-size 64 \
+    --dtype bfloat16 \
+    --data-parallel-size ${dp_size} \
+    --tensor-parallel-size ${tp_size} \
+    --trust-remote-code \
+    --enable-expert-parallel \
+    --gpu-memory-utilization 0.9 \
+    --compilation_config '{"full_cuda_graph":true}' \
+    --max-num-seqs ${max_num_seqs} \
+    --cuda-graph-sizes ${max_num_seqs} \
+    --quantization 'fp8' \
+    --kv-cache-dtype 'fp8' &> ${log_folder}/server.log &
 ```
 * **server**启动命令
 ```shell
-bash ./server.sh [IP] [path of DeepSeek-R1] [max-model-len]
+bash ./server.sh [IP] [path of DeepSeek-R1]
 ```
 * 说明：
   * `[IP]`: 服务器的ip
-  * `[patch of DeepSeek-R1]`: 模型路径
-  * `[max-model-len]`: 模型支持的序列最大长度
-* server启动成功后，会在**output/rank_*.log**文件内输出如下日志：
+  * `[path of DeepSeek-R1]`: 模型路径
+* server启动成功后，会在`log_folder`路径下的**server.log**文件内输出如下日志：
 ```shell
-INFO:     Started server process [49281]
+INFO:     Started server process [xxx]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
 ```
-* router测试脚本，将下述代码放在**router.sh**文件内
-```shell
-server_ips=$1
-model_name=$2
-log_folder="./output"
-mkdir -p "$log_folder"
-server_base_port=7555
 
-router_port=8002
-router_ip=$(hostname -I | awk '{print $1}')
-
-server_urls=" http://${server_ips}:${server_base_port} http://${server_ips}:$((server_base_port+1)) http://${server_ips}:$((server_base_port+2)) http://${server_ips}:$((server_base_port+3)) http://${server_ips}:$((server_base_port+4)) http://${server_ips}:$((server_base_port+5)) http://${server_ips}:$((server_base_port+6)) http://${server_ips}:$((server_base_port+7))"
-
-TOPS_VISIBLE_DEVICES="" \
-python3 -m vllm_utils.router \
-    --server-urls ${server_urls} \
-    --host ${router_ip} \
-    --port ${router_port} \
-    --model ${model_name} &> ${log_folder}/router.log &
-```
-* **router**启动命令：
-```shell
-bash ./router.sh [IP] [path of DeepSeek-R1]
-```
-* 说明：
-  * `[IP]`: 服务器的ip
-  * `[patch of DeepSeek-R1]`: 模型路径
-* router启动成功后，会在**output/router.log**文件内输出如下日志：
-```shell
-Starting vLLM DP Router on http://xx.xx.xx.xx:8002
-```
-
-* client测试脚本，将下述代码放在**clien.sh**文件内
+* client测试脚本，将下述代码放在**client.sh**文件内
 
   注：需要安装以下依赖：
 
@@ -227,71 +111,381 @@ python3 -m pip install datasets==3.6.0
 ```
 
 ```shell
-router_ip=$1
+server_ip=$1
 model_name=$2
-globl_bs=$3
+global_bs=$3
 input_len=$4
 output_len=$5
-log_folder="./output"
+num_prompts=$6
+
+dt=`date +'%Y%m%d%H%M'`
+name="$(date +%m%d)_online"
+
+log_folder="./logs/${name}/${dt}_client"
 mkdir -p "$log_folder"
-router_port=8002
-   
-client_ip=${router_ip}
-HOST_IP=$(hostname -I | awk '{print $1}')
+server_port=7555
 
-if [ "$HOST_IP" != "$client_ip" ]; then
-    echo "Host IP ${HOST_IP} does not match client IP ${client_ip}, exiting..."
-    exit 1
-fi
+server_url="http://${server_ip}:${server_port}"
 
-router_url="http://${router_ip}:${router_port}"
-   
-python3 -m vllm_utils.benchmark_serving \
+vllm bench serve \
     --model ${model_name} \
-    --backend vllm \
     --dataset-name random \
-    --num-prompts ${globl_bs} \
+    --num-prompts ${num_prompts} \
+    --max-concurrency ${global_bs} \
     --random-input-len ${input_len} \
     --random-output-len ${output_len} \
     --trust-remote-code \
     --ignore-eos \
-    --strict-in-out-len \
-    --keep-special-tokens \
-    --base-url ${router_url} \
-    --extra-body '{"priority": 1}' &> ${log_folder}/client.log &
+    --base-url ${server_url} \
+    --save-result \
+    --save-detailed \
+    --result-dir ${log_folder} \
+    --percentile-metrics 'ttft,tpot,itl,e2el' \
+    --metric-percentiles "25,50,75,90,99,100" &> ${log_folder}/client.log &
 ```
 
-* **clien**启动命令：
+* **client**启动命令：
 ```shell
-bash ./client.sh [IP] [path of DeepSeek-R1] [batch-size] [input-len] [output-len]
+bash ./client.sh [IP] [path of DeepSeek-R1] [batch-size] [input-len] [output-len] [num-prompts]
 * 说明：
   * `[IP]`: 服务器的ip
-  * `[patch of DeepSeek-R1]`: 模型路径
+  * `[path of DeepSeek-R1]`: 模型路径
   * `[batch-size]`: 模型推理的并发数
   * `[input-len]`: 输入的token长度
   * `[output-len]`: 输出的token长度
+  * `[num-prompts]`: 本次推理一共发送的请求总数，建议设置为`[batch-size]`的2~10倍
 ```
-* cline测试成功后，会在**output/client.log**文件内输出如下日志：
+* client测试成功后，会在`log_folder`路径下的**server.log**文件内输出如下日志：
 ```shell
 ============ Serving Benchmark Result ============
-Successful requests:                     xxx        
-Benchmark duration (s):                  xxx  
-Total input tokens:                      xxx     
-Total generated tokens:                  xxx      
-Request throughput (req/s):              xxx  
-Output token throughput (tok/s):         xxx  
-Total Token throughput (tok/s):          xxx 
+Successful requests:                     xxx
+Benchmark duration (s):                  xxx
+Total input tokens:                      xxx
+Total generated tokens:                  xxx
+Request throughput (req/s):              xxx
+Output token throughput (tok/s):         xxx
+Total Token throughput (tok/s):          xxx
 ---------------Time to First Token----------------
 Mean TTFT (ms):                          xxx
 Median TTFT (ms):                        xxx
+P25 TTFT (ms):                           xxx
+P50 TTFT (ms):                           xxx
+P75 TTFT (ms):                           xxx
+P90 TTFT (ms):                           xxx
 P99 TTFT (ms):                           xxx
+P100 TTFT (ms):                          xxx
 -----Time per Output Token (excl. 1st token)------
-Mean TPOT (ms):                          xxx 
-Median TPOT (ms):                        xxx 
-P99 TPOT (ms):                           xxx 
+Mean TPOT (ms):                          xxx
+Median TPOT (ms):                        xxx
+P25 TPOT (ms):                           xxx
+P50 TPOT (ms):                           xxx
+P75 TPOT (ms):                           xxx
+P90 TPOT (ms):                           xxx
+P99 TPOT (ms):                           xxx
+P100 TPOT (ms):                          xxx
 ---------------Inter-token Latency----------------
 Mean ITL (ms):                           xxx
 Median ITL (ms):                         xxx
+P25 ITL (ms):                            xxx
+P50 ITL (ms):                            xxx
+P75 ITL (ms):                            xxx
+P90 ITL (ms):                            xxx
 P99 ITL (ms):                            xxx
+P100 ITL (ms):                           xxx
+----------------End-to-end Latency----------------
+Mean E2EL (ms):                          xxx
+Median E2EL (ms):                        xxx
+P25 E2EL (ms):                           xxx
+P50 E2EL (ms):                           xxx
+P75 E2EL (ms):                           xxx
+P90 E2EL (ms):                           xxx
+P99 E2EL (ms):                           xxx
+P100 E2EL (ms):                          xxx
+==================================================
+```
+
+## DeepSeek-R1-W4AFP8_i8_AWQ_REARRAGED
+
+本模型推理及性能测试，需要两台机器 16 张 enflame gcu。
+
+### 模型下载
+
+请联系商务人员开通 [EGC](https://egc.enflame-tech.com/) 权限，并将模型下载到`DeepSeek-R1-W4AFP8_i8_AWQ_REARRAGED`文件夹中。
+
+
+### 使用 DP4-TP4SP4-EP16 并行方案部署模型 - 天河 V2 服务器
+
+#### 性能测试
+
+* 在主节点上执行 **server-1.sh** 脚本，其内容是：
+
+```shell
+set -x
+pkill -9 python
+sleep 5
+rm -rf /root/.cache/vllm/torch_compile_cache/*
+
+dp_master_ip=$1
+pretrained_model=$2
+server_port=8002
+max_model_len=65536
+kv_cache_dtype=fp8
+block_size=64
+dtype=bfloat16
+dp_size=4
+dp_size_local=2
+dp_start_rank=0
+dp_rpc_port=13345
+tp_size=4
+gpu_mem_util=0.9
+max_num_seqs=42
+cuda_graph_sizes="1 2 3 4 5 6 7 8 12 16 20 24 28 32 36 40 42"
+quantization=w4a8
+max_num_batched_tokens=28024
+seed=1234
+
+HOST_IP=$(hostname -I | awk '{print $1}')
+INTERFACE_NAME=$(ifconfig -a | grep -B1 "inet ${HOST_IP}[^0-9]" | head -n 1 | awk '{print $1}' | cut -d: -f1)
+echo ${HOST_IP}
+echo ${INTERFACE_NAME}
+dt=`date +'%Y%m%d%H%M'`
+name=V1Engine-S1
+log_folder="./logs/${name}/${dt}_server-1"
+mkdir -p "$log_folder"
+
+PYTORCH_GCU_ALLOC_CONF=backend:topsMallocAsync \
+TORCH_ECCL_ASYNC_ERROR_HANDLING=0 \
+VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=999999999 \
+VLLM_GCU_RANK_LOG_PATH='./logs/' \
+ECCL_IB_HCA="^=mlx5_16,mlx5_17" \
+GLOO_SOCKET_IFNAME=${INTERFACE_NAME} \
+VLLM_USE_V1=1 \
+VLLM_GCU_ENABLE_SEQUENCE_PARALLEL=1 \
+PYTORCH_EFML_BASED_GCU_CHECK=1 \
+TORCHGCU_INDUCTOR_ENABLE=0 \
+TORCH_ECCL_AVOID_RECORD_STREAMS=1 \
+VLLM_GCU_DEEPSEEK_FUSION=0 \
+"${profiler_args[@]}" \
+vllm serve ${pretrained_model} \
+        --max-model-len ${max_model_len} \
+        --max-seq-len-to-capture ${max_model_len} \
+        --kv-cache-dtype ${kv_cache_dtype} \
+        --block-size ${block_size} \
+        --dtype ${dtype} \
+        --data-parallel-size ${dp_size} \
+        --data-parallel-size-local ${dp_size_local} \
+        --data-parallel-start-rank ${dp_start_rank}  \
+        --data-parallel-address ${dp_master_ip} \
+        --data-parallel-rpc-port ${dp_rpc_port} \
+        --tensor-parallel-size ${tp_size} \
+        --trust-remote-code \
+        --enable-expert-parallel \
+        --gpu-memory-utilization ${gpu_mem_util}  \
+        --compilation_config '{"full_cuda_graph":true}' \
+        --max-num-seqs ${max_num_seqs}  \
+        --cuda-graph-sizes ${cuda_graph_sizes} \
+        --quantization ${quantization} \
+        --max-num-batched-tokens ${max_num_batched_tokens} \
+        --seed ${seed}} \
+        --no-enable-prefix-caching \
+        --port ${server_port} &> ${log_folder}/server.log &
+```
+
+* 在从节点上执行 **server-2.sh**，其内容是：
+
+```shell
+set -x
+pkill -9 python
+sleep 5
+rm -rf /root/.cache/vllm/torch_compile_cache/*
+
+dp_master_ip=$1
+pretrained_model=$2
+max_model_len=65536
+kv_cache_dtype=fp8
+block_size=64
+dtype=bfloat16
+dp_size=4
+dp_size_local=2
+dp_start_rank=2
+dp_rpc_port=13345
+tp_size=4
+gpu_mem_util=0.9
+max_num_seqs=42
+cuda_graph_sizes="1 2 3 4 5 6 7 8 12 16 20 24 28 32 36 40 42"
+quantization=w4a8
+max_num_batched_tokens=28024
+seed=1234
+
+HOST_IP=$(hostname -I | awk '{print $1}')
+INTERFACE_NAME=$(ifconfig -a | grep -B1 "inet ${HOST_IP}[^0-9]" | head -n 1 | awk '{print $1}' | cut -d: -f1)
+echo ${HOST_IP}
+echo ${INTERFACE_NAME}
+dt=`date +'%Y%m%d%H%M'`
+name=V1Engine-S2
+log_folder="./logs/${name}/${dt}_server-2"
+mkdir -p "$log_folder"
+
+PYTORCH_GCU_ALLOC_CONF=backend:topsMallocAsync \
+TORCH_ECCL_ASYNC_ERROR_HANDLING=0 \
+VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=999999999 \
+VLLM_GCU_RANK_LOG_PATH='./logs/' \
+ECCL_IB_HCA="^=mlx5_17,mlx5_16" \
+GLOO_SOCKET_IFNAME=${INTERFACE_NAME} \
+VLLM_USE_V1=1 \
+VLLM_GCU_ENABLE_SEQUENCE_PARALLEL=1 \
+PYTORCH_EFML_BASED_GCU_CHECK=1 \
+TORCHGCU_INDUCTOR_ENABLE=0 \
+TORCH_ECCL_AVOID_RECORD_STREAMS=1 \
+VLLM_GCU_DEEPSEEK_FUSION=0 \
+"${profiler_args[@]}" \
+vllm serve ${pretrained_model} \
+    --headless \
+    --max-model-len ${max_model_len} \
+    --max-seq-len-to-capture ${max_model_len} \
+    --kv-cache-dtype ${kv_cache_dtype} \
+    --block-size ${block_size} \
+    --dtype ${dtype} \
+    --data-parallel-size ${dp_size} \
+    --data-parallel-size-local ${dp_size_local} \
+    --data-parallel-start-rank ${dp_start_rank}  \
+    --data-parallel-address ${dp_master_ip} \
+    --data-parallel-rpc-port ${dp_rpc_port} \
+    --tensor-parallel-size ${tp_size} \
+    --trust-remote-code \
+    --enable-expert-parallel \
+    --gpu-memory-utilization ${gpu_mem_util}  \
+    --compilation_config '{"full_cuda_graph":true}' \
+    --max-num-seqs ${max_num_seqs}  \
+    --cuda-graph-sizes ${cuda_graph_sizes} \
+    --quantization ${quantization} \
+    --seed ${seed}} \
+    --no-enable-prefix-caching \
+    --max-num-batched-tokens ${max_num_batched_tokens}  &> ${log_folder}/server.log &
+```
+* 说明：
+  * 需安装 net-tools 工具
+  * `ECCL_IB_HCA`: 需按每台机器实际 InfiniBand 网卡配置（可通过 ibstatus 命令查看），通过 ECCL_IB_HCA 环境变量指定或排除网卡接口，不同机器设置可能不同。
+    * 例：如果使用 mlx5_16 和 mlx5_17，则设置: export ECCL_IB_HCA="mlx5_16,mlx5_17"
+    * 例：如果不使用 mlx5_16 和 mlx5_17，则设置：export ECCL_IB_HCA="^=mlx5_16,mlx5_17"
+
+
+* **server**启动命令
+```shell
+# 先在主节点上执行：
+bash ./server-1.sh [dp_master_ip] [path of DeepSeek-R1-W4AFP8_i8_AWQ_REARRAGED]
+
+# 再在从节点上执行：
+bash ./server-2.sh [dp_master_ip] [path of DeepSeek-R1-W4AFP8_i8_AWQ_REARRAGED]
+```
+* 说明：
+  * `[dp_master_ip]`: 主节点服务器的 IP
+  * `[path of DeepSeek-R1-W4AFP8_i8_AWQ_REARRAGED]`: 模型路径
+* server 启动成功后，会在`log_folder`路径下的**server.log**文件内输出如下日志：
+```shell
+INFO:     Started server process [xxx]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+```
+
+* client 测试脚本，将下述代码放在**client.sh**文件内
+
+  注：需要安装以下依赖：
+
+```shell
+python3 -m pip install datasets==3.6.0
+```
+
+```shell
+server_ip=$1
+model_name=$2
+global_bs=$3
+input_len=$4
+output_len=$5
+num_prompts=$6
+
+dt=`date +'%Y%m%d%H%M'`
+name="$(date +%m%d)_online"
+
+log_folder="./logs/${name}/${dt}_client"
+mkdir -p "$log_folder"
+server_port=8002
+
+server_url="http://${server_ip}:${server_port}"
+
+vllm bench serve \
+    --model ${model_name} \
+    --dataset-name random \
+    --num-prompts ${num_prompts} \
+    --max-concurrency ${global_bs} \
+    --random-input-len ${input_len} \
+    --random-output-len ${output_len} \
+    --trust-remote-code \
+    --ignore-eos \
+    --base-url ${server_url} \
+    --save-result \
+    --save-detailed \
+    --result-dir ${log_folder} \
+    --percentile-metrics 'ttft,tpot,itl,e2el' \
+    --metric-percentiles "25,50,75,90,99,100" &> ${log_folder}/client.log &
+```
+
+* **client**启动命令：
+```shell
+bash ./client.sh [IP] [path of DeepSeek-R1-W4AFP8_i8_AWQ_REARRAGED] [batch-size] [input-len] [output-len] [num-prompts]
+* 说明：
+  * `[IP]`: 主节点服务器的 IP
+  * `[path of DeepSeek-R1-W4AFP8_i8_AWQ_REARRAGED]`: 模型路径
+  * `[batch-size]`: 模型推理的并发数
+  * `[input-len]`: 输入的token长度
+  * `[output-len]`: 输出的token长度
+  * `[num-prompts]`: 本次推理一共发送的请求总数，建议设置为`[batch-size]`的 2~10 倍
+```
+* client测试成功后，会在`log_folder`路径下的**server.log**文件内输出如下日志：
+```shell
+============ Serving Benchmark Result ============
+Successful requests:                     xxx
+Benchmark duration (s):                  xxx
+Total input tokens:                      xxx
+Total generated tokens:                  xxx
+Request throughput (req/s):              xxx
+Output token throughput (tok/s):         xxx
+Total Token throughput (tok/s):          xxx
+---------------Time to First Token----------------
+Mean TTFT (ms):                          xxx
+Median TTFT (ms):                        xxx
+P25 TTFT (ms):                           xxx
+P50 TTFT (ms):                           xxx
+P75 TTFT (ms):                           xxx
+P90 TTFT (ms):                           xxx
+P99 TTFT (ms):                           xxx
+P100 TTFT (ms):                          xxx
+-----Time per Output Token (excl. 1st token)------
+Mean TPOT (ms):                          xxx
+Median TPOT (ms):                        xxx
+P25 TPOT (ms):                           xxx
+P50 TPOT (ms):                           xxx
+P75 TPOT (ms):                           xxx
+P90 TPOT (ms):                           xxx
+P99 TPOT (ms):                           xxx
+P100 TPOT (ms):                          xxx
+---------------Inter-token Latency----------------
+Mean ITL (ms):                           xxx
+Median ITL (ms):                         xxx
+P25 ITL (ms):                            xxx
+P50 ITL (ms):                            xxx
+P75 ITL (ms):                            xxx
+P90 ITL (ms):                            xxx
+P99 ITL (ms):                            xxx
+P100 ITL (ms):                           xxx
+----------------End-to-end Latency----------------
+Mean E2EL (ms):                          xxx
+Median E2EL (ms):                        xxx
+P25 E2EL (ms):                           xxx
+P50 E2EL (ms):                           xxx
+P75 E2EL (ms):                           xxx
+P90 E2EL (ms):                           xxx
+P99 E2EL (ms):                           xxx
+P100 E2EL (ms):                          xxx
 ==================================================
 ```
