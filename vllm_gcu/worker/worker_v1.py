@@ -10,7 +10,7 @@ from importlib.util import find_spec
 # import vllm.device_allocator
 from vllm.utils import MemorySnapshot, GiB_bytes
 from vllm.model_executor import set_random_seed
-from vllm.distributed.parallel_state import get_pp_group, get_ep_group
+from vllm.distributed.parallel_state import get_pp_group, get_ep_group, prepare_communication_buffer_for_model
 from vllm.config import VllmConfig
 from vllm.v1.core.sched.output import SchedulerOutput
 from vllm.v1.kv_cache_interface import KVCacheConfig
@@ -212,6 +212,10 @@ class GCUModelRunner(GPUModelRunner):
         super().load_model()
         if get_ep_group().world_size == 1:
             prepare_communication_buffer_for_model_noep(self.model)
+        if hasattr(self, "drafter") and hasattr(self.drafter, 'model'):
+            prepare_communication_buffer_for_model(self.drafter.model)
+            if get_ep_group().world_size == 1:
+                prepare_communication_buffer_for_model_noep(self.drafter.model)
 
 
 with patch("vllm.device_allocator", "cumem", gcumem):
