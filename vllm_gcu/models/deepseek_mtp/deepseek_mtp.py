@@ -24,7 +24,7 @@ from vllm.model_executor.models.utils import maybe_prefix
 from vllm.distributed import get_tp_group
 
 import vllm_gcu.envs as gcu_envs
-from vllm_gcu.models.deepseek_v3.deepseek_v3 import DeepseekV2DecoderLayer
+from vllm_gcu.models.deepseek_v3.deepseek_v3 import DeepseekV2DecoderLayer, scatter
 
 
 class SharedHead(nn.Module):
@@ -87,20 +87,20 @@ class DeepSeekMultiTokenPredictorLayer(nn.Module):
         hidden_states = self.eh_proj(
             torch.cat([inputs_embeds, previous_hidden_states], dim=-1))[0]
 
-        actual_seqlen = hidden_states.shape[0]
+        tp_group = get_tp_group()
+        scatter_counts = scatter(hidden_states.shape[0], tp_group.world_size)
 
         hidden_states, residual = self.mtp_block(positions=positions,
                                                  hidden_states=hidden_states,
                                                  residual=None,
-                                                 actual_seqlen=actual_seqlen)
+                                                 scatter_counts=scatter_counts)
         hidden_states = residual + hidden_states
 
         if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
             vllm_config = get_current_vllm_config().parallel_config
             if vllm_config.tensor_parallel_size > 1:
-                hidden_states = get_tp_group().all_gather(hidden_states, dim=0)[
-                    :actual_seqlen
-                ]
+                hidden_states = torch.ops.vllm.all_gather_v(
+                    hidden_states, scatter_counts, tp_group.unique_name)
 
         return hidden_states
 
