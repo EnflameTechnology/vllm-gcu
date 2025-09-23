@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # coding=utf-8
-from functools import wraps
+from functools import wraps, lru_cache
 from contextlib import contextmanager
 
 import sys
@@ -116,6 +116,11 @@ def ep_alltoall_threshold(vllm_config: VllmConfig):
     return threshold
 
 
+@lru_cache(maxsize=8)
+def get_hooks(group: str):
+    return entry_points(group=group)
+
+
 @contextmanager
 def set_gcu_forward_context(
     attn_metadata,
@@ -135,7 +140,7 @@ def set_gcu_forward_context(
         skip_cuda_graphs,
     ) as ctx:
         # invoke hooks
-        discovered_hooks = entry_points(group="vllm_gcu.hooks")
+        discovered_hooks = get_hooks(group="vllm_gcu.hooks")
         if len(discovered_hooks) > 0:
             for hook in discovered_hooks:
                 func = hook.load()
