@@ -977,6 +977,12 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
                 "shared_experts._orig_mod.gate_up_proj.weight_scale_inv",
                 "shared_experts._orig_mod.down_proj.weight",
                 "shared_experts._orig_mod.down_proj.weight_scale_inv",
+                "w13_scales",
+                "w2_scales",
+                "w13_input_scale",
+                "w2_input_scale",
+                "w13_input_scale_rec",
+                "w2_input_scale_rec",
             }
 
             return [

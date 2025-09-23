@@ -12,6 +12,7 @@ from vllm.model_executor.layers.linear import (LinearBase,
 from vllm.model_executor.layers.quantization.base_config import (
     QuantizationConfig, QuantizeMethodBase)
 from vllm.model_executor.utils import set_weight_attrs
+from vllm.model_executor.layers.quantization.fp8 import Fp8MoEMethod
 
 from vllm_gcu.kernels.quantization.utils import (
     register_gcu_quantization_config,
@@ -115,7 +116,7 @@ def is_layer_skipped_quant(prefix: str, modules_to_not_convert: List[str]):
 
 
 @register_weight_loader_v2_supported
-class MoeW4A8Method(FusedMoEMethodBase):
+class MoeW4A8Method(Fp8MoEMethod):
     """Linear method for MOE W4A8-fp8 quantization.
 
     Args:
