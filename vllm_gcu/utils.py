@@ -17,7 +17,6 @@ if sys.version_info < (3, 10):
 else:
     from importlib.metadata import entry_points
 
-
 STR_DTYPE_TO_TORCH_DTYPE = {
     "half": torch.half,
     "bfloat16": torch.bfloat16,
@@ -46,10 +45,12 @@ except Exception:
             return torch_version >= version.parse(target)
         except Exception:
             # Fallback to PKG-INFO to load the package info, needed by the doc gen.
-            return Version(importlib.metadata.version("torch")) >= Version(target)
+            return Version(
+                importlib.metadata.version("torch")) >= Version(target)
 
 
 def dump_memory_snapshot_when_exception(name):
+
     def inner(func):
         import vllm_gcu.envs as gcu_envs
 
@@ -63,11 +64,8 @@ def dump_memory_snapshot_when_exception(name):
         @wraps(func)
         def _wrapper(*args, **kwargs):
             nonlocal step
-            rank = (
-                torch.distributed.get_rank()
-                if torch.distributed.is_initialized()
-                else 0
-            )
+            rank = (torch.distributed.get_rank()
+                    if torch.distributed.is_initialized() else 0)
             try:
                 r = func(*args, **kwargs)
             except Exception as err:
@@ -118,7 +116,13 @@ def ep_alltoall_threshold(vllm_config: VllmConfig):
 
 @lru_cache(maxsize=8)
 def get_hooks(group: str):
-    return entry_points(group=group)
+    hooks = entry_points(group=group)
+    allowed_hooks = gcu_envs.VLLM_GCU_HOOKS
+
+    if allowed_hooks is not None:
+        hooks = list(filter(lambda hook: hook.name in allowed_hooks, hooks))
+
+    return hooks
 
 
 @contextmanager
@@ -132,19 +136,20 @@ def set_gcu_forward_context(
     is_dummy=False,
 ):
     with set_forward_context(
-        attn_metadata,
-        vllm_config,
-        virtual_engine,
-        num_tokens,
-        num_tokens_across_dp,
-        skip_cuda_graphs,
+            attn_metadata,
+            vllm_config,
+            virtual_engine,
+            num_tokens,
+            num_tokens_across_dp,
+            skip_cuda_graphs,
     ) as ctx:
         # invoke hooks
         discovered_hooks = get_hooks(group="vllm_gcu.hooks")
         if len(discovered_hooks) > 0:
             for hook in discovered_hooks:
                 func = hook.load()
-                func(attn_metadata, vllm_config, num_tokens, num_tokens_across_dp, is_dummy)
+                func(attn_metadata, vllm_config, num_tokens,
+                     num_tokens_across_dp, is_dummy)
 
         forward_context = get_forward_context()
         threshold = ep_alltoall_threshold(vllm_config)
@@ -153,7 +158,7 @@ def set_gcu_forward_context(
             total_tokens = dp_metadata.cu_tokens_across_dp_cpu[-1].item()
         else:
             if attn_metadata is not None and hasattr(attn_metadata,
-                                                 "num_prefill_tokens"):
+                                                     "num_prefill_tokens"):
                 # for v0 attention backends
                 total_tokens = attn_metadata.num_prefill_tokens + \
                     attn_metadata.num_decode_tokens
@@ -165,7 +170,8 @@ def set_gcu_forward_context(
                 total_tokens = num_tokens or 0
         use_all2all_v = total_tokens <= threshold
         forward_context.skip_cuda_graphs |= not use_all2all_v
-        setattr(forward_context, "all2allv_threshold", None if not use_all2all_v else threshold)
+        setattr(forward_context, "all2allv_threshold",
+                None if not use_all2all_v else threshold)
 
         try:
             yield ctx
@@ -174,7 +180,8 @@ def set_gcu_forward_context(
                 delattr(forward_context, "all2allv_threshold")
 
 
-def prepare_communication_buffer_for_model_noep(model: torch.nn.Module) -> None:
+def prepare_communication_buffer_for_model_noep(
+        model: torch.nn.Module) -> None:
     """
     Prepare the communication buffer for the model.
     """
