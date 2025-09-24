@@ -111,7 +111,7 @@ def reduce_scatter_v(inp: torch.Tensor, scatter_counts: list[int],
     group = _groups[group_name]()
     if group is None:
         raise ValueError(f"Group {group_name} is destroyed.")
-    output_size = (scatter_counts[group.local_rank], ) + inp.size()[1:]
+    output_size = (scatter_counts[group.rank_in_group], ) + inp.size()[1:]
     output = torch.empty(output_size, dtype=inp.dtype, device=inp.device)
     torch_gcu.distributed.reduce_scatter_tensor_v(output,
                                                   inp,
@@ -126,7 +126,7 @@ def reduce_scatter_v_fake(inp: torch.Tensor, scatter_counts: list[int],
     group = _groups[group_name]()
     if group is None:
         raise ValueError(f"Group {group_name} is destroyed.")
-    output_size = (scatter_counts[group.local_rank], ) + inp.size()[1:]
+    output_size = (scatter_counts[group.rank_in_group], ) + inp.size()[1:]
     output = torch.empty(output_size, dtype=inp.dtype, device=inp.device)
     return output
 
