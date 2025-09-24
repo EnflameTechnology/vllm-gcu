@@ -104,13 +104,11 @@ class GCUPlatform(Platform):
         return "vllm_gcu.attention.backends.xformers.GCUXFormersBackend"
 
     @classmethod
-    @lru_cache(maxsize=8)
     def get_device_capability(cls, device_id: int = 0) -> DeviceCapability:
         major, minor = torch.gcu.get_device_capability(device_id)
         return DeviceCapability(major=major + 10, minor=minor)
 
     @classmethod
-    @lru_cache(maxsize=8)
     def has_device_capability(
         cls, capability: Union[Tuple[int, int], int], device_id: int = 0
     ) -> bool:
