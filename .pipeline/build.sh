@@ -3,7 +3,7 @@
 #
 set -eu -o pipefail
 BUILD_ROOT_DIR=`pwd`
-export TORCH_VERSION=2.7.0
+export TORCH_VERSION=2.8.0
 
 function arm_normal_build() {
   echo "Current build job: $FUNCNAME"

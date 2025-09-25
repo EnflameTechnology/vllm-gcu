@@ -24,12 +24,12 @@ python3 -m pip list | grep torchvision
 ```
 如果已经正常安装，在`x86_64`架构下可以显示如下内容：
 ```
-vllm_gcu                          0.9.2+<version>
-vllm                              0.9.2
+vllm_gcu                          0.10.2+<version>
+vllm                              0.10.2
 xformers                          <version>
 tops-extension                    <version>
-torch-gcu                         2.7.0+<version>
-torch                             2.7.0+cpu
+torch-gcu                         2.8.0+<version>
+torch                             2.8.0+cpu
 torchvision                       0.22.0+cpu
 ```
 如果未安装，可以通过以下两种安装方式完成vllm安装：
@@ -40,13 +40,13 @@ torchvision                       0.22.0+cpu
 * 通过whl包安装：
 ```shell
 # 安装vllm_gcu的依赖库
-python3 -m pip install vllm==0.9.2
-python3 -m pip install torch==2.7.0+cpu -i https://download.pytorch.org/whl/cpu
+python3 -m pip install vllm==0.10.2
+python3 -m pip install torch==2.8.0+cpu -i https://download.pytorch.org/whl/cpu
 python3 -m pip install torchvision==0.22.0 -i https://download.pytorch.org/whl/cpu
-python3 -m pip install torch_gcu-2.7.0+<version>*.whl
+python3 -m pip install torch_gcu-2.8.0+<version>*.whl
 python3 -m pip install tops_extension-<version>*.whl
 python3 -m pip install xformers-<version>*.whl
 
 # 安装vllm_gcu库
-python3 -m pip install vllm_gcu-0.9.2+<version>*.whl
+python3 -m pip install vllm_gcu-0.10.2+<version>*.whl
 ```

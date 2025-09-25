@@ -139,7 +139,7 @@ include(${PROJECT_SOURCE_DIR}/cmake/2nd/caps_version.cmake)
 include(caps_binary)
 set(TOPSRT_HOME "${runtime_install_usr_dir_for_run}")
 message(STATUS "TOPSRT_HOME : ${TOPSRT_HOME}")
-set(BUILD_TORCH_VERSION "2.7.0")
+set(BUILD_TORCH_VERSION "2.8.0")
 
 set(CMAKE_FPKG_PYTHON_PACKAGES python_packages)
 set(CMAKE_FPKG_LIBDIR lib)
@@ -156,8 +156,8 @@ set(PACKAGE_LIB_FILES "${CMAKE_FPKG_LIBDIR}//FILE/")
 # ######################################################
 set(TOPS_EXTENSION_PATH ${MODULE_PACKAGE_PATH}/tops_extension)
 set(TOPS_EXTENSION_BRANCH master)
-set(TOPS_EXTENSION_COMMITID 473e1b7)
-set(TOPS_EXTENSION_DAILY_TAG 3.2.20250917)
+set(TOPS_EXTENSION_COMMITID 5c0f34b)
+set(TOPS_EXTENSION_DAILY_TAG 3.2.20250925)
 set(TOPS_EXTENSION_PY_VERS 310 312)
 set(TOPS_EXTENSION_SEMI_NAME "")
 foreach(TOPS_EXTENSION_PY_VER IN LISTS TOPS_EXTENSION_PY_VERS)
@@ -278,53 +278,10 @@ foreach(TORCH_GCU_PY_VER IN LISTS TORCH_GCU_PY_VERS)
     endif()
 endforeach()
 
-# ######################################################
-# ###################  XFORMERS  #######################
-# ######################################################
-set(XFORMERS_PATH ${MODULE_PACKAGE_PATH}/xformers)
-set(XFORMERS_COMMITID c81f58c)
-set(XFORMERS_BRANCH 0.0.30)
-set(XFORMERS_DAILY_TAG 0.0.30+torch.2.7.0.gcu.3.2.20250721)
-set(XFORMERS_PY_VERS 310 312)
-set(XFORMERS_SEMI_NAME "")
-if( ${CMAKE_SYSTEM_PROCESSOR} STREQUAL "x86_64")
-  foreach(XFORMERS_PY_VER IN LISTS XFORMERS_PY_VERS)
-      unset(XFORMERS_${XFORMERS_PY_VER}_LINK)
-      if(PREBUILD_XFORMERS_XNAS_BASE)
-          link_pattern_var("${PREBUILD_XFORMERS_XNAS_BASE}"
-              VARS
-                  XFORMERS_${XFORMERS_PY_VER}_LINK
-              PATTERNS
-                  "xformers-.*-cp${XFORMERS_PY_VER}-cp${XFORMERS_PY_VER}-linux_${CMAKE_SYSTEM_PROCESSOR}.whl"
-          )
-          message(STATUS "XFORMERS_${XFORMERS_PY_VER}_LINK: ${XFORMERS_${XFORMERS_PY_VER}_LINK}, XFORMERS_TEST_LINK: ${XFORMERS_TEST_LINK}")
-          if(NOT XFORMERS_${XFORMERS_PY_VER}_LINK)
-              message(WARNING "Can not find some links from ${PREBUILD_XFORMERS_XNAS_BASE}")
-          endif()
-      endif()
-      set(xformers_${XFORMERS_PY_VER}_link "${XFORMERS_COMMITID}/xformers${XFORMERS_SEMI_NAME}-${XFORMERS_DAILY_TAG}-cp${XFORMERS_PY_VER}-cp${XFORMERS_PY_VER}-linux_${CMAKE_SYSTEM_PROCESSOR}.whl")
-      if(NOT XFORMERS_${XFORMERS_PY_VER}_LINK)
-          set(XFORMERS_${XFORMERS_PY_VER}_LINK ${XFORMERS_PATH}/${xformers_${XFORMERS_PY_VER}_link})
-      endif()
-
-      if (NOT PROJECT_GIT_URL)
-          fetchFromArtifactory(xformers_${XFORMERS_PY_VER}_whl
-              FILE ${XFORMERS_${XFORMERS_PY_VER}_LINK}
-              PKG_COMMNAD ${PACKAGE_PYTHON_CMDS}
-              PKG_FILES ${PACKAGE_PYTHON_FILES}
-              BRANCH ${XFORMERS_BRANCH}
-              VERSION ${XFORMERS_DAILY_TAG}
-              PKG_ONLY ON
-          )
-      else()
-          message("--- don't download xformers for zx build---")
-      endif()
-  endforeach()
-endif()
 if(NOT PROJECT_GIT_URL)
     include(${PROJECT_SOURCE_DIR}/cmake/2nd/topsgraph_version.cmake)
     include(${PROJECT_SOURCE_DIR}/cmake/2nd/pcals_version.cmake)
-    include(${PROJECT_SOURCE_DIR}/cmake/2nd/flash_attnention_version.cmake)
+    #include(${PROJECT_SOURCE_DIR}/cmake/2nd/flash_attnention_version.cmake)
 
     # set(PREBUILD_XNAS_SDK_BASE "http://artifact.enflame.cn/artifactory/module_package/topsfactor/13ee374/")
     set(PREBUILD_FACTOR_COMMIT a2916e9)

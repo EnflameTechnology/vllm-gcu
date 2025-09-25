@@ -2,14 +2,14 @@
   "torch2.5.1_all":{
     "dependences" : [ "all_default", "torch_gcu270" ],
     "framework":{
-        "torch":"2.7.0"
+        "torch":"2.8.0"
     }
   },
   "all_default" :
   {"pre_special_cmd" : [
       {
-          "name" : "vllm 0.9.2",
-          "install" : "sudo python -m pip install vllm==0.9.2",
+          "name" : "vllm 0.10.2",
+          "install" : "sudo python -m pip install vllm==0.10.2",
           "uninstall" : "sudo python -m pip uninstall vllm -y || true"
       }
     ],
@@ -62,8 +62,8 @@
   {
     "whl" :
     {
-      "3.10" : ["torch-gcu==2.7.0"],
-      "3.9" : ["torch-gcu==2.7.0"]
+      "3.10" : ["torch-gcu==2.8.0"],
+      "3.9" : ["torch-gcu==2.8.0"]
     }
   },
   "runtime" :
