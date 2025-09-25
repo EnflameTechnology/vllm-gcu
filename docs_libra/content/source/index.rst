@@ -18,6 +18,7 @@ vLLM-gcu是适配于燧原S60 gcu的vLLM，用于支持在Enflame gcu上运行�
    :caption: 目录
 
    statement
+   vllm_gcu_cn_header
    introduction/index
    install/index
    usage/index

@@ -1,7 +1,7 @@
 # deepseek
 
 ## DeepSeek-R1
-本模型推理及性能测试，需要16张enflame gcu。
+本模型推理及性能测试，需要16张enflame gcu及vllm-0.9.2版本。
 
 ### 模型下载
 *  url: [DeepSeek-R1](https://huggingface.co/deepseek-ai/DeepSeek-R1/tree/main)
@@ -13,7 +13,7 @@
 将上述url设定的路径下的内容全部下载到`DeepSeek-R1`文件夹中。
 
 
-### 使用DP+TP+SP+EP的并行方案部署模型 - 天河V3服务器（16卡）
+### 使用 DP4-TP4SP4-EP16 并行方案部署模型 - 天河 V3 服务器
 
 #### 性能测试
 
@@ -155,7 +155,7 @@ bash ./client.sh [IP] [path of DeepSeek-R1] [batch-size] [input-len] [output-len
   * `[output-len]`: 输出的token长度
   * `[num-prompts]`: 本次推理一共发送的请求总数，建议设置为`[batch-size]`的2~10倍
 ```
-* client测试成功后，会在`log_folder`路径下的**server.log**文件内输出如下日志：
+* client测试成功后，会在`log_folder`路径下的**client.log**文件内输出如下日志：
 ```shell
 ============ Serving Benchmark Result ============
 Successful requests:                     xxx
@@ -206,11 +206,11 @@ P100 E2EL (ms):                          xxx
 
 ## DeepSeek-R1-W4AFP8_i8_AWQ_REARRAGED
 
-本模型推理及性能测试，需要两台机器 16 张 enflame gcu。
+本模型推理及性能测试，需要两台机器共 16 张 enflame gcu及vllm-0.9.2版本。
 
 ### 模型下载
 
-请联系商务人员开通 [EGC](https://egc.enflame-tech.com/) 权限，并将模型下载到`DeepSeek-R1-W4AFP8_i8_AWQ_REARRAGED`文件夹中。
+将模型下载到`DeepSeek-R1-W4AFP8_i8_AWQ_REARRAGED`文件夹中。
 
 
 ### 使用 DP4-TP4SP4-EP16 并行方案部署模型 - 天河 V2 服务器
@@ -365,9 +365,9 @@ vllm serve ${pretrained_model} \
 ```
 * 说明：
   * 需安装 net-tools 工具
-  * `ECCL_IB_HCA`: 需按每台机器实际 InfiniBand 网卡配置（可通过 ibstatus 命令查看），通过 ECCL_IB_HCA 环境变量指定或排除网卡接口，不同机器设置可能不同。
-    * 例：如果使用 mlx5_16 和 mlx5_17，则设置: export ECCL_IB_HCA="mlx5_16,mlx5_17"
-    * 例：如果不使用 mlx5_16 和 mlx5_17，则设置：export ECCL_IB_HCA="^=mlx5_16,mlx5_17"
+  * `ECCL_IB_HCA`: 需按每台机器实际 InfiniBand 网卡配置（可通过 ibstatus 命令查看），通过 ECCL_IB_HCA 环境变量指定或排除网卡，不同机器设置可能不同。
+    * 例：如果使用 mlx5_16 和 mlx5_17 网卡，则可这样设置环境变量: `export ECCL_IB_HCA="mlx5_16,mlx5_17"`
+    * 例：如果不使用 mlx5_16 和 mlx5_17 网卡，则可这样设置环境变量: `export ECCL_IB_HCA="^=mlx5_16,mlx5_17"`
 
 
 * **server**启动命令
@@ -381,7 +381,7 @@ bash ./server-2.sh [dp_master_ip] [path of DeepSeek-R1-W4AFP8_i8_AWQ_REARRAGED]
 * 说明：
   * `[dp_master_ip]`: 主节点服务器的 IP
   * `[path of DeepSeek-R1-W4AFP8_i8_AWQ_REARRAGED]`: 模型路径
-* server 启动成功后，会在`log_folder`路径下的**server.log**文件内输出如下日志：
+* server 启动成功后，会在主节点`log_folder`路径下的**server.log**文件内输出如下日志：
 ```shell
 INFO:     Started server process [xxx]
 INFO:     Waiting for application startup.
@@ -441,7 +441,7 @@ bash ./client.sh [IP] [path of DeepSeek-R1-W4AFP8_i8_AWQ_REARRAGED] [batch-size]
   * `[output-len]`: 输出的token长度
   * `[num-prompts]`: 本次推理一共发送的请求总数，建议设置为`[batch-size]`的 2~10 倍
 ```
-* client测试成功后，会在`log_folder`路径下的**server.log**文件内输出如下日志：
+* client测试成功后，会在 client 的`log_folder`路径下的**client.log**文件内输出如下日志：
 ```shell
 ============ Serving Benchmark Result ============
 Successful requests:                     xxx
