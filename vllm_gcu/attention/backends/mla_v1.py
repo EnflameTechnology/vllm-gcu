@@ -148,7 +148,7 @@ class GCUMLAImpl(MLACommonImpl[GCUMLAMetadata]):
         B = ql_nope.shape[0]
 
         q = torch.cat([ql_nope, q_pe], dim=-1)
-        o = torch.zeros(
+        o = torch.empty(
             B, self.num_heads, self.kv_lora_rank, dtype=q.dtype, device=q.device
         )
 

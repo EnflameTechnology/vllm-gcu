@@ -64,13 +64,18 @@ class GCUMLAFusionImpl(GCUMLAImpl):
         self.W_UV = self.W_UV.contiguous()
         self.W_UK_T = self.W_UK_T.contiguous()
 
-    def _v_up_proj(self, x):
+    def _v_up_proj(self, x, out=None):
         B = x.shape[0]
         x = x.view(-1, self.num_heads, self.kv_lora_rank)
         # Multiply (B, N, L) x (N, L, V) -> (B, N, V)
-        out = torch.empty((B, self.num_heads, self.W_UV.shape[-1]),
-                          device=x.device,
-                          dtype=x.dtype)
+        out_shape = (B, self.num_heads, self.W_UV.shape[-1])
+        if out is None:
+            out = torch.empty(out_shape, device=x.device, dtype=x.dtype)
+        else:
+            out = out.reshape(out_shape)
+
+        # Multiply (N, B, L) x (N, L, V) -> (N, B, V)
+        # maybe linear_copy when B is not contiguous
         torch.bmm(x.transpose(0, 1), self.W_UV, out=out.transpose(0, 1))
         # Convert from (B, N, V) to (B, N * V)
         return out.view(-1, self.num_heads * self.v_head_dim)
@@ -184,8 +189,7 @@ class GCUMLAFusionImpl(GCUMLAImpl):
                 attn_metadata)
 
         if has_decode:
-            output[:num_decode_tokens] = self._forward_decode(
-                decode_q_concat, kv_cache, attn_metadata, layer._k_scale_float)
+            _ = self._forward_decode(decode_q_concat, kv_cache, attn_metadata, layer._k_scale_float, output[:num_decode_tokens])
 
         return output_padded
 
@@ -194,7 +198,8 @@ class GCUMLAFusionImpl(GCUMLAImpl):
         decode_q_concat: torch.Tensor,
         kv_c_and_k_pe_cache: torch.Tensor,
         attn_metadata: GCUMLAMetadata,
-        k_scale: float
+        k_scale: float,
+        decode_output: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         assert kv_c_and_k_pe_cache.numel() > 0
         # if self.kv_cache_dtype.startswith("fp8"):
@@ -206,7 +211,7 @@ class GCUMLAFusionImpl(GCUMLAImpl):
         B = decode_q_concat.shape[0]
 
         q = decode_q_concat
-        o = torch.zeros(B,
+        o = torch.empty(B,
                         self.num_heads,
                         self.kv_lora_rank,
                         dtype=q.dtype,
@@ -233,4 +238,4 @@ class GCUMLAFusionImpl(GCUMLAImpl):
             query_scales=q_scale
         )
 
-        return self._v_up_proj(o)
+        return self._v_up_proj(o, out=decode_output)
