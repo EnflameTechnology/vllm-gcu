@@ -426,7 +426,9 @@ class DeepseekV2Attention(nn.Module):
         self,
         positions: torch.Tensor,
         hidden_states: torch.Tensor,
+        actual_seqlen = None,
     ) -> torch.Tensor:
+        assert actual_seqlen is None
         if self.q_lora_rank is not None:
             q = self.q_a_proj(hidden_states)[0]
             q = self.q_a_layernorm(q)
@@ -601,13 +603,15 @@ class DeepseekV2MLAAttention(nn.Module):
         )
 
         self.prefix = prefix
-        self.debug_layer_idx = int(self.prefix.split(".")[-2])
 
     def forward(
         self,
         positions: torch.Tensor,
         hidden_states: torch.Tensor,
+        actual_seqlen = None,
     ) -> torch.Tensor:
+        if actual_seqlen is not None:
+            hidden_states = sp_to_tp(hidden_states, actual_seqlen)
         if self.q_lora_rank is not None:
             q_c = self.q_a_proj(hidden_states)[0]
             q_c = self.q_a_layernorm(q_c)
@@ -734,12 +738,12 @@ class DeepseekV2DecoderLayer(nn.Module):
             # add mtp layer
             if self.layer_idx % self.config.num_hidden_layers == 0:
                 residual = slice_tensor_sp(residual, actual_seqlen)
-            else:
-                hidden_states = sp_to_tp(hidden_states, actual_seqlen)
 
         hidden_states = self.self_attn(
             positions=positions,
             hidden_states=hidden_states,
+            actual_seqlen=actual_seqlen if self.layer_idx %
+            self.config.num_hidden_layers != 0 else None,
         )
 
         if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
