@@ -65,13 +65,18 @@ class GCUMLAFusionImpl(GCUMLAImpl):
         self.W_UV = self.W_UV.contiguous()
         self.W_UK_T = self.W_UK_T.contiguous()
 
-    def _v_up_proj(self, x):
+    def _v_up_proj(self, x, out=None):
         B = x.shape[0]
         x = x.view(-1, self.num_heads, self.kv_lora_rank)
         # Multiply (B, N, L) x (N, L, V) -> (B, N, V)
-        out = torch.empty((B, self.num_heads, self.W_UV.shape[-1]),
-                          device=x.device,
-                          dtype=x.dtype)
+        out_shape = (B, self.num_heads, self.W_UV.shape[-1])
+        if out is None:
+            out = torch.empty(out_shape, device=x.device, dtype=x.dtype)
+        else:
+            out = out.reshape(out_shape)
+
+        # Multiply (N, B, L) x (N, L, V) -> (N, B, V)
+        # maybe linear_copy when B is not contiguous
         torch.bmm(x.transpose(0, 1), self.W_UV, out=out.transpose(0, 1))
         # Convert from (B, N, V) to (B, N * V)
         return out.view(-1, self.num_heads * self.v_head_dim)
@@ -203,6 +208,6 @@ class GCUMLAFusionImpl(GCUMLAImpl):
                 attn_out = cp_lse_ag_out_rs(attn_out, lse, get_dcp_group())
 
             # v_up projection
-            output[:num_decode_tokens] = self._v_up_proj(attn_out)
+            self._v_up_proj(attn_out, out=output[:num_decode_tokens])
 
         return output_padded
