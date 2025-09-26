@@ -82,13 +82,9 @@ from vllm.sequence import IntermediateTensors, SequenceData
 
 import vllm_gcu.envs as gcu_envs
 import vllm_gcu.distributed.parallel_state  # noqa
+from vllm_gcu.utils import scatter
 from vllm_gcu.kernels.linear import MergedReplicatedLinear, CustomMergedColumnParallelLinear
 from vllm_gcu.models.deepseek_v3.deepseek_v3_fusion import DeepseekV2MLAAttentionFusion
-
-
-def scatter(seqlen, size):
-    indices = list(range(size))
-    return [(seqlen + indices[i]) // size - indices[i] // size for i in range(size)]
 
 
 def custom_pass(graph: torch.fx.Graph) -> torch.fx.Graph:

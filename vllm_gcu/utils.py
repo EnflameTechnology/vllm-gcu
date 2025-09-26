@@ -193,3 +193,8 @@ def prepare_communication_buffer_for_model_noep(
     for module in moe_modules:
         module.quant_method.init_prepare_finalize(module.moe_config,
                                                   module.quant_config)
+
+
+def scatter(seqlen, size):
+    indices = list(range(size))
+    return [(seqlen + indices[i]) // size - indices[i] // size for i in range(size)]
