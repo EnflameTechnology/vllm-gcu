@@ -53,11 +53,9 @@ class MoEPrepareAndFinalizeNoEP(FusedMoEPrepareAndFinalize):
         expert_map: Optional[torch.Tensor],
         apply_router_weight_on_input: bool,
         quant_config: FusedMoEQuantConfig,
-        output: Optional[torch.Tensor] = None,
     ) -> tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor],
                Optional[torch.Tensor], Optional[torch.Tensor]]:
         assert not apply_router_weight_on_input
-        assert output is not None
 
         a1q, a1q_scale = moe_kernel_quantize_input(
             a1, a1_scale, quant_config.quant_dtype,
@@ -69,15 +67,11 @@ class MoEPrepareAndFinalizeNoEP(FusedMoEPrepareAndFinalize):
             dtype=torch.int32,
             device=a1.device,
         )
-        # NOTE: output maybe inplace with a1/hidden_states,
-        # DO NOT use them after this
+        shared_output = None
         if self.shared_experts is not None:
             shared_output = self.shared_experts(a1)
-            output.copy_(shared_output)
-        else:
-            output.fill_(0)
 
-        return a1q, a1q_scale, total_tokens, topk_ids, topk_weights
+        return a1q, a1q_scale, total_tokens, topk_ids, topk_weights, shared_output
 
     def finalize(
         self,
@@ -242,7 +236,6 @@ class AlltoAllStaticShape(AlltoAllPrepareAndFinalize):
         expert_map: Optional[torch.Tensor],
         apply_router_weight_on_input: bool,
         quant_config: FusedMoEQuantConfig,
-        output: Optional[torch.Tensor] = None,
     ) -> tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor],
                Optional[torch.Tensor], Optional[torch.Tensor]]:
         """
@@ -269,7 +262,6 @@ class AlltoAllStaticShape(AlltoAllPrepareAndFinalize):
         - Optional dispatched expert topk weight
         """
         assert not apply_router_weight_on_input
-        assert output is not None
         log2phy = None
         hidden_states = a1
         hidden_states_ori = hidden_states
@@ -323,8 +315,8 @@ class AlltoAllStaticShape(AlltoAllPrepareAndFinalize):
                 flag=1,
                 async_op=enable_parallel_compute,
             )
-            # NOTE: output maybe inplace with a1/hidden_states,
-            # DO NOT use them after this
+
+            shared_output = None
             if self.shared_experts is not None and hidden_states_ori.shape[
                     0] > 0:
                 if a1_scale is not None and not input_static_quant:
@@ -332,9 +324,7 @@ class AlltoAllStaticShape(AlltoAllPrepareAndFinalize):
                         hidden_states, a1_scale)
                 else:
                     shared_output = self.shared_experts(hidden_states_ori)
-                output.copy_(shared_output)
-            else:
-                output.fill_(0)
+
             if enable_parallel_compute:
                 work.wait()
 
@@ -350,7 +340,7 @@ class AlltoAllStaticShape(AlltoAllPrepareAndFinalize):
         self.ep_split_size = ep_split_size
         self.sp_split_size = sp_split_size
 
-        return hidden_states, a1_scale, recv_token_total, topk_ids, topk_weights
+        return hidden_states, a1_scale, recv_token_total, topk_ids, topk_weights, shared_output
 
     def finalize(
         self,
@@ -371,6 +361,7 @@ class AlltoAllStaticShape(AlltoAllPrepareAndFinalize):
         - apply_router_weight_on_input: When False, apply the weights to
           fused_expert_output.
         """
+        # NOTE: we assume output is shared_output or zeros out
 
         sp_hidden_states = torch.zeros(
             (self.ep_token_indices.shape[0], fused_expert_output.shape[1]),
@@ -419,7 +410,6 @@ class AlltoAllDynamicShape(AlltoAllPrepareAndFinalize):
         expert_map: Optional[torch.Tensor],
         apply_router_weight_on_input: bool,
         quant_config: FusedMoEQuantConfig,
-        output: Optional[torch.Tensor] = None,
     ) -> tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor],
                Optional[torch.Tensor], Optional[torch.Tensor]]:
         """
@@ -446,7 +436,6 @@ class AlltoAllDynamicShape(AlltoAllPrepareAndFinalize):
         - Optional dispatched expert topk weight
         """
         assert not apply_router_weight_on_input
-        assert output is not None
         log2phy = None
         hidden_states = a1
         hidden_states_ori = hidden_states
@@ -507,17 +496,15 @@ class AlltoAllDynamicShape(AlltoAllPrepareAndFinalize):
                 group=self.ep_group,
                 async_op=enable_parallel_compute,
             )
-            # NOTE: output maybe inplace with a1/hidden_states,
-            # DO NOT use them after this
+
+            shared_output = None
             if self.shared_experts is not None:
                 if a1_scale is not None and not input_static_quant:
                     shared_output = self.shared_experts(
                         hidden_states, a1_scale)
                 else:
                     shared_output = self.shared_experts(hidden_states_ori)
-                output.copy_(shared_output)
-            else:
-                output.fill_(0)
+
             if enable_parallel_compute:
                 work.wait()
 
@@ -531,7 +518,7 @@ class AlltoAllDynamicShape(AlltoAllPrepareAndFinalize):
         self.ep_split_size = ep_split_size
         self.sp_split_size = sp_split_size
 
-        return hidden_states, a1_scale, recv_token_total, topk_ids, topk_weights
+        return hidden_states, a1_scale, recv_token_total, topk_ids, topk_weights, shared_output
 
     def finalize(
         self,
@@ -552,6 +539,7 @@ class AlltoAllDynamicShape(AlltoAllPrepareAndFinalize):
         - apply_router_weight_on_input: When False, apply the weights to
           fused_expert_output.
         """
+        # NOTE: we assume output is shared_output or zeros out
         sp_hidden_states = torch.zeros(
             (self.ep_token_indices.shape[0], fused_expert_output.shape[1]),
             dtype=fused_expert_output.dtype,

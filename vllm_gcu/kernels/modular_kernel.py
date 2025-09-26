@@ -128,15 +128,13 @@ class FusedMoEModularKernel(torch.nn.Module):
             topk_ids = torch.remainder(topk_ids, global_num_experts)
 
         a1 = hidden_states
-        # NOTE: output will be filled zeros or shared output in prepare
-        output = a1 if inplace else torch.empty_like(a1)
 
         local_num_experts = w1.size(0)
         if global_num_experts == -1:
             global_num_experts = local_num_experts
 
         (a1q, a1q_scale, expert_num_tokens, _expert_topk_ids,
-         _expert_topk_weights) = self.prepare_finalize.prepare(
+         _expert_topk_weights, shared_output) = self.prepare_finalize.prepare(
              a1,
              a1_scale,
              a2_scale,
@@ -146,8 +144,11 @@ class FusedMoEModularKernel(torch.nn.Module):
              expert_map,
              apply_router_weight_on_input,
              self.fused_experts.quant_config,
-             output,
          )
+        if shared_output is not None:
+            output = a1.copy_(shared_output) if inplace else shared_output
+        else:
+            output = a1.fill_(0) if inplace else torch.zeros_like(a1)
 
         # Maybe prepare gathered topk_ids and topk_weights from other EP ranks.
         topk_ids = topk_ids if _expert_topk_ids is None else _expert_topk_ids
@@ -224,8 +225,8 @@ class FusedMoEModularKernel(torch.nn.Module):
                     expert_num_tokens=expert_num_tokens,
                     apply_router_weight_on_input=
                     apply_router_weight_on_input,  # vllm_gcu added
-                    a1q_scale_rec=a1_scale_rec,   # vllm_gcu for w4a8
-                    a2_scale_rec=a2_scale_rec,   # vllm_gcu for w4a8
+                    a1q_scale_rec=a1_scale_rec,  # vllm_gcu for w4a8
+                    a2_scale_rec=a2_scale_rec,  # vllm_gcu for w4a8
                 )
             else:
                 # The leading output dimension may not be equal to M, so
@@ -284,8 +285,8 @@ class FusedMoEModularKernel(torch.nn.Module):
                         expert_num_tokens=valid_in_chunk,
                         apply_router_weight_on_input=
                         apply_router_weight_on_input,
-                        a1q_scale_rec=a1_scale_rec,   # vllm_gcu for w4a8
-                        a2_scale_rec=a2_scale_rec,   # vllm_gcu for w4a8
+                        a1q_scale_rec=a1_scale_rec,  # vllm_gcu for w4a8
+                        a2_scale_rec=a2_scale_rec,  # vllm_gcu for w4a8
                     )
 
         self.prepare_finalize.finalize(output, fused_out, topk_weights,
