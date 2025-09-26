@@ -452,7 +452,7 @@ class MoeW4A8Method(Fp8MoEMethod):
             w2=layer.w2_qweight,
             topk_weights=topk_weights,
             topk_ids=topk_ids,
-            inplace=True,
+            inplace=False,
             activation=activation,
             global_num_experts=global_num_experts,
             expert_map=expert_map,
