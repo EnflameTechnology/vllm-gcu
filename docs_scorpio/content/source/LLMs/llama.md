@@ -58,7 +58,8 @@ python3 -m vllm_utils.benchmark_test --perf \
  --dtype=bfloat16 \
  --device gcu \
  --tensor-parallel-size 1 \
- --gpu-memory-utilization 0.9
+ --gpu-memory-utilization 0.9 \
+ --disable-async-output-proc
 ```
 注：
 *  本模型支持的`max-model-len`为131072, 单张卡可跑32768；
