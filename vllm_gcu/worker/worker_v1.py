@@ -319,6 +319,8 @@ class GCUWorker(Worker):
                      'w', buffering=1)
             os.dup2(f.fileno(), 1)
             os.dup2(f.fileno(), 2)
+        if vllm_config.additional_config.get('set_cpu_affinity', False):
+            current_platform.set_cpu_affinity(local_rank)
 
         super().__init__(vllm_config=vllm_config,
                          local_rank=local_rank,
