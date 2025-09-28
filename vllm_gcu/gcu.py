@@ -3,8 +3,10 @@
 import os
 import random
 import types
-from functools import lru_cache
-from typing import List, Optional, Tuple, Union
+from functools import lru_cache, wraps
+from typing import List, Optional, Tuple, Union, Callable, TypeVar
+from typing_extensions import ParamSpec
+
 
 import numpy as np
 import torch
@@ -22,6 +24,22 @@ import vllm_gcu.envs as gcu_envs
 
 
 logger = init_logger(__name__)
+
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+def with_efml_context(fn: Callable[_P, _R]) -> Callable[_P, _R]:
+
+    @wraps(fn)
+    def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        import pyefml
+        pyefml.efmlInit()
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            pyefml.efmlShutdown()
+
+    return wrapper
 
 
 class GCUPlatform(Platform):
@@ -359,3 +377,64 @@ class GCUPlatform(Platform):
     @classmethod
     def default_v1(cls, model_config) -> bool:
         return cls.supports_v1(model_config)
+
+    @classmethod
+    @with_efml_context
+    def set_cpu_affinity(cls, device_id: int) -> None:
+        """
+        Set CPU affinity for the current process based on GPU device ID.
+        """
+        import pyefml
+        try:
+            import psutil
+        except ImportError:
+            logger.warning(
+                "psutil is not available. Cannot set CPU affinity. "
+                "Install psutil to enable NUMA affinity optimization.")
+            return
+
+        try:
+            physical_device_id = cls.device_id_to_physical_device_id(device_id)
+            handle = pyefml.efmlDeviceGetHandleByIndex(physical_device_id)
+
+            # Get CPU affinity for this GPU
+            # We need to determine the CPU set size first
+            cpu_count = os.cpu_count()
+            if cpu_count is None:
+                logger.warning(
+                    "Cannot determine CPU count. Skipping CPU affinity setting."
+                )
+                return
+
+            cpu_set_size = (cpu_count + 63) // 64
+
+            # Get CPU affinity from EFML
+            cpu_affinity_mask = pyefml.efmlDeviceGetCpuAffinity(
+                handle, cpu_set_size)
+
+            # Convert the bitmask to a list of CPU IDs
+            cpu_ids = []
+            for i, mask in enumerate(cpu_affinity_mask):
+                for bit in range(64):
+                    cpu_id = i * 64 + bit
+                    if cpu_id >= cpu_count:
+                        break
+                    if mask & (1 << bit):
+                        cpu_ids.append(cpu_id)
+
+            if cpu_ids:
+                # Set CPU affinity using psutil
+                current_process = psutil.Process()
+                current_process.cpu_affinity(cpu_ids)
+                logger.info(
+                    "Set CPU affinity for process %d to " \
+                    "CPUs %s for GCU devices %s",
+                    current_process.pid, cpu_ids, device_id)
+            else:
+                logger.warning(
+                    "No CPU affinity information available for GCU devices %s",
+                    device_id)
+
+        except Exception as e:
+            logger.warning("Failed to set CPU affinity for GCU devices %s: %s",
+                           device_id, str(e))

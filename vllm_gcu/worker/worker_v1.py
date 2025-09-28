@@ -12,6 +12,7 @@ from vllm.utils import MemorySnapshot, GiB_bytes
 from vllm.model_executor import set_random_seed
 from vllm.distributed.parallel_state import get_pp_group, get_ep_group, prepare_communication_buffer_for_model
 from vllm.config import VllmConfig
+from vllm.platforms import current_platform
 from vllm.v1.core.sched.output import SchedulerOutput
 from vllm.v1.kv_cache_interface import KVCacheConfig
 
@@ -245,6 +246,8 @@ class GCUWorker(Worker):
                      'w', buffering=1)
             os.dup2(f.fileno(), 1)
             os.dup2(f.fileno(), 2)
+        if vllm_config.additional_config.get('set_cpu_affinity', False):
+            current_platform.set_cpu_affinity(local_rank)
 
         super().__init__(vllm_config=vllm_config,
                          local_rank=local_rank,
