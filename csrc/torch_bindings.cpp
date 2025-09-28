@@ -56,30 +56,31 @@
 #include "src/linear_quant.h"
 #include "src/memory_efficient_attention_alibi.h"
 #include "src/merge_attn_states.h"
+#include "src/mha_fwd_kvcache_mla.h"
 #include "src/moe_align_block_size.h"
 #include "src/moe_align_block_size_pad.h"
 #include "src/moe_sum.h"
 #include "src/mul_and_silu.h"
+#include "src/mul_static_fp8_quant.h"
 #include "src/paged_attention_v1.h"
 #include "src/paged_attention_v2.h"
 #include "src/rejection_greedy_sample.h"
 #include "src/rejection_random_sample.h"
 #include "src/reshape_and_cache_flash.h"
-#include "src/sample_recovered_tokens.h"
 #include "src/rms_norm.h"
 #include "src/rms_norm_per_token_group_quant_fp8.h"
 #include "src/rms_norm_static_fp8_quant.h"
-#include "src/silu_mul_static_fp8_quant.h"
-#include "src/mul_static_fp8_quant.h"
 #include "src/rms_norm_static_int8_quant.h"
 #include "src/rotary_embedding.h"
 #include "src/rotary_embedding_with_kv_cache.h"
+#include "src/sample_recovered_tokens.h"
 #include "src/sgl_moe_align_block_size.h"
 #include "src/silu_and_mul.h"
 #include "src/silu_and_mul_pad.h"
 #include "src/silu_asym_quant.h"
 #include "src/silu_mul_per_token_group_quant.h"
 #include "src/silu_mul_per_token_group_quant_with_size.h"
+#include "src/silu_mul_static_fp8_quant.h"
 #include "src/silu_mul_static_int8_quant.h"
 #include "src/silu_static_int8_quant.h"
 #include "src/static_scaled_fp8_quant.h"
@@ -265,7 +266,8 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
   if (!handle.has_value()) {
     ops.def(
         "fused_add_rms_norm(Tensor! input, Tensor! residual, Tensor weight, "
-        "float epsilon) -> ()", {at::Tag::needs_fixed_stride_order});
+        "float epsilon) -> ()",
+        {at::Tag::needs_fixed_stride_order});
   }
   ops.impl("fused_add_rms_norm", torch::kPrivateUse1, &fused_add_rms_norm);
 
@@ -291,10 +293,10 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
         "Tensor real_num_tokens) -> ()");
   }
   ops.impl("silu_mul_static_fp8_quant", torch::kPrivateUse1,
-          &silu_mul_static_fp8_quant);
+           &silu_mul_static_fp8_quant);
 
-  handle = c10::Dispatcher::singleton().findSchema(
-    {"_C::mul_static_fp8_quant", ""});
+  handle =
+      c10::Dispatcher::singleton().findSchema({"_C::mul_static_fp8_quant", ""});
   if (!handle.has_value()) {
     ops.def(
         "mul_static_fp8_quant(Tensor(a!) out, Tensor input, Tensor scale, "
@@ -510,8 +512,8 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
   // conditionally compiled so impl registrations are in source file
 
   // Dequantization for GGML.
-  // handle = c10::Dispatcher::singleton().findSchema({"_C::ggml_dequantize", ""});
-  // if (!handle.has_value()) {
+  // handle = c10::Dispatcher::singleton().findSchema({"_C::ggml_dequantize",
+  // ""}); if (!handle.has_value()) {
   //   ops.def(
   //       "ggml_dequantize(Tensor W, int type, SymInt m, SymInt n) -> Tensor");
   // }
@@ -519,7 +521,8 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
 
   // mmvq kernel for GGML.
   // handle =
-  //     c10::Dispatcher::singleton().findSchema({"_C::ggml_mul_mat_vec_a8", ""});
+  //     c10::Dispatcher::singleton().findSchema({"_C::ggml_mul_mat_vec_a8",
+  //     ""});
   // if (!handle.has_value()) {
   //   ops.def(
   //       "ggml_mul_mat_vec_a8(Tensor W, Tensor X, int type, SymInt row) "
@@ -528,16 +531,17 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
   // ops.impl("ggml_mul_mat_vec_a8", torch::kPrivateUse1, &ggml_mul_mat_vec_a8);
 
   // mmq kernel for GGML.
-  // handle = c10::Dispatcher::singleton().findSchema({"_C::ggml_mul_mat_a8", ""});
-  // if (!handle.has_value()) {
+  // handle = c10::Dispatcher::singleton().findSchema({"_C::ggml_mul_mat_a8",
+  // ""}); if (!handle.has_value()) {
   //   ops.def(
-  //       "ggml_mul_mat_a8(Tensor W, Tensor X, int type, SymInt row) -> Tensor");
+  //       "ggml_mul_mat_a8(Tensor W, Tensor X, int type, SymInt row) ->
+  //       Tensor");
   // }
   // ops.impl("ggml_mul_mat_a8", torch::kPrivateUse1, &ggml_mul_mat_a8);
 
   // fp8_marlin Optimized Quantized GEMM for FP8 weight-only.
-  // handle = c10::Dispatcher::singleton().findSchema({"_C::fp8_marlin_gemm", ""});
-  // if (!handle.has_value()) {
+  // handle = c10::Dispatcher::singleton().findSchema({"_C::fp8_marlin_gemm",
+  // ""}); if (!handle.has_value()) {
   //   ops.def(
   //       "fp8_marlin_gemm(Tensor a, Tensor b_q_weight, Tensor b_scales, "
   //       "Tensor! workspace, int num_bits, SymInt size_m, SymInt size_n, "
@@ -558,11 +562,11 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
 
   // CUTLASS w8a8 GEMM, supporting symmetric per-tensor or per-row/column
   // quantization, as well as bias
-  //ops.def(
+  // ops.def(
   //    "cutlass_scaled_mm(Tensor! out, "
   //    "Tensor x, Tensor weight, Tensor x_scale, "
   //    "Tensor w_scale, Tensor? bias) -> ()", {at::Tag::flexible_layout});
-  //ops.impl("cutlass_scaled_mm", torch::kPrivateUse1, &cutlass_scaled_mm);
+  // ops.impl("cutlass_scaled_mm", torch::kPrivateUse1, &cutlass_scaled_mm);
 
   // CUTLASS w8a8 GEMM, supporting asymmetric per-tensor or per-row/column
   // quantization.
@@ -813,7 +817,7 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
            &fused_moe_quant_kernel);
 
   handle = c10::Dispatcher::singleton().findSchema(
-    {"_C::fused_moe_quant_kernel_ex", ""});
+      {"_C::fused_moe_quant_kernel_ex", ""});
   if (!handle.has_value()) {
     ops.def(
         "fused_moe_quant_kernel_ex(Tensor(a!) C, Tensor A, "
@@ -825,7 +829,7 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
         "int block_size, int group_k, int group_n) -> ()");
   }
   ops.impl("fused_moe_quant_kernel_ex", c10::kPrivateUse1,
-    &fused_moe_quant_kernel_ex);
+           &fused_moe_quant_kernel_ex);
 
   handle = c10::Dispatcher::singleton().findSchema(
       {"_C::context_attention_forward", ""});
@@ -999,13 +1003,14 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
   }
   ops.impl("dot_bias_quant", c10::kPrivateUse1, &dot_bias_quant);
 
-  handle = c10::Dispatcher::singleton().findSchema(
-      {"_C::cutlass_scaled_mm", ""});
+  handle =
+      c10::Dispatcher::singleton().findSchema({"_C::cutlass_scaled_mm", ""});
   if (!handle.has_value()) {
     ops.def(
         "cutlass_scaled_mm(Tensor! out, "
         "Tensor x, Tensor weight, Tensor x_scale, "
-        "Tensor w_scale, Tensor? bias) -> ()", {at::Tag::flexible_layout});
+        "Tensor w_scale, Tensor? bias) -> ()",
+        {at::Tag::flexible_layout});
   }
   ops.impl("cutlass_scaled_mm", torch::kPrivateUse1, &cutlass_scaled_mm);
 
@@ -1069,7 +1074,7 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
         "float replace_to) -> ()");
   }
   ops.impl("expand_batch_to_tokens", c10::kPrivateUse1,
-            &expand_batch_to_tokens);
+           &expand_batch_to_tokens);
 
   handle = c10::Dispatcher::singleton().findSchema(
       {"_C::dynamic_per_token_group_fp8_quant", ""});
@@ -1092,10 +1097,11 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
   ops.impl("dynamic_per_token_group_fp8_quant_with_size", torch::kPrivateUse1,
            dynamic_per_token_group_fp8_quant_with_size);
 
-  handle = c10::Dispatcher::singleton().findSchema(
-      {"_C::silu_and_mul_quant", ""});
+  handle =
+      c10::Dispatcher::singleton().findSchema({"_C::silu_and_mul_quant", ""});
   if (!handle.has_value()) {
-    ops.def("silu_and_mul_quant(Tensor! result, Tensor input, Tensor scale) -> ()");
+    ops.def(
+        "silu_and_mul_quant(Tensor! result, Tensor input, Tensor scale) -> ()");
   }
   // ops.impl("silu_and_mul_quant", torch::kPrivateUse1, &silu_and_mul_quant);
 
@@ -1208,38 +1214,39 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
 
   // Rejection greedy sampling for speculative decoding.
   handle = c10::Dispatcher::singleton().findSchema(
-    {"_C::rejection_greedy_sample", ""});
+      {"_C::rejection_greedy_sample", ""});
   if (!handle.has_value()) {
-  ops.def(
-      "rejection_greedy_sample(Tensor! output_token_ids, "
-      "Tensor cu_num_draft_tokens, Tensor draft_token_ids, "
-      "Tensor target_argmax, Tensor bonus_token_ids, Tensor is_greedy) -> ()");
+    ops.def(
+        "rejection_greedy_sample(Tensor! output_token_ids, "
+        "Tensor cu_num_draft_tokens, Tensor draft_token_ids, "
+        "Tensor target_argmax, Tensor bonus_token_ids, Tensor is_greedy) -> "
+        "()");
   }
   ops.impl("rejection_greedy_sample", torch::kPrivateUse1,
-        &rejection_greedy_sample);
+           &rejection_greedy_sample);
 
   // Rejection random sampling for speculative decoding.
   handle = c10::Dispatcher::singleton().findSchema(
-    {"_C::rejection_random_sample", ""});
+      {"_C::rejection_random_sample", ""});
   if (!handle.has_value()) {
-  ops.def(
-      "rejection_random_sample(Tensor! output_token_ids, "
-      "Tensor cu_num_draft_tokens, Tensor draft_token_ids, "
-      "Tensor draft_probs, Tensor target_probs, Tensor bonus_token_ids, "
-      "Tensor recovered_token_ids, Tensor uniform_probs,"
-      "Tensor is_greedy) -> ()");
+    ops.def(
+        "rejection_random_sample(Tensor! output_token_ids, "
+        "Tensor cu_num_draft_tokens, Tensor draft_token_ids, "
+        "Tensor draft_probs, Tensor target_probs, Tensor bonus_token_ids, "
+        "Tensor recovered_token_ids, Tensor uniform_probs,"
+        "Tensor is_greedy) -> ()");
   }
   ops.impl("rejection_random_sample", torch::kPrivateUse1,
-        &rejection_random_sample);
+           &rejection_random_sample);
 
   // Sample recovered tokens for speculative decoding.
   handle = c10::Dispatcher::singleton().findSchema(
-    {"_C::sample_recovered_tokens", ""});
+      {"_C::sample_recovered_tokens", ""});
   if (!handle.has_value()) {
-  ops.def(
-      "sample_recovered_tokens(Tensor! output_token_ids, "
-      "Tensor cu_num_draft_tokens, Tensor draft_token_ids, "
-      "Tensor target_probs, Tensor q, Tensor? draft_probs) -> ()");
+    ops.def(
+        "sample_recovered_tokens(Tensor! output_token_ids, "
+        "Tensor cu_num_draft_tokens, Tensor draft_token_ids, "
+        "Tensor target_probs, Tensor q, Tensor? draft_probs) -> ()");
   }
   ops.impl("sample_recovered_tokens", torch::kPrivateUse1,
         &sample_recovered_tokens);
@@ -1275,8 +1282,7 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
 }
 
 // TORCH_LIBRARY_FRAGMENT(CONCAT(_cache_ops, TORCH_EXTENSION_NAME), cache_ops) {
-TORCH_LIBRARY_FRAGMENT(CONCAT(TORCH_EXTENSION_NAME, _cache_ops),
-                      cache_ops) {
+TORCH_LIBRARY_FRAGMENT(CONCAT(TORCH_EXTENSION_NAME, _cache_ops), cache_ops) {
   // Cache ops
   std::optional<c10::OperatorHandle> handle;
 
@@ -1439,7 +1445,6 @@ TORCH_LIBRARY_FRAGMENT(CONCAT(_moe, TORCH_EXTENSION_NAME), moe_ops) {
   // conditionally compiled so impl registration is in source file
 }
 
-
 TORCH_LIBRARY_FRAGMENT(CONCAT(_flashmla, TORCH_EXTENSION_NAME), _flashmla_ops) {
   std::optional<c10::OperatorHandle> handle;
 
@@ -1448,14 +1453,15 @@ TORCH_LIBRARY_FRAGMENT(CONCAT(_flashmla, TORCH_EXTENSION_NAME), _flashmla_ops) {
   if (!handle.has_value()) {
     _flashmla_ops.def(
         "fwd_kvcache_mla("
-        "    Tensor! q, Tensor kcache, Tensor? vcache, "
+        "    Tensor! q, Tensor kcache, "
         "    int head_size_v, Tensor seqlens_k, Tensor block_table, "
         "    float softmax_scale, bool is_causal, "
         "    Tensor tile_scheduler_metadata, "
-        "    Tensor num_splits) -> (Tensor, Tensor)");
+        "    Tensor num_splits, Tensor? descale_q, Tensor? descale_k"
+        "    ) -> (Tensor, Tensor)");
   }
   _flashmla_ops.impl("fwd_kvcache_mla", torch::kPrivateUse1,
-                    &mha_fwd_kvcache_mla);
+                     &mha_fwd_kvcache_mla);
 }
 
 REGISTER_EXTENSION(TORCH_EXTENSION_NAME)

@@ -80,12 +80,6 @@ class GCUMLAFusionImpl(GCUMLAImpl):
         # Convert from (B, N, V) to (B, N * V)
         return out.view(-1, self.num_heads * self.v_head_dim)
 
-    def _k_up_proj(self, out, q_nope):
-        B, N, P = q_nope.shape
-        q_nope = q_nope
-        # Multiply (B, N, P) x (N, P, L) -> (B, N, L)
-        torch.bmm(q_nope.transpose(0, 1), self.W_UK_T, out=out.transpose(0, 1))
-
     def forward(
         self,
         layer: AttentionLayer,
@@ -97,6 +91,10 @@ class GCUMLAFusionImpl(GCUMLAImpl):
         output: Optional[torch.Tensor] = None,
         output_scale: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        from functools import partial
+
+        self._compute_prefill_context = partial(
+            self._compute_prefill_context_gcu, k_scale=layer._k_scale)
 
         assert output is not None, "Output tensor must be provided."
 
@@ -156,11 +154,11 @@ class GCUMLAFusionImpl(GCUMLAImpl):
                 dtype=kv_c_and_k_pe.dtype,
                 device=kv_c_and_k_pe.device,
             )
-            self.rope_with_kvcache(
-                prefill_q_pe, prefill_k_pe,
-                prefill_q_pe, prefill_kv_c_and_k_pe, kv_cache,
-                prefill_slot_mapping.flatten(), prefill_input_positions,
-                layer._k_scale, prefill_k_c_normed)
+            self.rope_with_kvcache(prefill_q_pe, prefill_k_pe, prefill_q_pe,
+                                   prefill_kv_c_and_k_pe, kv_cache,
+                                   prefill_slot_mapping.flatten(),
+                                   prefill_input_positions, layer._k_scale,
+                                   prefill_k_c_normed)
 
         if has_decode:
             decode_q_nope, decode_q_pe = decode_q.split(
@@ -189,7 +187,9 @@ class GCUMLAFusionImpl(GCUMLAImpl):
                 attn_metadata)
 
         if has_decode:
-            _ = self._forward_decode(decode_q_concat, kv_cache, attn_metadata, layer._k_scale_float, output[:num_decode_tokens])
+            _ = self._forward_decode(decode_q_concat, kv_cache, attn_metadata,
+                                     layer._k_scale_float,
+                                     output[:num_decode_tokens])
 
         return output_padded
 
@@ -216,26 +216,27 @@ class GCUMLAFusionImpl(GCUMLAImpl):
                         self.kv_lora_rank,
                         dtype=q.dtype,
                         device=q.device)
-        q_scale=None
-        if self.kv_cache_dtype=="fp8":
-            q, q_scale = ops.scaled_fp8_quant(q, q_scale, scale_ub=None, use_per_token_if_dynamic=True)
-        ops.paged_attention_v1(
-            out=o,
-            query=q,
-            key_cache=kv_c_and_k_pe_cache,
-            value_cache=None,
-            num_kv_heads=1,
-            scale=self.scale,
-            block_tables=decode_meta.block_table,
-            seq_lens=decode_meta.seq_lens,
-            block_size=kv_c_and_k_pe_cache.size(1),
-            max_seq_len=decode_meta.max_query_len,
-            alibi_slopes=None,
-            kv_cache_dtype=self.kv_cache_dtype,
-            k_scale_float=k_scale,
-            v_scale_float=k_scale,
-            out_scales=None,
-            query_scales=q_scale
-        )
+        q_scale = None
+        if self.kv_cache_dtype == "fp8":
+            q, q_scale = ops.scaled_fp8_quant(q,
+                                              q_scale,
+                                              scale_ub=None,
+                                              use_per_token_if_dynamic=True)
+        ops.paged_attention_v1(out=o,
+                               query=q,
+                               key_cache=kv_c_and_k_pe_cache,
+                               value_cache=None,
+                               num_kv_heads=1,
+                               scale=self.scale,
+                               block_tables=decode_meta.block_table,
+                               seq_lens=decode_meta.seq_lens,
+                               block_size=kv_c_and_k_pe_cache.size(1),
+                               max_seq_len=decode_meta.max_query_len,
+                               alibi_slopes=None,
+                               kv_cache_dtype=self.kv_cache_dtype,
+                               k_scale_float=k_scale,
+                               v_scale_float=k_scale,
+                               out_scales=None,
+                               query_scales=q_scale)
 
         return self._v_up_proj(o, out=decode_output)
