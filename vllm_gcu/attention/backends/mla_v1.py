@@ -234,7 +234,7 @@ class GCUMLAImpl(MLACommonImpl[GCUMLAMetadata]):
         # conditions: 1. no chunks 2. query len of each seq are the same
         if len(attn_metadata.prefill.chunked_context.seq_tot) == 1 \
             and attn_metadata.num_prefills * attn_metadata.prefill.max_query_len \
-                == attn_metadata.num_actual_tokens:
+                == (attn_metadata.num_actual_tokens - attn_metadata.num_decode_tokens):
                 context_output, context_lse = self._compute_prefill_context_flashmla(q, kv_c_and_k_pe_cache, attn_metadata)
                 return context_output, context_lse
 
