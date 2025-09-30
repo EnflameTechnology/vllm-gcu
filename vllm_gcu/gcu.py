@@ -208,6 +208,17 @@ class GCUPlatform(Platform):
                 else:
                     parallel_config.worker_cls = "vllm_gcu.worker.worker.GCUWorker"
 
+        # make sure patch work
+        if envs.VLLM_USE_V1:
+            distributed_executor_backend = parallel_config.distributed_executor_backend
+            if isinstance(distributed_executor_backend, str):
+                if distributed_executor_backend == "mp":
+                    from vllm_gcu.executor import GCUMultiprocExecutor
+
+                    parallel_config.distributed_executor_backend = GCUMultiprocExecutor
+                elif distributed_executor_backend == "ray":
+                    pass
+
         if envs.VLLM_USE_V1 and torch.__version__.startswith("2.5.1"):
 
             def stateless_init_dp_group(self):
