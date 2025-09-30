@@ -1,14 +1,14 @@
-## Qwen2.5
-### Qwen2.5-32B
+## Qwen3
+### Qwen3-32B
 
 #### 模型下载
-*  url: [Qwen2.5-32B](https://www.modelscope.cn/models/qwen/Qwen2.5-32B)
+*  url: [Qwen3-32B](https://www.modelscope.cn/models/qwen/Qwen3-32B)
 
 *  branch: `master`
 
-*  commit id: `357d2bb7`
+*  commit id: `d64d397e`
 
-将上述url设定的路径下的内容全部下载到`Qwen2.5-32B`文件夹中。
+将上述url设定的路径下的内容全部下载到`Qwen3-32B`文件夹中。
 注：需要安装以下依赖：
 
 ```shell
@@ -30,11 +30,11 @@ export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 #### serving模式
 ```shell
 # 启动服务器
-vllm serve "[path of Qwen2.5-32B]" \
- --tokenizer=[path of Qwen2.5-32B] \
+vllm serve "[path of Qwen3-32B]" \
+ --tokenizer=[path of Qwen3-32B] \
  --dtype=bfloat16 \
  --max-model-len=32768 \
- --served-model-name Qwen2.5-32B \
+ --served-model-name Qwen3-32B \
  --tensor-parallel-size=4 \
  --block-size=64 \
  --device=gcu \
@@ -43,13 +43,14 @@ vllm serve "[path of Qwen2.5-32B]" \
  --trust-remote-code \
  --no-enable-prefix-caching
 
+
 # 启动客户端
 curl "http://127.0.0.1:8000/v1/completions" \
 -H "Content-Type: application/json" \
 -d '{
     "max_tokens": 500,
     "prompt":["请介绍北京的旅游景点"],
-    "model":"Qwen2.5-32B",
+    "model":"Qwen3-32B",
     "stop": null,
     "stream": false
     }'
@@ -61,8 +62,8 @@ curl "http://127.0.0.1:8000/v1/completions" \
 
 ```shell
 # 启动服务端
-vllm serve "[path of Qwen2.5-32B]" \
- --tokenizer=[path of Qwen2.5-32B] \
+vllm serve "[path of Qwen3-32B]" \
+ --tokenizer=[path of Qwen3-32B] \
  --dtype=bfloat16 \
  --max-model-len=32768 \
  --tensor-parallel-size=4 \
@@ -74,19 +75,15 @@ vllm serve "[path of Qwen2.5-32B]" \
 
 
 # 启动客户端
-python3 -m vllm_utils.benchmark_serving \
- --model [path of Qwen2.5-32B] \
+vllm bench serve \
  --backend vllm \
  --dataset-name random \
+ --model [path of Qwen3-32B] \
  --num-prompts 32 \
- --disable-log-requests \
- --random-input-len 1024 \
- --random-output-len 1024 \
- --request-rate 1 \
+ --random-input-len 1000 \
+ --random-output-len 700 \
  --trust-remote-code \
- --ignore_eos \
- --strict-in-out-len \
- --keep-special-tokens
+ --ignore_eos 
 ```
 注：
 *  本模型支持的`max-model-len`为131072；
