@@ -231,10 +231,11 @@ class GCUMLAImpl(MLACommonImpl[GCUMLAMetadata]):
         kv_c_and_k_pe_cache: torch.Tensor,
         attn_metadata: MLACommonMetadata,
     ):
-        # conditions: 1. no chunks 2. query len of each seq are the same
+        # conditions: 1. no chunks 2. query len of each seq are the same 3. kv_c_and_k_pe_cache is not fp8 cause flash_mla_with_kvcache not support fp8
         if len(attn_metadata.prefill.chunked_context.seq_tot) == 1 \
             and attn_metadata.num_prefills * attn_metadata.prefill.max_query_len \
-                == (attn_metadata.num_actual_tokens - attn_metadata.num_decode_tokens):
+                == (attn_metadata.num_actual_tokens - attn_metadata.num_decode_tokens) \
+            and kv_c_and_k_pe_cache.dtype != torch.float8_e4m3fn:
                 context_output, context_lse = self._compute_prefill_context_flashmla(q, kv_c_and_k_pe_cache, attn_metadata)
                 return context_output, context_lse
 
