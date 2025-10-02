@@ -8,6 +8,13 @@ import torch
 import torch_gcu  # noqa: F401
 import torch_gcu.transfer_to_gcu  # noqa: F401
 
+try:
+    import triton_gcu
+    import triton_gcu.triton
+except:
+    print(f"Cannot import triton_gcu.")
+    pass
+
 
 from vllm.logger import DEFAULT_LOGGING_CONFIG, VLLM_LOGGING_LEVEL
 

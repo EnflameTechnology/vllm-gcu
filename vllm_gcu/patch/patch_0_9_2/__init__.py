@@ -9,6 +9,5 @@ import vllm_gcu.patch.patch_0_9_2.forward_context  # noqa
 import vllm_gcu.patch.patch_0_9_2.noop_elimination  # noqa
 import vllm_gcu.patch.patch_0_9_2.rejection_sampler  # noqa
 import vllm_gcu.patch.patch_0_9_2.flashmla  # noqa
-import vllm_gcu.patch.patch_0_9_2.eagle  # noqa
 import vllm_gcu.patch.patch_0_9_2.nixl_connector  # noqa
 import vllm_gcu.patch.patch_0_9_2.compressed_tensor  # noqa
