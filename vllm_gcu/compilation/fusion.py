@@ -1285,9 +1285,9 @@ class GCUFusionPass(FusionPass):
                 RMSNormPerTokenGroupQuantPattern(epsilon, 128, FP8_DTYPE).register(
                     self.patterns
                 )
-                FusedAddRMSNormPerTokenGroupQuantPattern(
-                    epsilon, 128, FP8_DTYPE
-                ).register(self.patterns, self.record_match)
+                # FusedAddRMSNormPerTokenGroupQuantPattern(
+                #     epsilon, 128, FP8_DTYPE
+                # ).register(self.patterns, self.record_match)
             else:
                 RMSNormStaticQuantPattern(epsilon, torch.int8).register(self.patterns)
 
