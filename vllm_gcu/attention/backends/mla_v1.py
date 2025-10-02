@@ -14,7 +14,7 @@ from vllm.v1.attention.backends.mla.common import (MLACommonBackend,
                                                    MLACommonMetadataBuilder)
 
 import vllm_gcu.kernels._custom_ops as ops
-import vllm_gcu._C
+import vllm_gcu._C  # noqa
 from vllm_gcu.kernels._custom_ops import merge_attn_states
 
 logger = init_logger(__name__)
@@ -246,10 +246,8 @@ class GCUMLAImpl(MLACommonImpl[GCUMLAMetadata]):
         output = None
         iters = len(prefill_metadata.chunked_context.seq_tot)
         workspace = prefill_metadata.chunked_context.workspace
-        if prefill_metadata.chunked_context.workspace.dtype != kv_c_and_k_pe_cache.dtype:
-            workspace = prefill_metadata.chunked_context.workspace.to(kv_c_and_k_pe_cache.dtype)
-        else:
-            workspace = prefill_metadata.chunked_context.workspace
+        if self.kv_cache_dtype == "fp8":
+            workspace = torch.empty_like(workspace, dtype=torch.float8_e4m3fn)
 
         for i in range(iters):
             toks = prefill_metadata.chunked_context.seq_tot[i]
@@ -263,15 +261,12 @@ class GCUMLAImpl(MLACommonImpl[GCUMLAMetadata]):
                 seq_starts=prefill_metadata.chunked_context.starts[i],
             )
 
+            workspace_gathered = workspace[:toks]
             if prefill_metadata.chunked_context.workspace.dtype != kv_c_and_k_pe_cache.dtype:
-                workspace_gathered = workspace.to(prefill_metadata.chunked_context.workspace.dtype)
-            else:
-                workspace_gathered = workspace
+                workspace_gathered = workspace_gathered.to(prefill_metadata.chunked_context.workspace.dtype)
 
-            kv_c_normed = workspace_gathered[:toks]\
-                [..., :self.kv_lora_rank]
-            k_pe = workspace_gathered[:toks]\
-                [..., self.kv_lora_rank:].unsqueeze(1)
+            kv_c_normed = workspace_gathered[..., :self.kv_lora_rank]
+            k_pe = workspace_gathered[..., self.kv_lora_rank:].unsqueeze(1)
 
             kv_nope = self.kv_b_proj(kv_c_normed)[0].view( \
                 -1, self.num_heads, self.qk_nope_head_dim + self.v_head_dim)
