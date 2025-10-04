@@ -26,6 +26,9 @@ class DPParallelSampler(Sampler):
 
         # slice logits (B, V) -> (B/tp_size, V)
         dp_logits = logits[start:end]
+        dp_generators = dict(
+            sorted(sampling_metadata.generators.items(),
+                   key=lambda x: x[0])[start:end])
 
         # sampling_metadata
         dp_sampling_metadata = SamplingMetadata(
@@ -37,7 +40,7 @@ class DPParallelSampler(Sampler):
             sampling_metadata.top_p[start:end],
             top_k=None if sampling_metadata.top_k is None else
             sampling_metadata.top_k[start:end],
-            generators=sampling_metadata.generators,
+            generators=dp_generators,
             max_num_logprobs=sampling_metadata.max_num_logprobs,
             no_penalties=sampling_metadata.no_penalties,
             prompt_token_ids=None if sampling_metadata.prompt_token_ids is None
@@ -48,7 +51,9 @@ class DPParallelSampler(Sampler):
             repetition_penalties=sampling_metadata.
             repetition_penalties[start:end],
             output_token_ids=sampling_metadata.output_token_ids[start:end],
-            allowed_token_ids_mask=sampling_metadata.allowed_token_ids_mask,
+            allowed_token_ids_mask=None
+            if sampling_metadata.allowed_token_ids_mask is None else
+            sampling_metadata.allowed_token_ids_mask[start:end],
             bad_words_token_ids=sampling_metadata.bad_words_token_ids,
             logitsprocs=sampling_metadata.logitsprocs,
         )
