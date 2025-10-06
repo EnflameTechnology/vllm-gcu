@@ -611,3 +611,38 @@ def merge_attn_states(
     )
 
 #torch.ops._C.cutlass_scaled_mm.default.tags.append(torch._C.Tag.flexible_layout)
+
+def eplb_map_to_physical_and_record(
+        topk_ids: torch.Tensor,
+        expert_load_view: torch.Tensor,
+        logical_to_physical_map: torch.Tensor,
+        logical_replica_count: torch.Tensor,
+        indices_type: Optional[torch.dtype] = None) -> torch.Tensor:
+    '''
+    Map the logical expert ids to physical expert ids
+    and record the expert load metrics.
+    This will select a pseudo-random replica for each logical expert.
+    Only used for EPLB.
+    Args:
+        topk_ids: The logical expert ids.
+        expert_load_view: The expert load view.
+        logical_to_physical_map: The logical to physical map.
+        logical_replica_count: The logical replica count.
+        indices_type: The indices type.
+    Returns:
+        The physical expert ids.
+    '''
+    if indices_type is not None:
+        out = torch.empty_like(topk_ids, dtype=indices_type)
+    else:
+        out = torch.empty_like(topk_ids)
+
+    torch.ops._C.eplb_map_to_physical_and_record(
+        out,
+        topk_ids,
+        expert_load_view,
+        logical_to_physical_map,
+        logical_replica_count
+    )
+
+    return out

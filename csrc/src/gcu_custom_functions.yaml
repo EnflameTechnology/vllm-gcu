@@ -266,3 +266,6 @@
 
 - func: top_k_top_p(Tensor(a!) logits, Tensor k, Tensor p, int dim, bool descending) -> ()
   variants: function
+
+- func: eplb_map_to_physical_and_record(Tensor(a!) out, Tensor topk_ids, Tensor(a!) expert_load_view, Tensor logical_to_physical_map, Tensor logical_replica_count) -> ()
+  variants: function

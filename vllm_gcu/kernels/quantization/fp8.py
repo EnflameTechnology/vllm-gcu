@@ -15,6 +15,8 @@ from vllm_gcu.kernels.quantization.utils import (
     register_weight_loader_v2_supported,
 )
 from vllm_gcu.kernels.modular_experts import TritonExpertsPad
+from vllm_gcu.kernels.quantization.utils import eplb_update
+from vllm.platforms import current_platform
 
 
 @register_gcu_quantization_config("fp8")
@@ -114,6 +116,8 @@ class Fp8GCUMoEMethod(Fp8MoEMethod):
             assert logical_replica_count is not None
             assert isinstance(layer, FusedMoE)
 
+        use_eplb_fusion_op = True if current_platform.get_device_capability().to_int() == 140 else False
+
         topk_weights, topk_ids = FusedMoE.select_experts(
             hidden_states=x,
             router_logits=router_logits,
@@ -126,12 +130,21 @@ class Fp8GCUMoEMethod(Fp8MoEMethod):
             scoring_func=scoring_func,
             e_score_correction_bias=e_score_correction_bias,
             indices_type=self.topk_indices_dtype,
-            enable_eplb=enable_eplb,
+            enable_eplb=False if use_eplb_fusion_op else enable_eplb,
             expert_map=expert_map,
             expert_load_view=expert_load_view,
             logical_to_physical_map=logical_to_physical_map,
             logical_replica_count=logical_replica_count,
         )
+
+        if enable_eplb and use_eplb_fusion_op:
+            topk_ids = eplb_update(
+                topk_ids=topk_ids,
+                expert_load_view=expert_load_view,
+                logical_to_physical_map=logical_to_physical_map,
+                logical_replica_count=logical_replica_count,
+                indices_type=self.topk_indices_dtype,
+            )
 
         return self.fused_experts(
             hidden_states=x,
