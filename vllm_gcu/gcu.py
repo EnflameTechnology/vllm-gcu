@@ -405,6 +405,7 @@ class GCUPlatform(Platform):
         try:
             physical_device_id = cls.device_id_to_physical_device_id(device_id)
             handle = pyefml.efmlDeviceGetHandleByIndex(physical_device_id)
+            device_count = pyefml.efmlDeviceGetCount()
 
             # Get CPU affinity for this GPU
             # We need to determine the CPU set size first
@@ -416,6 +417,14 @@ class GCUPlatform(Platform):
                 return
 
             cpu_set_size = (cpu_count + 63) // 64
+            from vllm.config import get_current_vllm_config
+            parallel_config = get_current_vllm_config().parallel_config
+            tp_size = parallel_config.tensor_parallel_size
+            dp_size = parallel_config.data_parallel_size
+            dp_rank = parallel_config.data_parallel_rank
+            dp_size_local = parallel_config.data_parallel_size_local
+            logger.debug("logical device_id={}, physical_device_id={},cpu_set_size={}, cpu_count={},device_count={}".format(device_id, physical_device_id,cpu_set_size,cpu_count, device_count))
+            logger.debug("tp_size={},dp_rank={},dp_size={},dp_size_local={}".format(tp_size, dp_rank, dp_size, dp_size_local))
 
             # Get CPU affinity from EFML
             cpu_affinity_mask = pyefml.efmlDeviceGetCpuAffinity(
@@ -434,11 +443,16 @@ class GCUPlatform(Platform):
             if cpu_ids:
                 # Set CPU affinity using psutil
                 current_process = psutil.Process()
-                current_process.cpu_affinity(cpu_ids)
+                #bind a half of total cpu core for worker process
+                slice_step = round( len(cpu_ids) / tp_size / min(dp_size, dp_size_local))
+                affinity_cpu_ids_per_device = cpu_ids[device_id*slice_step:(device_id+1)*slice_step:1]
+                #current_process.cpu_affinity(cpu_ids)
+                current_process.cpu_affinity(affinity_cpu_ids_per_device)
+                logger.debug("cpu_ids={},slice_step={},affinity_cpu_ids_per_device={}".format(cpu_ids, slice_step,affinity_cpu_ids_per_device))
                 logger.info(
                     "Set CPU affinity for process %d to " \
-                    "CPUs %s for GCU devices %s",
-                    current_process.pid, cpu_ids, device_id)
+                    "CPUs %s for logical GCU devices %s, physical_device_id %s ",
+                    current_process.pid, affinity_cpu_ids_per_device, device_id, physical_device_id )
             else:
                 logger.warning(
                     "No CPU affinity information available for GCU devices %s",
@@ -447,3 +461,4 @@ class GCUPlatform(Platform):
         except Exception as e:
             logger.warning("Failed to set CPU affinity for GCU devices %s: %s",
                            device_id, str(e))
+
