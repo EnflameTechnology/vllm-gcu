@@ -57,9 +57,13 @@ class MoEPrepareAndFinalizeNoEP(FusedMoEPrepareAndFinalize):
                Optional[torch.Tensor], Optional[torch.Tensor]]:
         assert not apply_router_weight_on_input
 
-        a1q, a1q_scale = moe_kernel_quantize_input(
-            a1, a1_scale, quant_config.quant_dtype,
-            quant_config.per_act_token_quant, quant_config.block_shape)
+        if a1_scale is not None and a1.dtype == a1_scale.dtype:  # w8a8-int8 static
+            a1q = a1
+            a1q_scale = a1_scale
+        else:
+            a1q, a1q_scale = moe_kernel_quantize_input(
+                a1, a1_scale, quant_config.quant_dtype,
+                quant_config.per_act_token_quant, quant_config.block_shape)
 
         total_tokens = torch.full(
             (1, ),

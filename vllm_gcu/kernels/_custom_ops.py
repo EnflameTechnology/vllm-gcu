@@ -9,7 +9,6 @@ try:
 except ImportError:
     from torch.library import impl_abstract as register_fake
 
-from vllm.platforms import current_platform
 
 import vllm_gcu._C  # noqa: F401
 
@@ -297,43 +296,6 @@ def scaled_fp8_quant(
     else:
         torch.ops._C.static_scaled_fp8_quant(output, input, scale)
     return output, scale
-
-
-def scaled_int8_quant(
-    input: torch.Tensor,
-    scale: Optional[torch.Tensor] = None,
-    azp: Optional[torch.Tensor] = None,
-    symmetric: bool = True,
-) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
-    output = torch.empty_like(input, dtype=torch.int8)
-    if scale is not None:
-        # static-per-tensor quantization.
-        assert symmetric == (azp is None), (
-            "azp must only be provided for asymmetric quantization."
-        )
-        torch.ops._C.static_scaled_int8_quant(output, input, scale, None)
-        return output, scale, azp
-
-    # dynamic-per-token quantization.
-    input_scales = torch.empty(
-        (input.numel() // input.shape[-1], 1), device=input.device, dtype=torch.float32
-    )
-    input_azp = None if symmetric else torch.empty_like(input_scales, dtype=torch.int32)
-    torch.ops._C.dynamic_scaled_int8_quant(output, input, input_scales)
-    return output, input_scales, input_azp
-
-
-def scaled_int8_dequant(
-    input: torch.Tensor,
-    scale: Optional[torch.Tensor] = None,
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    output = torch.empty_like(input, dtype=scale.dtype)
-    if scale is not None:
-        # static-per-tensor quantization.
-        torch.ops._C.static_scaled_int8_dequant(output, input, scale)
-        return output, scale
-    else:
-        assert False, "dynamic scaled int8 quant not support yet"
 
 
 def gelu_tanh_quant(
