@@ -213,6 +213,24 @@ class TritonExpertsPad(mk.FusedMoEPermuteExpertsUnpermute):
                         expert_num_tokens,
                         group_size,
                     )
+            elif self.quant_config.use_int8_w8a8:
+                intermediate_cache2_temp = torch.empty_like(intermediate_cache2, dtype=intermediate_cache1.dtype)
+                if a2_scale is not None:
+                    torch.ops._C.silu_and_mul_pad(
+                        intermediate_cache2_temp.view(-1, top_k_num, N // 2),
+                        intermediate_cache1,
+                        expert_num_tokens,
+                    )
+                    intermediate_cache2 = intermediate_cache2_temp
+                else:
+                    torch.ops._C.silu_and_mul_pad(
+                        intermediate_cache2_temp.view(-1, top_k_num, N // 2),
+                        intermediate_cache1,
+                        expert_num_tokens,
+                    )
+                    a2_scale = torch.empty((intermediate_cache2_temp.numel() // intermediate_cache2_temp.shape[-1], 1), dtype=torch.float32, device="gcu")
+                    torch.ops._C.dynamic_scaled_int8_quant(intermediate_cache2, intermediate_cache2_temp, a2_scale, None)
+                del intermediate_cache2_temp
             else:
                 torch.ops._C.silu_and_mul_pad(
                     intermediate_cache2.view(-1, top_k_num, N // 2),

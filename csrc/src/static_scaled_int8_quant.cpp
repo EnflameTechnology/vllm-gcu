@@ -17,10 +17,10 @@ void static_scaled_int8_quant(at::Tensor& output, const at::Tensor& input,
   at::Tensor in_scale;
   if (scale.dim() == 0) {
     // per tensor
-    in_scale = scale.reciprocal().to(input.dtype()).unsqueeze(0);
+    in_scale = scale.to(input.dtype()).unsqueeze(0);
   } else {
     // per channel
-    in_scale = scale.reciprocal().to(input.dtype());
+    in_scale = scale.to(input.dtype());
   }
 
   ATEN_ATENOP_CHECK(ATEN_ATENOP_CALL(topsaten::topsatenQuantize)(
@@ -28,3 +28,4 @@ void static_scaled_int8_quant(at::Tensor& output, const at::Tensor& input,
 }
 
 }  // namespace vllm_gcu::llm_ops
+

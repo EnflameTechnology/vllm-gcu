@@ -46,7 +46,6 @@ class GCUCompressedTensorsW8A8Int8MoEMethod(CompressedTensorsW8A8Int8MoEMethod):
         logical_to_physical_map: Optional[torch.Tensor] = None,
         logical_replica_count: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
-        assert self.fused_experts is None
 
         if enable_eplb:
             raise NotImplementedError(
@@ -63,9 +62,9 @@ class GCUCompressedTensorsW8A8Int8MoEMethod(CompressedTensorsW8A8Int8MoEMethod):
             num_expert_group=num_expert_group,
             custom_routing_function=custom_routing_function,
             scoring_func=scoring_func,
-            routed_scaling_factor=routed_scaling_factor,
-            e_score_correction_bias=e_score_correction_bias,
-            indices_type=self.topk_indices_dtype)
+            #routed_scaling_factor=routed_scaling_factor,
+            e_score_correction_bias=e_score_correction_bias)
+            #indices_type=self.topk_indices_dtype)
 
         return self.fused_experts(
             hidden_states=x,
