@@ -22,6 +22,7 @@ from vllm.logger import init_logger
 
 import vllm_gcu.envs as gcu_envs
 
+global_vllm_config = None
 
 logger = init_logger(__name__)
 
@@ -162,6 +163,13 @@ class GCUPlatform(Platform):
 
     @classmethod
     def check_and_update_config(cls, vllm_config) -> None:
+        global global_vllm_config
+        if vllm_config != None and global_vllm_config == None:
+            global_vllm_config = vllm_config
+            import vllm
+            from vllm.engine.arg_utils import EngineArgs
+            from vllm.config import get_current_vllm_config, set_current_vllm_config
+            vllm.config._current_vllm_config = vllm_config
 
         parallel_config = vllm_config.parallel_config
         scheduler_config = vllm_config.scheduler_config

@@ -69,13 +69,16 @@ sudo ./TopsRider_i3x_3.4.xxx.run -y -C vllm-gcu
 
 ```bash
 # Install dependencies
-python3 -m pip install vllm==0.8.0
-python3 -m pip install triton==3.2
 python3 -m pip install torch==2.6.0+cpu -i https://download.pytorch.org/whl/cpu
 python3 -m pip install torchvision==0.21.0 -i https://download.pytorch.org/whl/cpu
+python3 -m pip install vllm==0.8.0
+python3 -m pip install triton==3.2
+# Enflame dependencies
 python3 -m pip install torch_gcu-2.6.0+<version>*.whl
 python3 -m pip install tops_extension-<version>*.whl
 python3 -m pip install xformers-<version>*.whl
+sudo dpkg -i topsaten_3.4*.deb
+sudo dpkg -i eccl_3.3*.deb
 sudo apt install python3.10-dev -y #depend on the python version
 
 # build vllm_gcu .whl package
