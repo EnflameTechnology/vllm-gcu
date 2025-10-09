@@ -438,7 +438,7 @@ class MoeW4A8Method(Fp8MoEMethod):
             custom_routing_function=custom_routing_function,
             scoring_func=scoring_func,
             e_score_correction_bias=e_score_correction_bias,
-            indices_type=None,
+            indices_type=self.topk_indices_dtype,
             enable_eplb=enable_eplb,
             expert_map=expert_map,
             expert_load_view=expert_load_view,
