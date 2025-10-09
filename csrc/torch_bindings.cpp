@@ -3,7 +3,6 @@
 #include "registration.h"
 #include "src/awq_dequantize.h"
 #include "src/awq_gemm_gcu.h"
-#include "src/batched_rotary_embedding.h"
 #include "src/cache_ops.h"
 #include "src/concat_and_cache_mla.h"
 #include "src/context_attention_forward.h"
@@ -306,21 +305,6 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
         "                 Tensor cos_sin_cache, bool is_neox) -> ()");
   }
   ops.impl("rotary_embedding", torch::kPrivateUse1, &rotary_embedding);
-
-  // Apply GPT-NeoX or GPT-J style rotary embedding to query and key
-  // (supports multiple loras).
-  handle = c10::Dispatcher::singleton().findSchema(
-      {"_C::batched_rotary_embedding", ""});
-  if (!handle.has_value()) {
-    ops.def(
-        "batched_rotary_embedding(Tensor positions, Tensor! query,"
-        "                         Tensor! key, int head_size,"
-        "                         Tensor cos_sin_cache, bool is_neox,"
-        "                         int rot_dim,"
-        "                         Tensor cos_sin_cache_offsets) -> ()");
-  }
-  ops.impl("batched_rotary_embedding", torch::kPrivateUse1,
-           &batched_rotary_embedding);
 
   // Quantization ops
 
@@ -1047,7 +1031,7 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
   if (!handle.has_value()) {
     ops.def(
         "dynamic_per_token_group_fp8_quant(Tensor! out, Tensor! scale, "
-        "Tensor input, int group_size) -> ()");
+        "Tensor input, int group_size) -> ()", {at::Tag::flexible_layout});
   }
   ops.impl("dynamic_per_token_group_fp8_quant", torch::kPrivateUse1,
            dynamic_per_token_group_fp8_quant);
@@ -1221,33 +1205,6 @@ TORCH_LIBRARY_FRAGMENT(CONCAT(TORCH_EXTENSION_NAME, _cache_ops),
                       cache_ops) {
   // Cache ops
   std::optional<c10::OperatorHandle> handle;
-
-  // Swap in (out) the cache blocks from src to dst.
-  handle = c10::Dispatcher::singleton().findSchema(
-      {"_C_cache_ops::swap_blocks", ""});
-  if (!handle.has_value()) {
-    cache_ops.def(
-        "swap_blocks(Tensor src, Tensor! dst, Tensor block_mapping) -> ()");
-  }
-  cache_ops.impl("swap_blocks", torch::kPrivateUse1, &swap_blocks);
-
-  // Copy the cache blocks from src to dst.
-  handle = c10::Dispatcher::singleton().findSchema(
-      {"_C_cache_ops::copy_blocks", ""});
-  if (!handle.has_value()) {
-    cache_ops.def(
-        "copy_blocks(Tensor(a!)[] key_caches, Tensor[](b!) value_caches, "
-        "Tensor block_mapping) -> ()");
-  }
-  cache_ops.impl("copy_blocks", torch::kPrivateUse1, &copy_blocks);
-
-  handle = c10::Dispatcher::singleton().findSchema(
-      {"_C_cache_ops::copy_blocks_mla", ""});
-  if (!handle.has_value()) {
-    cache_ops.def(
-        "copy_blocks_mla(Tensor(a!)[] kv_caches, Tensor block_mapping) -> ()");
-  }
-  // cache_ops.impl("copy_blocks_mla", torch::kPrivateUse1, &copy_blocks_mla);
 
   // Reshape the key and value tensors and cache them.
   // TODO change to Tensor

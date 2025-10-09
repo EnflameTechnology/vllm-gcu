@@ -47,8 +47,6 @@ class MoEPrepareAndFinalizeNoEP(FusedMoEPrepareAndFinalize):
     def prepare(
         self,
         a1: torch.Tensor,
-        a1_scale: Optional[torch.Tensor],
-        a2_scale: Optional[torch.Tensor],
         topk_weights: torch.Tensor,
         topk_ids: torch.Tensor,
         num_experts: int,
@@ -60,7 +58,7 @@ class MoEPrepareAndFinalizeNoEP(FusedMoEPrepareAndFinalize):
         assert not apply_router_weight_on_input
 
         a1q, a1q_scale = moe_kernel_quantize_input(
-            a1, a1_scale, quant_config.quant_dtype,
+            a1, quant_config.a1_scale, quant_config.quant_dtype,
             quant_config.per_act_token_quant, quant_config.block_shape)
 
         total_tokens = ExpertTokensMetadata(
@@ -233,8 +231,6 @@ class AlltoAllStaticShape(AlltoAllPrepareAndFinalize):
     def prepare(
         self,
         a1: torch.Tensor,
-        a1_scale: Optional[torch.Tensor],
-        a2_scale: Optional[torch.Tensor],
         topk_weights: torch.Tensor,
         topk_ids: torch.Tensor,
         num_experts: int,
@@ -271,6 +267,7 @@ class AlltoAllStaticShape(AlltoAllPrepareAndFinalize):
         hidden_states = a1
         hidden_states_ori = hidden_states
         do_quant = quant_config.is_quantized
+        a1_scale = quant_config.a1_scale
 
         # In official vllm master branch, "per_channel_quant" parameter is used to determine dynamic or static quant
         # TODO: when upgrade, need to refine this parameter
@@ -409,8 +406,6 @@ class AlltoAllDynamicShape(AlltoAllPrepareAndFinalize):
     def prepare(
         self,
         a1: torch.Tensor,
-        a1_scale: Optional[torch.Tensor],
-        a2_scale: Optional[torch.Tensor],
         topk_weights: torch.Tensor,
         topk_ids: torch.Tensor,
         num_experts: int,
@@ -447,6 +442,7 @@ class AlltoAllDynamicShape(AlltoAllPrepareAndFinalize):
         hidden_states = a1
         hidden_states_ori = hidden_states
         do_quant = quant_config.is_quantized
+        a1_scale = quant_config.a1_scale
 
         # In official vllm master branch, "per_channel_quant" parameter is used to determine dynamic or static quant
         # TODO: when upgrade, need to refine this parameter

@@ -249,7 +249,7 @@ class FusedW8A8MoEMethod(FusedMoEMethodBase):
     ) -> torch.Tensor:
         from vllm.model_executor.layers.fused_moe.fused_w8a8_moe import fused_experts
 
-        topk_weights, topk_ids = FusedMoE.select_experts(
+        topk_weights, topk_ids, _ = FusedMoE.select_experts(
             hidden_states=x,
             router_logits=router_logits,
             use_grouped_topk=use_grouped_topk,

@@ -41,7 +41,6 @@ from vllm.model_executor.layers.logits_processor import LogitsProcessor
 from vllm.model_executor.layers.quantization import QuantizationConfig
 from vllm.model_executor.layers.rotary_embedding import get_rope
 from vllm.model_executor.layers.vocab_parallel_embedding import ParallelLMHead
-from vllm.model_executor.sampling_metadata import SamplingMetadata
 from vllm.sequence import IntermediateTensors
 
 from vllm.model_executor.models.interfaces import SupportsLoRA, SupportsPP
@@ -51,7 +50,6 @@ from vllm.model_executor.models.utils import (
     PPMissingLayer,
     maybe_prefix,
 )
-from vllm.model_executor.layers.sampler import SamplerOutput, get_sampler
 from vllm.model_executor.models.qwen2 import (
     make_layers,
     make_empty_intermediate_tensors_factory,
@@ -479,7 +477,6 @@ class Qwen3ForCausalLM(nn.Module, SupportsLoRA, SupportsPP):
         self.make_empty_intermediate_tensors = (
             self.model.make_empty_intermediate_tensors
         )
-        self.sampler = get_sampler()
 
     def get_input_embeddings(self, input_ids: torch.Tensor) -> torch.Tensor:
         return self.model.get_input_embeddings(input_ids)
@@ -499,20 +496,11 @@ class Qwen3ForCausalLM(nn.Module, SupportsLoRA, SupportsPP):
     def compute_logits(
         self,
         hidden_states: torch.Tensor,
-        sampling_metadata: SamplingMetadata,
     ) -> Optional[torch.Tensor]:
         logits = self.logits_processor(
-            self.lm_head, hidden_states, sampling_metadata
+            self.lm_head, hidden_states
         )
         return logits
-
-    def sample(
-        self,
-        logits: torch.Tensor,
-        sampling_metadata: SamplingMetadata,
-    ) -> Optional[SamplerOutput]:
-        next_tokens = self.sampler(logits, sampling_metadata)
-        return next_tokens
 
     def load_weights(
         self, weights: Iterable[Tuple[str, torch.Tensor]]

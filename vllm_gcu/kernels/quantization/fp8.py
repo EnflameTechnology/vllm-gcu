@@ -58,7 +58,7 @@ class Fp8GCULinearMethod(Fp8LinearMethod):
                 input=x.view(self.out_dtype) if x.dtype != self.out_dtype else x,
                 weight=layer.weight,
                 block_size=self.quant_config.weight_block_size,
-                weight_scale=layer.weight_scale_inv,
+                weight_scale=layer.weight_scale,
                 input_scale=layer.input_scale if x_scale is None else x_scale,
                 bias=bias,
                 cutlass_block_fp8_supported=self.cutlass_block_fp8_supported,
@@ -69,22 +69,12 @@ class Fp8GCULinearMethod(Fp8LinearMethod):
 
 class Fp8GCUMoEMethod(Fp8MoEMethod):
 
-    def __init__(self, quant_config: Fp8Config, layer: torch.nn.Module):
-        import vllm.model_executor.layers.fused_moe
-        from vllm.model_executor.layers.fused_moe.fused_moe import fused_experts
-        setattr(vllm.model_executor.layers.fused_moe, 'fused_experts', fused_experts)
-        super().__init__(quant_config, layer)
-
     def select_gemm_impl(
         self,
         prepare_finalize,
-        moe,
         layer,
     ):
-        return TritonExpertsPad(
-            use_fp8_w8a8=True,
-            block_shape=self.quant_config.weight_block_size,
-        )
+        return TritonExpertsPad(self.moe_quant_config)
 
     def apply(
         self,
@@ -116,7 +106,10 @@ class Fp8GCUMoEMethod(Fp8MoEMethod):
             assert logical_replica_count is not None
             assert isinstance(layer, FusedMoE)
 
-        topk_weights, topk_ids = FusedMoE.select_experts(
+        zero_expert_num = getattr(layer, 'zero_expert_num', 0)
+        zero_expert_type = getattr(layer, 'zero_expert_type', None)
+
+        select_result = FusedMoE.select_experts(
             hidden_states=x,
             router_logits=router_logits,
             use_grouped_topk=use_grouped_topk,
@@ -134,7 +127,11 @@ class Fp8GCUMoEMethod(Fp8MoEMethod):
             expert_load_view=expert_load_view,
             logical_to_physical_map=logical_to_physical_map,
             logical_replica_count=logical_replica_count,
+            global_num_experts=global_num_experts,
+            zero_expert_num=zero_expert_num,
+            zero_expert_type=zero_expert_type,
         )
+        topk_weights, topk_ids, zero_expert_result = select_result
 
         return self.fused_experts(
             hidden_states=x,
@@ -147,12 +144,6 @@ class Fp8GCUMoEMethod(Fp8MoEMethod):
             global_num_experts=global_num_experts,
             apply_router_weight_on_input=apply_router_weight_on_input,
             expert_map=expert_map,
-            w1_scale=(layer.w13_weight_scale_inv
-                        if self.block_quant else layer.w13_weight_scale),
-            w2_scale=(layer.w2_weight_scale_inv
-                        if self.block_quant else layer.w2_weight_scale),
-            a1_scale=layer.w13_input_scale,
-            a2_scale=layer.w2_input_scale,
         )
 
 
@@ -164,6 +155,7 @@ def apply_w8a8_block_fp8_linear(
     input_scale: Optional[torch.Tensor] = None,
     bias: Optional[torch.Tensor] = None,
     cutlass_block_fp8_supported: bool = False,
+    use_aiter_and_is_supported: bool = False,
 ) -> torch.Tensor:
     output_dtype = input.dtype
 
@@ -195,8 +187,8 @@ def apply_w8a8_block_fp8_linear(
     return output.to(dtype=output_dtype).view(*output_shape)
 
 
-vllm_lib.impl(
-    "apply_w8a8_block_fp8_linear",
-    apply_w8a8_block_fp8_linear,
-    dispatch_key="PrivateUse1",
-)
+# vllm_lib.impl(
+#     "apply_w8a8_block_fp8_linear",
+#     apply_w8a8_block_fp8_linear,
+#     dispatch_key="PrivateUse1",
+# )

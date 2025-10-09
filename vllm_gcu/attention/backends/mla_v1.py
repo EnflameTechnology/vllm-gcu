@@ -41,7 +41,7 @@ class GCUMLABackend(MLACommonBackend):
 
 @dataclass
 class GCUMLADecodeMetadata(MLACommonDecodeMetadata):
-    max_query_len: int
+    max_decode_seq_len: int
 
 
 @dataclass
@@ -54,13 +54,11 @@ class GCUMLAMetadataBuilder(MLACommonMetadataBuilder[GCUMLAMetadata]):
 
     def build_for_cudagraph_capture(self, common_attn_metadata):
         m = common_attn_metadata
-        m.max_query_len = 1
 
-        self._num_decodes = m.num_reqs
-        self._num_decode_tokens = m.num_actual_tokens
-        self._num_prefills = 0
-        self._num_prefill_tokens = 0
-        return self.build(0, m)
+        metadata = super().build_for_cudagraph_capture(m)
+        # overwrite max_decode_seq_len to max_model_len when capture
+        metadata.decode.max_decode_seq_len = m.max_seq_len
+        return metadata
 
     def _build_decode(self, block_table_tensor: torch.Tensor,
                       seq_lens_cpu: torch.Tensor,
@@ -71,7 +69,7 @@ class GCUMLAMetadataBuilder(MLACommonMetadataBuilder[GCUMLAMetadata]):
         return GCUMLADecodeMetadata(
             block_table=block_table_tensor,
             seq_lens=seq_lens_device,
-            max_query_len=seq_lens_cpu.max(),
+            max_decode_seq_len=seq_lens_cpu.max(),
         )
 
 
@@ -222,7 +220,7 @@ class GCUMLAImpl(MLACommonImpl[GCUMLAMetadata]):
                 attn_out = cp_lse_ag_out_rs(attn_out, lse, get_dcp_group())
 
             # v_up projection
-            output[:num_decode_tokens] = self._v_up_proj(attn_out)
+            self._v_up_proj(attn_out, out=output[:num_decode_tokens])
         return output_padded
 
     def _forward_decode(
@@ -262,7 +260,7 @@ class GCUMLAImpl(MLACommonImpl[GCUMLAMetadata]):
             block_tables=decode_meta.block_table,
             seq_lens=decode_meta.seq_lens,
             block_size=kv_c_and_k_pe_cache.size(1),
-            max_seq_len=decode_meta.max_query_len,
+            max_seq_len=decode_meta.max_decode_seq_len,
             alibi_slopes=None,
             kv_cache_dtype=self.kv_cache_dtype,
             k_scale_float=layer._k_scale_float,

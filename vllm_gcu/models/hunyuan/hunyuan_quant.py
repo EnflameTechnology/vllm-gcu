@@ -40,14 +40,12 @@ from vllm.model_executor.layers.linear import (
 from vllm.model_executor.layers.logits_processor import LogitsProcessor
 from vllm.model_executor.layers.quantization.base_config import QuantizationConfig
 from vllm.model_executor.layers.rotary_embedding import get_rope
-from vllm.model_executor.layers.sampler import Sampler, SamplerOutput
 from vllm.model_executor.layers.vocab_parallel_embedding import (
     DEFAULT_VOCAB_PADDING_SIZE,
     ParallelLMHead,
     VocabParallelEmbedding,
 )
 from vllm.model_executor.model_loader.weight_utils import default_weight_loader
-from vllm.model_executor.sampling_metadata import SamplingMetadata
 from vllm.sequence import IntermediateTensors
 
 
@@ -443,11 +441,10 @@ class HunyuanForCausalLM(nn.Module):
                 else lora_config.lora_vocab_padding_size
             ),
         )
-        # self.sampler = Sampler(config.vocab_size)
+
         self.logits_processor = LogitsProcessor(
             self.unpadded_vocab_size, config.vocab_size
         )
-        self.sampler = Sampler()
 
     def forward(
         self,
@@ -461,18 +458,10 @@ class HunyuanForCausalLM(nn.Module):
         return hidden_states
 
     def compute_logits(
-        self, hidden_states: torch.Tensor, sampling_metadata: SamplingMetadata
+        self, hidden_states: torch.Tensor
     ) -> torch.Tensor:
-        logits = self.logits_processor(self.lm_head, hidden_states, sampling_metadata)
+        logits = self.logits_processor(self.lm_head, hidden_states)
         return logits
-
-    def sample(
-        self,
-        logits: Optional[torch.Tensor],
-        sampling_metadata: SamplingMetadata,
-    ) -> Optional[SamplerOutput]:
-        next_tokens = self.sampler(logits, sampling_metadata)
-        return next_tokens
 
     def load_weights(self, weights: Iterable[Tuple[str, torch.Tensor]]):
         stacked_params_mapping = [

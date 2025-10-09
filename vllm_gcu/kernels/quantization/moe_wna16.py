@@ -11,6 +11,9 @@ from vllm.model_executor.layers.fused_moe.layer import (
     FusedMoeWeightScaleSupported,
     FusedMoEConfig,
 )
+from vllm.model_executor.layers.fused_moe.config import (
+    FusedMoEQuantConfig, int4_w4a16_moe_quant_config,
+    int8_w8a16_moe_quant_config)
 from vllm.model_executor.layers.linear import LinearBase, UnquantizedLinearMethod
 from vllm.model_executor.layers.quantization.kv_cache import BaseKVCacheMethod
 from vllm.model_executor.layers.quantization.base_config import QuantizationConfig
@@ -545,18 +548,28 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
                     layer.w2_qweight.data.permute(0, 2, 1).contiguous().permute(0, 2, 1)
                 )
 
+    def get_fused_moe_quant_config(
+            self, layer: torch.nn.Module) -> Optional[FusedMoEQuantConfig]:
+        weight_bits = self.quant_config.weight_bits
+        has_zp = self.quant_config.has_zp
+        assert weight_bits == 4 or weight_bits == 8
+        config_builder = (int4_w4a16_moe_quant_config
+                          if weight_bits == 4 else int8_w8a16_moe_quant_config)
+
+        return config_builder(
+            w1_scale=layer.w13_scales,
+            w2_scale=layer.w2_scales,
+            w1_zp=layer.w13_qzeros if has_zp else None,
+            w2_zp=layer.w2_qzeros if has_zp else None,
+            block_shape=[0, layer.group_size],
+        )
+
     def select_gemm_impl(
         self,
         prepare_finalize,
-        moe,
         layer,
     ):
-        weight_bits = self.quant_config.weight_bits
-        return TritonExpertsPad(
-            use_int4_w4a16=weight_bits == 4,
-            use_int8_w8a16=weight_bits == 8,
-            block_shape=[0, self.quant_config.group_size],
-        )
+        return TritonExpertsPad(self.moe_quant_config)
 
     def apply(
         self,
@@ -585,7 +598,7 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
             raise NotImplementedError(
                 "EPLB not supported for `MoeWNA16GCUMethod` yet.")
 
-        topk_weights, topk_ids = FusedMoE.select_experts(
+        topk_weights, topk_ids, _ = FusedMoE.select_experts(
             hidden_states=x,
             router_logits=router_logits,
             use_grouped_topk=use_grouped_topk,
@@ -600,9 +613,7 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
             indices_type=self.topk_indices_dtype,
         )
 
-        has_zp = self.quant_config.has_zp
-
-        self.fused_experts(
+        return self.fused_experts(
             x,
             layer.w13_qweight,
             layer.w2_qweight,
@@ -612,10 +623,5 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
             activation=activation,
             expert_map=expert_map,
             global_num_experts=global_num_experts,
-            w1_scale=layer.w13_scales,
-            w2_scale=layer.w2_scales,
-            w1_zp=layer.w13_qzeros if has_zp else None,
-            w2_zp=layer.w2_qzeros if has_zp else None,
             apply_router_weight_on_input=apply_router_weight_on_input,
         )
-        return x

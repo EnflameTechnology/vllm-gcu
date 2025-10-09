@@ -68,19 +68,8 @@ class GCUPlatform(Platform):
     def is_cuda_alike(self) -> bool:
         return True
 
-    def get_vit_attn_backend(cls, support_fa: bool = False) -> _Backend:
-        if envs.VLLM_USE_V1:
-            if support_fa:
-                return _Backend.FLASH_ATTN
-            else:
-                return _Backend.TORCH_SDPA
-        if cls.has_device_capability(140):
-            if not support_fa:
-                return _Backend.TORCH_SDPA
-            return _Backend.FLASH_ATTN
-        elif cls.has_device_capability(130):
-            return _Backend.XFORMERS
-        raise NotImplementedError
+    def get_vit_attn_backend(cls, head_size: int, dtype: torch.dtype) -> _Backend:
+        return _Backend.FLASH_ATTN
 
     @classmethod
     def opaque_attention_op(cls) -> bool:
@@ -97,32 +86,22 @@ class GCUPlatform(Platform):
         use_v1: bool,
         use_mla: bool,
         has_sink: bool,
+        use_sparse: bool,
     ) -> str:
         if use_mla:
-            if use_v1:
-                if selected_backend == _Backend.FLASHMLA:
-                    return "vllm.v1.attention.backends.mla.flashmla.FlashMLABackend"
-                if gcu_envs.VLLM_GCU_DEEPSEEK_FUSION:
-                    return "vllm_gcu.attention.backends.mla_v1_fusion.GCUMLAFusionBackend"
-                else:
-                    return "vllm_gcu.attention.backends.mla_v1.GCUMLABackend"
+            if use_sparse:
+                logger.info_once("Using Sparse MLA backend on V1 engine.")
+                return ("vllm.v1.attention.backends.mla.flashmla_sparse."
+                        "FlashMLASparseBackend")
+            if selected_backend == _Backend.FLASHMLA:
+                return "vllm.v1.attention.backends.mla.flashmla.FlashMLABackend"
+            if gcu_envs.VLLM_GCU_DEEPSEEK_FUSION:
+                return "vllm_gcu.attention.backends.mla_v1_fusion.GCUMLAFusionBackend"
             else:
-                if gcu_envs.VLLM_GCU_DEEPSEEK_FUSION:
-                    return "vllm_gcu.attention.backends.mla_fusion.GCUMLAFusionBackend"
-                else:
-                    return "vllm_gcu.attention.backends.mla.GCUMLABackend"
-        if use_v1:
-            return "vllm.v1.attention.backends.flash_attn.FlashAttentionBackend"
-        if selected_backend == _Backend.FLASHINFER:
-            raise NotImplementedError
-        elif selected_backend == _Backend.XFORMERS:
-            return "vllm_gcu.attention.backends.xformers.GCUXFormersBackend"
-        elif selected_backend == _Backend.FLASH_ATTN:
-            return "vllm.attention.backends.flash_attn.FlashAttentionBackend"
-            # return "vllm_gcu.attention.backends.flash_attn.FlashAttentionBackend"
-        elif selected_backend:
-            raise NotImplementedError(f"{selected_backend}")
-        return "vllm_gcu.attention.backends.xformers.GCUXFormersBackend"
+                return "vllm_gcu.attention.backends.mla_v1.GCUMLABackend"
+
+        return "vllm.v1.attention.backends.flash_attn.FlashAttentionBackend"
+
 
     @classmethod
     def get_device_capability(cls, device_id: int = 0) -> DeviceCapability:
@@ -158,10 +137,6 @@ class GCUPlatform(Platform):
         return device_props.total_memory
 
     @classmethod
-    def is_async_output_supported(cls, enforce_eager: Optional[bool]) -> bool:
-        return False if enforce_eager else True
-
-    @classmethod
     def inference_mode(cls):
         return torch.inference_mode(mode=True)
 
@@ -187,8 +162,7 @@ class GCUPlatform(Platform):
         import vllm_gcu.kernels  # noqa: F401
         import vllm_gcu.patch  # noqa: F401
 
-        if envs.VLLM_USE_V1:
-            os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
+        os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
 
         if parser:
             key = "--device"
@@ -211,49 +185,16 @@ class GCUPlatform(Platform):
         compilation_config = vllm_config.compilation_config
 
         if parallel_config.worker_cls == "auto":
-            if vllm_config.speculative_config:
-                if envs.VLLM_USE_V1:
-                    parallel_config.worker_cls = "vllm_gcu.worker.worker_v1.GCUWorker"
-                else:
-                    raise NotImplementedError
-            else:
-                if envs.VLLM_USE_V1:
-                    parallel_config.worker_cls = "vllm_gcu.worker.worker_v1.GCUWorker"
-                else:
-                    parallel_config.worker_cls = "vllm_gcu.worker.worker.GCUWorker"
+            parallel_config.worker_cls = "vllm_gcu.worker.worker_v1.GCUWorker"
 
-        # make sure patch work
-        if envs.VLLM_USE_V1:
-            distributed_executor_backend = parallel_config.distributed_executor_backend
-            if isinstance(distributed_executor_backend, str):
-                if distributed_executor_backend == "mp":
-                    from vllm_gcu.executor import GCUMultiprocExecutor
+        distributed_executor_backend = parallel_config.distributed_executor_backend
+        if isinstance(distributed_executor_backend, str):
+            if distributed_executor_backend == "mp":
+                from vllm_gcu.executor import GCUMultiprocExecutor
 
-                    parallel_config.distributed_executor_backend = GCUMultiprocExecutor
-                elif distributed_executor_backend == "ray":
-                    pass
-
-        if envs.VLLM_USE_V1 and torch.__version__.startswith("2.5.1"):
-
-            def stateless_init_dp_group(self):
-                from vllm_gcu.distributed.utils import (
-                    stateless_init_torch_distributed_process_group,
-                )
-
-                # use gloo since the engine process might not have cuda device
-                dp_group = stateless_init_torch_distributed_process_group(
-                    self.data_parallel_master_ip,
-                    self.get_next_dp_init_port(),
-                    self.data_parallel_rank,
-                    self.data_parallel_size,
-                    backend="gloo",
-                )
-
-                return dp_group
-
-            parallel_config.stateless_init_dp_group = types.MethodType(
-                stateless_init_dp_group, parallel_config
-            )
+                parallel_config.distributed_executor_backend = GCUMultiprocExecutor
+            elif distributed_executor_backend == "ray":
+                pass
 
         # Force disable custom all reduce
         parallel_config.disable_custom_all_reduce = True
@@ -310,8 +251,6 @@ class GCUPlatform(Platform):
 
         if model_config:
             model_config.enable_sleep_mode = False
-            if envs.VLLM_USE_V1:
-                model_config.use_async_output_proc = True
 
         additional_config = vllm_config.additional_config
         if additional_config.get("enable_eplb", False):
@@ -321,11 +260,8 @@ class GCUPlatform(Platform):
             assert parallel_config.enable_eplb, "EPLB must be enabled"
             parallel_config.eplb_config.num_redundant_experts = num_redundant_experts
 
-        # TODO: v1
-        if not envs.VLLM_USE_V1 and \
-                "VLLM_GCU_DEEPSEEK_FUSION" not in os.environ and \
-                cls.get_device_capability().to_int() == 130 and \
-                model_config and model_config.hf_text_config.model_type in \
+        if "VLLM_GCU_DEEPSEEK_FUSION" not in os.environ and \
+            model_config and model_config.hf_text_config.model_type in \
                     ('deepseek_v3', 'deepseek_mtp'):
             os.environ["VLLM_GCU_DEEPSEEK_FUSION"] = "1"
 
@@ -386,20 +322,12 @@ class GCUPlatform(Platform):
     def fp8_dtype(cls) -> torch.dtype:
         return torch.float8_e4m3fn
 
-    @classmethod
-    def supports_v1(cls, model_config) -> bool:
-        return True
-
     def is_sleep_mode_available(self) -> bool:
         return False
 
     @classmethod
     def get_static_graph_wrapper_cls(cls) -> str:
         return "vllm.compilation.cuda_graph.CUDAGraphWrapper"
-
-    @classmethod
-    def default_v1(cls, model_config) -> bool:
-        return cls.supports_v1(model_config)
 
     @classmethod
     def is_kv_cache_dtype_supported(cls, kv_cache_dtype: str,
@@ -478,3 +406,25 @@ class GCUPlatform(Platform):
         except Exception as e:
             logger.warning("Failed to set CPU affinity for GCU devices %s: %s",
                            device_id, str(e))
+
+    @classmethod
+    def support_static_graph_mode(cls) -> bool:
+        """
+        Returns if the graph mode is supported by the current platform.
+        """
+        return True
+
+    @classmethod
+    def get_nixl_supported_devices(cls) -> dict[str, tuple[str, ...]]:
+        """
+        Returns a mapping from device_type to a tuple of supported
+        kv_buffer_device for nixl.
+        """
+        return {"gcu": ("gcu", "cuda")}
+
+    @classmethod
+    def get_nixl_memory_type(cls) -> Optional[str]:
+        """
+        Returns the nixl memory type for the current platform.
+        """
+        return "VRAM"

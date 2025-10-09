@@ -48,7 +48,6 @@ from vllm.distributed import (
     tensor_model_parallel_all_reduce,
 )
 
-from vllm.inputs import DummyData, InputContext
 from vllm.model_executor.layers.activation import SiluAndMul
 from vllm.model_executor.layers.fused_moe import FusedMoE
 from vllm.model_executor.layers.shared_fused_moe import SharedFusedMoE
@@ -79,8 +78,7 @@ from vllm.model_executor.models.utils import (
     maybe_prefix,
     PPMissingLayer,
 )
-from vllm.model_executor.sampling_metadata import SamplingMetadata
-from vllm.sequence import IntermediateTensors, SequenceData
+from vllm.sequence import IntermediateTensors
 
 import vllm_gcu.envs as gcu_envs
 import vllm_gcu.distributed.parallel_state  # noqa
@@ -98,7 +96,7 @@ def custom_pass(graph: torch.fx.Graph) -> torch.fx.Graph:
     from vllm_gcu.compilation.fusion import GCUFusionPass
 
     vllm_config = get_current_vllm_config()
-    GCUFusionPass.instance(
+    GCUFusionPass(
         vllm_config
     ).patterns.apply(graph)
     graph.eliminate_dead_code()
@@ -189,6 +187,7 @@ class DeepseekV2MoE(nn.Module):
     def __init__(
         self,
         config: PretrainedConfig,
+        model_config,
         quant_config: Optional[QuantizationConfig] = None,
         prefix: str = "",
         layer_log2phy=None,
@@ -290,7 +289,8 @@ class DeepseekV2MoE(nn.Module):
             if quant_config is not None:
                 self.shared_experts = torch.compile(
                     self.shared_experts,
-                    backend=custom_backend, dynamic=True
+                    backend=custom_backend,
+                    dynamic=True,
                 )
 
             self.experts = SharedFusedMoE(
@@ -739,6 +739,7 @@ class DeepseekV2DecoderLayer(nn.Module):
 
             self.mlp = DeepseekV2MoE(
                 config=config,
+                model_config=model_config,
                 quant_config=quant_config,
                 prefix=f"{prefix}.mlp",
                 layer_log2phy=layer_log2phy,
@@ -898,15 +899,6 @@ class DeepseekV2Model(nn.Module):
         return hidden_states
 
 
-def dummy_data_for_deepseek(
-    ctx: InputContext, seq_len: int, mm_counts: Mapping[str, int]
-) -> DummyData:
-    config = ctx.get_hf_config()
-    seq = np.random.randint(0, config.vocab_size, size=seq_len).tolist()
-    seq_data = SequenceData.from_seqs(seq)
-    return DummyData(seq_data)
-
-
 class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
 
     def __init__(self, *, vllm_config: VllmConfig, prefix: str = ""):
@@ -1006,10 +998,6 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
 
             NON_EXPERT_WEIGHTS = {
                 "e_score_correction_bias",
-                "shared_experts._orig_mod.gate_up_proj.weight",
-                "shared_experts._orig_mod.gate_up_proj.weight_scale_inv",
-                "shared_experts._orig_mod.down_proj.weight",
-                "shared_experts._orig_mod.down_proj.weight_scale_inv",
                 "w13_scales",
                 "w2_scales",
                 "w13_input_scale",
@@ -1020,7 +1008,8 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
 
             return [
                 weight.view(layer.local_num_experts, -1) for name, weight in weights
-                if name not in NON_EXPERT_WEIGHTS
+                if name not in NON_EXPERT_WEIGHTS and weight.shape != torch.Size(
+                []) and not name.startswith("_shared_experts.")
             ]
 
         for layer_idx, layer in enumerate(self.moe_layers):
@@ -1055,9 +1044,8 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
     def compute_logits(
         self,
         hidden_states: torch.Tensor,
-        sampling_metadata: SamplingMetadata,
     ) -> Optional[torch.Tensor]:
-        logits = self.logits_processor(self.lm_head, hidden_states, sampling_metadata)
+        logits = self.logits_processor(self.lm_head, hidden_states)
         return logits
 
     def make_empty_intermediate_tensors(

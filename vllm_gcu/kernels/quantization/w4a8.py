@@ -7,6 +7,8 @@ import torch
 from torch.nn.modules import Module
 from vllm.model_executor.layers.fused_moe.layer import (
     FusedMoE, FusedMoEMethodBase, FusedMoeWeightScaleSupported)
+from vllm.model_executor.layers.fused_moe.config import (
+    FusedMoEQuantConfig, fp8_w8a8_moe_quant_config)
 from vllm.model_executor.layers.linear import (LinearBase,
                                                UnquantizedLinearMethod)
 from vllm.model_executor.layers.quantization.base_config import (
@@ -94,7 +96,7 @@ class W4A8Config(QuantizationConfig):
             from vllm_gcu.kernels.quantization.fp8 import Fp8GCULinearMethod
             return  Fp8GCULinearMethod(self)
         elif isinstance(layer, FusedMoE):
-            return MoeW4A8Method(self)
+            return MoeW4A8Method(self, layer)
         elif isinstance(layer, Attention):
             from vllm.model_executor.layers.quantization.fp8 import Fp8KVCacheMethod
             return Fp8KVCacheMethod(self)
@@ -123,10 +125,8 @@ class MoeW4A8Method(Fp8MoEMethod):
         quant_config: The MOE W4A8 quantization config.
     """
 
-    def __init__(self, quant_config: W4A8Config):
-        import vllm.model_executor.layers.fused_moe
-        from vllm.model_executor.layers.fused_moe.fused_moe import fused_experts
-        setattr(vllm.model_executor.layers.fused_moe, 'fused_experts', fused_experts)
+    def __init__(self, quant_config: W4A8Config, layer: torch.nn.Module):
+        FusedMoEMethodBase.__init__(self, layer.moe_config)
         self.quant_config = quant_config
 
     def process_weights_after_loading(self, layer: Module) -> None:
@@ -392,10 +392,21 @@ class MoeW4A8Method(Fp8MoEMethod):
     def select_gemm_impl(
         self,
         prepare_finalize,
-        moe,
+        layer,
     ):
-        return TritonExpertsPad(
-            use_fp8_w8a8=True,
+        return TritonExpertsPad(self.moe_quant_config)
+
+    def maybe_make_prepare_finalize(self):
+        return FusedMoEMethodBase.maybe_make_prepare_finalize(self)
+
+    def get_fused_moe_quant_config(
+            self, layer: torch.nn.Module) -> Optional[FusedMoEQuantConfig]:
+
+        return fp8_w8a8_moe_quant_config(
+            w1_scale=layer.w13_scales,
+            w2_scale=layer.w2_scales,
+            a1_scale=layer.w13_input_scale,
+            a2_scale=layer.w2_input_scale,
             block_shape=None,
         )
 
@@ -413,6 +424,7 @@ class MoeW4A8Method(Fp8MoEMethod):
         expert_map: Optional[torch.Tensor] = None,
         custom_routing_function: Optional[Callable] = None,
         scoring_func: str = "softmax",
+        routed_scaling_factor: float = 1.0,
         e_score_correction_bias: Optional[torch.Tensor] = None,
         apply_router_weight_on_input: bool = False,
         activation: str = "silu",
@@ -427,7 +439,8 @@ class MoeW4A8Method(Fp8MoEMethod):
             assert logical_to_physical_map is not None
             assert logical_replica_count is not None
             assert isinstance(layer, FusedMoE)
-        topk_weights, topk_ids = FusedMoE.select_experts(
+
+        topk_weights, topk_ids, _ = FusedMoE.select_experts(
             hidden_states=x,
             router_logits=router_logits,
             use_grouped_topk=use_grouped_topk,
@@ -437,6 +450,7 @@ class MoeW4A8Method(Fp8MoEMethod):
             num_expert_group=num_expert_group,
             custom_routing_function=custom_routing_function,
             scoring_func=scoring_func,
+            routed_scaling_factor=routed_scaling_factor,
             e_score_correction_bias=e_score_correction_bias,
             indices_type=self.topk_indices_dtype,
             enable_eplb=enable_eplb,
@@ -456,10 +470,6 @@ class MoeW4A8Method(Fp8MoEMethod):
             activation=activation,
             global_num_experts=global_num_experts,
             expert_map=expert_map,
-            w1_scale=layer.w13_scales,
-            w2_scale=layer.w2_scales,
-            a1_scale=layer.w13_input_scale,
-            a2_scale=layer.w2_input_scale,
             apply_router_weight_on_input=apply_router_weight_on_input,
             a1_scale_rec=layer.w13_input_scale_rec,
             a2_scale_rec=layer.w2_input_scale_rec,

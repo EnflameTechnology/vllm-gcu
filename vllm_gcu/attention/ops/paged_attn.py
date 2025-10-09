@@ -20,6 +20,7 @@ class PagedAttention:
         block_size: int,
         num_kv_heads: int,
         head_size: int,
+        cache_dtype_str: str = "auto",
     ) -> Tuple[int, ...]:
         return (2, num_blocks, block_size * num_kv_heads * head_size)
 
@@ -209,26 +210,3 @@ class PagedAttention:
             sliding_window,
         )
         return output
-
-    @staticmethod
-    def swap_blocks(
-        src_kv_cache: torch.Tensor,
-        dst_kv_cache: torch.Tensor,
-        src_to_dst: torch.Tensor,
-    ) -> None:
-        src_key_cache = src_kv_cache[0]
-        dst_key_cache = dst_kv_cache[0]
-        ops.swap_blocks(src_key_cache, dst_key_cache, src_to_dst)
-
-        src_value_cache = src_kv_cache[1]
-        dst_value_cache = dst_kv_cache[1]
-        ops.swap_blocks(src_value_cache, dst_value_cache, src_to_dst)
-
-    @staticmethod
-    def copy_blocks(
-        kv_caches: List[torch.Tensor],
-        src_to_dists: torch.Tensor,
-    ) -> None:
-        key_caches = [kv_cache[0] for kv_cache in kv_caches]
-        value_caches = [kv_cache[1] for kv_cache in kv_caches]
-        ops.copy_blocks(key_caches, value_caches, src_to_dists)

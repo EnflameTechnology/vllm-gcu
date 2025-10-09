@@ -10,9 +10,10 @@ from vllm.attention.backends.abstract import AttentionLayer
 from vllm.attention.ops.common import cp_lse_ag_out_rs
 from vllm.distributed.parallel_state import get_dcp_group
 from vllm.model_executor.layers.rotary_embedding import RotaryEmbedding
+from vllm.model_executor.custom_op import CustomOp
+from vllm.platforms import current_platform
 from vllm_gcu.attention.backends.mla_v1 import GCUMLABackend, GCUMLAImpl, GCUMLAMetadata
-from vllm_gcu.attention.backends.mla_fusion import RopeWithKVCache
-import vllm_gcu.kernels._custom_ops as ops
+
 
 logger = init_logger(__name__)
 
@@ -22,6 +23,109 @@ class GCUMLAFusionBackend(GCUMLABackend):
     @staticmethod
     def get_impl_cls() -> type["GCUMLAImpl"]:
         return GCUMLAFusionImpl
+
+
+@CustomOp.register("rope_with_kvcache")
+class RopeWithKVCache(CustomOp):
+    cos_sin_cache = None
+
+    def __init__(self, rotary_emb, kv_a_layernorm, kv_lora_rank,
+                 qk_rope_head_dim, kv_cache_dtype):
+        super().__init__()
+        self.rotary_emb = rotary_emb
+        self.kv_a_layernorm = kv_a_layernorm
+        self.kv_lora_rank = kv_lora_rank
+        self.qk_rope_head_dim = qk_rope_head_dim
+        self.kv_cache_dtype = kv_cache_dtype
+        if RopeWithKVCache.cos_sin_cache is None:
+            RopeWithKVCache.cos_sin_cache = self.rotary_emb.cos_sin_cache.to(
+                current_platform.device_type,
+                dtype=torch.float32,
+            )
+
+    def forward(
+        self,
+        q_pe_out,
+        k_pe_out,
+        q_pe,
+        kv_c_and_k_pe,
+        kv_cache,
+        slot_mapping,
+        input_positions,
+        kv_scale,
+        k_c_normed_out=None,
+    ):
+        dispatch = super().forward
+        prefill_support_platform = [140]
+        if (current_platform.get_device_capability().to_int() not in prefill_support_platform \
+                and k_pe_out is not None) or kv_cache.numel() == 0:
+            # prefill use native impl since op interface lack outputs.
+            dispatch = self.forward_native
+        return dispatch(
+            q_pe_out,
+            k_pe_out,
+            q_pe,
+            kv_c_and_k_pe,
+            kv_cache,
+            slot_mapping,
+            input_positions,
+            kv_scale,
+            k_c_normed_out,
+        )
+
+    def forward_native(
+        self,
+        q_pe_out,
+        k_pe_out,
+        q_pe,
+        kv_c_and_k_pe,
+        kv_cache,
+        slot_mapping,
+        input_positions,
+        kv_scale,
+        k_c_normed_out=None,
+    ):
+        kv_c, k_pe = kv_c_and_k_pe.split(
+            [self.kv_lora_rank, self.qk_rope_head_dim], dim=-1)
+        k_c_normed = self.kv_a_layernorm(kv_c)
+        if k_c_normed_out is not None:
+            k_c_normed_out.copy_(k_c_normed)
+        k_pe = k_pe.unsqueeze(1)
+
+        q_pe_out[...], k_pe[...] = self.rotary_emb(input_positions, q_pe, k_pe)
+        if k_pe_out is not None:
+            k_pe_out[...] = k_pe
+
+        # write the latent and rope to kv cache
+        if kv_cache.numel() > 0:
+            from vllm import _custom_ops as vops
+            vops.concat_and_cache_mla(
+                k_c_normed,
+                k_pe.squeeze(1),
+                kv_cache,
+                slot_mapping,
+                kv_cache_dtype=self.kv_cache_dtype,
+                scale=kv_scale,
+            )
+
+    def forward_oot(
+        self,
+        q_pe_out,
+        k_pe_out,
+        q_pe,
+        kv_c_and_k_pe,
+        kv_cache,
+        slot_mapping,
+        input_positions,
+        kv_scale,
+        k_c_normed_out=None,
+    ):
+        torch.ops._C.rotary_embedding_with_kv_cache(
+            q_pe_out, kv_cache, k_pe_out, k_c_normed_out, q_pe, kv_c_and_k_pe,
+            input_positions, RopeWithKVCache.cos_sin_cache,
+            self.kv_a_layernorm.weight.data, slot_mapping, kv_scale,
+            self.kv_a_layernorm.variance_epsilon,
+            [self.kv_lora_rank, self.qk_rope_head_dim], self.kv_cache_dtype)
 
 
 class GCUMLAFusionImpl(GCUMLAImpl):

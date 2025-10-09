@@ -13,6 +13,7 @@ from vllm.utils import round_up
 import vllm_gcu.envs as gcu_envs
 from vllm.config import VllmConfig, CUDAGraphMode
 from vllm.forward_context import set_forward_context, get_forward_context, BatchDescriptor
+from vllm.v1.worker.ubatch_utils import UBatchSlices
 
 if sys.version_info < (3, 10):
     from importlib_metadata import entry_points
@@ -98,6 +99,15 @@ def is_vllm_equal(target: str) -> bool:
         return False
 
 
+def is_nixl_equal(target: str):
+    try:
+        from importlib import metadata
+        version = metadata.version('nixl')
+        return version == target
+    except:
+        return False
+
+
 def ep_alltoall_threshold(vllm_config: VllmConfig):
     """
     Use dynamic memory allocation in EP dispatch when num_tokens_across_dp > threshold,
@@ -132,6 +142,7 @@ def set_gcu_forward_context(
     num_tokens_across_dp=None,
     cudagraph_runtime_mode: CUDAGraphMode = CUDAGraphMode.NONE,
     batch_descriptor: Optional[BatchDescriptor] = None,
+    ubatch_slices: Optional[UBatchSlices] = None,
     is_dummy=False,
 ):
     with set_forward_context(
@@ -142,6 +153,7 @@ def set_gcu_forward_context(
         num_tokens_across_dp,
         cudagraph_runtime_mode,
         batch_descriptor,
+        ubatch_slices,
     ) as ctx:
         # invoke hooks
         discovered_hooks = get_hooks(group="vllm_gcu.hooks")
@@ -154,7 +166,7 @@ def set_gcu_forward_context(
         threshold = ep_alltoall_threshold(vllm_config)
         dp_metadata = forward_context.dp_metadata
         if dp_metadata is not None:
-            total_tokens = dp_metadata.cu_tokens_across_dp_cpu[-1].item()
+            total_tokens = torch.sum(dp_metadata.num_tokens_across_dp_cpu).item()
         else:
             if attn_metadata is not None and hasattr(attn_metadata,
                                                  "num_prefill_tokens"):

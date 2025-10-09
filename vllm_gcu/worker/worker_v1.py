@@ -23,6 +23,13 @@ from vllm.sequence import IntermediateTensors
 from vllm.v1.attention.backends.utils import CommonAttentionMetadata
 from vllm.forward_context import BatchDescriptor
 from vllm.v1.spec_decode.eagle import EagleProposer
+from vllm.v1.worker.ubatch_splitting import (check_ubatch_thresholds,
+                                             ubatch_split)
+from vllm.v1.worker.ubatch_utils import UBatchSlice, UBatchSlices
+from vllm.v1.attention.backends.utils import (
+    AttentionCGSupport, AttentionMetadataBuilder, CommonAttentionMetadata,
+    create_fast_prefill_custom_backend,
+    reorder_batch_to_split_decodes_and_prefills, split_attn_metadata)
 from vllm_gcu import gcumem
 from vllm_gcu.utils import (set_gcu_forward_context,
                             dump_memory_snapshot_when_exception,
@@ -49,8 +56,10 @@ class GCUModelRunner(GPUModelRunner):
         cudagraph_runtime_mode: CUDAGraphMode = CUDAGraphMode.NONE,
         force_attention: bool = False,
         uniform_decode: bool = False,
+        allow_microbatching: bool = True,
         skip_eplb: bool = False,
         is_profile: bool = False,
+        create_mixed_batch: bool = False,
         remove_lora: bool = True,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
@@ -74,10 +83,6 @@ class GCUModelRunner(GPUModelRunner):
         assert cudagraph_runtime_mode in {
             CUDAGraphMode.NONE, CUDAGraphMode.PIECEWISE, CUDAGraphMode.FULL
         }
-
-        # Padding for DP
-        num_pad, num_tokens_across_dp = self.get_dp_padding(num_tokens)
-        num_tokens += num_pad
 
         # If cudagraph_mode.decode_mode() == FULL and
         # cudagraph_mode.separate_routine(). This means that we are using
@@ -103,6 +108,20 @@ class GCUModelRunner(GPUModelRunner):
         if num_tokens == 0:
             num_reqs = 1
             num_scheduled_tokens_list = []
+        elif create_mixed_batch:
+            assert not uniform_decode
+            # Create mixed batch:
+            # first half decode tokens, second half one prefill
+            num_decode_tokens = num_tokens // 2
+            num_prefill_tokens = num_tokens - num_decode_tokens
+            num_reqs = num_decode_tokens + 1
+
+            # Create decode requests (1 token each) followed by prefill request
+            num_scheduled_tokens_list = [1] * num_decode_tokens + [
+                num_prefill_tokens
+            ]
+            # Note: Overriding max_query_len to be the prefill tokens
+            max_query_len = num_prefill_tokens
         elif uniform_decode:
             num_reqs = cdiv(num_tokens, max_query_len)
             assert num_reqs <= max_num_reqs, \
@@ -120,6 +139,39 @@ class GCUModelRunner(GPUModelRunner):
         # assert len(num_scheduled_tokens_list) == num_reqs
         num_scheduled_tokens = np.array(num_scheduled_tokens_list,
                                         dtype=np.int32)
+        total_num_scheduled_tokens = int(num_scheduled_tokens.sum())
+
+        ubatch_slices = None
+        num_tokens_after_padding = None
+
+        # We currently only microbatch if the number of tokens is
+        # over a certain threshold.
+        if self.parallel_config.enable_dbo and allow_microbatching:
+            ubatch_slices, ubatch_num_tokens_after_padding = ubatch_split(
+                num_scheduled_tokens,
+                total_num_scheduled_tokens,
+                total_num_scheduled_tokens,
+                uniform_decode=uniform_decode,
+                vllm_config=self.vllm_config,
+            )
+            # Currently when DBO is enabled `ubatch_split` returns
+            # the num_tokens_after_padding for a single ubatch, but we have 2
+            # TODO(sage,lucas): this is cruft that should be addressed in the
+            # padding refactor.
+            if ubatch_num_tokens_after_padding is not None:
+                num_tokens_after_padding = ubatch_num_tokens_after_padding * 2
+
+        # If we failed to microbatch, currently need to resynchronize
+        # TODO(lucas,sage): we should be able to avoid this second sync by
+        #  refactoring `get_dp_padding_ubatch` and `get_dp_padding` into
+        #  a single `coordinate_batch_across_dp` function.
+        if num_tokens_after_padding is None:
+            num_pad, num_tokens_across_dp = self.get_dp_padding(num_tokens)
+            num_tokens_after_padding = num_tokens + num_pad
+        else:
+            num_tokens_across_dp = num_tokens_after_padding
+            num_tokens_after_padding = int(num_tokens_after_padding[0].item())
+
 
         attn_metadata: Optional[dict[str, Any]] = None
 
@@ -127,11 +179,24 @@ class GCUModelRunner(GPUModelRunner):
         # it only happens for cudagraph_runtime_mode=FULL.
         if force_attention or cudagraph_runtime_mode == CUDAGraphMode.FULL:
             attn_metadata = {}
+            if ubatch_slices is not None:
+                attn_metadata = [dict() for _ in range(len(ubatch_slices))]
 
-            # Make sure max_model_len is used at the graph capture time.
-            self.seq_lens.np[:num_reqs] = self.max_model_len
+            if create_mixed_batch:
+                # In the mixed batch mode (used for FI warmup), we use
+                # shorter sequence lengths to run faster.
+                # TODO(luka) better system for describing dummy batches
+                seq_lens = [1] * num_decode_tokens + [num_prefill_tokens + 1]
+            else:
+                seq_lens = max_query_len
+            self.seq_lens.np[:num_reqs] = seq_lens
             self.seq_lens.np[num_reqs:] = 0
             self.seq_lens.copy_to_gpu()
+
+            cum_num_tokens, _ = self._get_cumsum_and_arange(
+                num_scheduled_tokens)
+            self.query_start_loc.np[1:num_reqs + 1] = cum_num_tokens
+            self.query_start_loc.copy_to_gpu()
 
             for kv_cache_group_id, kv_cache_group_spec in enumerate(
                     self.kv_cache_config.kv_cache_groups):
@@ -148,30 +213,50 @@ class GCUModelRunner(GPUModelRunner):
                     max_query_len=max_query_len,
                     max_seq_len=self.max_model_len,
                     block_table_tensor=self.input_batch.block_table[
-                        kv_cache_group_id].get_device_tensor()[:num_reqs],
+                        kv_cache_group_id].get_device_tensor(num_reqs),
                     slot_mapping=self.input_batch.
-                    block_table[kv_cache_group_id].slot_mapping[:num_tokens],
+                    block_table[kv_cache_group_id].slot_mapping.gpu[:num_tokens],
                     causal=True)
 
                 for attn_group in self.attn_groups[kv_cache_group_id]:
-                    attn_metadata_i = attn_group.metadata_builder\
-                        .build_for_cudagraph_capture(common_attn_metadata)
-                    for layer_name in kv_cache_group_spec.layer_names:
-                        attn_metadata[layer_name] = attn_metadata_i
+                    if ubatch_slices is not None:
+                        common_attn_metadata_list = split_attn_metadata(
+                            ubatch_slices, common_attn_metadata)
+                        for ubid, common_attn_metadata in enumerate(
+                                common_attn_metadata_list):
+                            assert common_attn_metadata.max_query_len == 1
+                            attn_metadata_i = (attn_group\
+                                               .get_metadata_builder(ubatch_id=ubid)\
+                                               .build_for_cudagraph_capture(common_attn_metadata))
+                            for layer_name in attn_group.layer_names:
+                                assert type(attn_metadata) is list
+                                attn_metadata[ubid][
+                                    layer_name] = attn_metadata_i
+                    else:
+                        assert type(attn_metadata) is dict
+                        attn_metadata_i = attn_group.get_metadata_builder()\
+                            .build_for_cudagraph_capture(common_attn_metadata)
+                        for layer_name in attn_group.layer_names:
+                            attn_metadata[layer_name] = attn_metadata_i
 
         with self.maybe_dummy_run_with_lora(self.lora_config,
                                             num_scheduled_tokens, remove_lora):
-            if self.supports_mm_inputs:
+            model_kwargs = self._init_model_kwargs(num_tokens)
+            if (self.supports_mm_inputs
+                    and not self.model_config.is_encoder_decoder):
                 input_ids = None
                 inputs_embeds = self.inputs_embeds.gpu[:num_tokens]
                 model_kwargs = {
-                    **self._init_model_kwargs(num_tokens),
+                    **model_kwargs,
                     **self._dummy_mm_kwargs(num_reqs),
                 }
+            elif self.enable_prompt_embeds:
+                input_ids = None
+                inputs_embeds = self.inputs_embeds.gpu[:num_tokens]
+                model_kwargs = self._init_model_kwargs(num_tokens)
             else:
                 input_ids = self.input_ids.gpu[:num_tokens]
                 inputs_embeds = None
-                model_kwargs = self._init_model_kwargs(num_tokens)
 
             if self.uses_mrope:
                 positions = self.mrope_positions.gpu[:, :num_tokens]
@@ -190,26 +275,38 @@ class GCUModelRunner(GPUModelRunner):
 
                 intermediate_tensors = self.sync_and_slice_intermediate_tensors(
                     num_tokens, None, False)
-            if cudagraph_runtime_mode == CUDAGraphMode.NONE:
-                batch_descriptor = None
-            else:
-                # filter out the valid batch descriptor
-                _cg_mode, batch_descriptor = \
-                    self.cudagraph_dispatcher.dispatch(
-                        BatchDescriptor(num_tokens=num_tokens,
-                                        uniform_decode=uniform_decode))
-                # sanity check
-                assert cudagraph_runtime_mode == _cg_mode, (
+
+            # filter out the valid batch descriptor
+            _cg_mode, batch_descriptor = self.cudagraph_dispatcher.dispatch(
+                BatchDescriptor(num_tokens=num_tokens_after_padding,
+                                uniform_decode=uniform_decode)) \
+                if not is_profile else (CUDAGraphMode.NONE, None)
+            if cudagraph_runtime_mode is not None:
+                # we allow forcing NONE when the dispatcher disagrees to support
+                # warm ups for cudagraph capture
+                assert cudagraph_runtime_mode == CUDAGraphMode.NONE or \
+                    cudagraph_runtime_mode == _cg_mode, (
                     f"Cudagraph runtime mode mismatch at dummy_run. "
                     f"Expected {_cg_mode}, but got {cudagraph_runtime_mode}.")
+            else:
+                cudagraph_runtime_mode = _cg_mode
+
+            if ubatch_slices is not None:
+                # Adjust values to reflect a single ubatch.
+                # TODO(sage,lucas): this is cruft that should be addressed in
+                #  the padding refactor.
+                num_tokens_after_padding = ubatch_slices[0].num_tokens
+                if num_tokens_across_dp is not None:
+                    num_tokens_across_dp[:] = num_tokens_after_padding
 
             with self.maybe_randomize_inputs(input_ids), set_gcu_forward_context(
                     attn_metadata,
                     self.vllm_config,
-                    num_tokens=num_tokens,
+                    num_tokens=num_tokens_after_padding,
                     num_tokens_across_dp=num_tokens_across_dp,
                     cudagraph_runtime_mode=cudagraph_runtime_mode,
                     batch_descriptor=batch_descriptor,
+                    ubatch_slices=ubatch_slices,
                     is_dummy=True):
                 outputs = self.model(
                     input_ids=input_ids,

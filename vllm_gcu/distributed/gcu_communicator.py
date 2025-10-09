@@ -19,17 +19,6 @@ from vllm_gcu.distributed.pyeccl import PyEcclCommunicator
 
 logger = init_logger(__name__)
 
-class AllgathervNaiveManager(NaiveAll2AllManager):
-
-    def naive_multicast(self, x: torch.Tensor,
-                        cu_tokens_across_dp_cpu: torch.Tensor):
-        assert (len(x.shape) == 2)
-
-        recvcounts = torch.diff(cu_tokens_across_dp_cpu, dim=0).tolist()
-        recvcounts.insert(0, cu_tokens_across_dp_cpu[0].item())
-        return torch.ops.vllm.all_gather_v(x, recvcounts,
-                                           get_dp_group().unique_name)
-
 
 class GCUAll2AllManager(All2AllManagerBase):
 
@@ -73,9 +62,10 @@ class GCUCommunicator(CudaCommunicator):
                 if all2all_backend == "naive":
                     self.all2all_manager = NaiveAll2AllManager(self.cpu_group)
                     logger.info("Using naive all2all manager.")
-                elif all2all_backend == "allgatherv":
-                    self.all2all_manager = AllgathervNaiveManager(self.cpu_group)
-                    logger.info("Using allgatherv naive all2all manager.")
+                elif all2all_backend == "allgather_reducescatter":
+                    from vllm.distributed.device_communicators.all2all import AgRsAll2AllManager
+                    self.all2all_manager = AgRsAll2AllManager(self.cpu_group)
+                    logger.info("Using AllGather-ReduceScatter all2all manager.")
                 else:
                     raise ValueError(f"Unknown all2all backend: {all2all_backend}")
             else:
@@ -110,17 +100,25 @@ class GCUCommunicator(CudaCommunicator):
                 torch.distributed.all_reduce(out, group=self.device_group)
         return out
 
-    def dispatch(self, hidden_states, router_logits) -> tuple[torch.Tensor, torch.Tensor]:
+    def dispatch(
+            self,
+            hidden_states,
+            router_logits,
+            is_sequence_parallel: bool = False
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         # a bit tricky, moe layer call dispatch/combine when dp>1.
         # but we only need it when not ep.
         if self.use_etp:
             assert self.all2all_manager is not None
             hidden_states, router_logits = self.all2all_manager.dispatch(
-                hidden_states, router_logits)
+                hidden_states, router_logits, is_sequence_parallel)
         return hidden_states, router_logits
 
-    def combine(self, hidden_states) -> torch.Tensor:
+    def combine(self,
+                hidden_states,
+                is_sequence_parallel: bool = False) -> torch.Tensor:
         if self.use_etp:
             assert self.all2all_manager is not None
-            hidden_states = self.all2all_manager.combine(hidden_states)
+            hidden_states = self.all2all_manager.combine(hidden_states,
+                                                         is_sequence_parallel)
         return hidden_states
