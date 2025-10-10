@@ -366,6 +366,21 @@ class GCUPlatform(Platform):
             physical_device_id = cls.device_id_to_physical_device_id(device_id)
             handle = pyefml.efmlDeviceGetHandleByIndex(physical_device_id)
 
+            pci_info = pyefml.efmlDeviceGetPciInfo(handle)
+            pci_busid = pci_info.busId
+
+            net_config = gcu_envs.VLLM_GCU_NET_CONFIG
+            if os.path.exists(net_config):
+                import json
+                with open(net_config, "r") as f:
+                    net_cfgs = json.load(f)
+
+                net_devices = net_cfgs.get(f"{pci_busid[5:].decode()}", None)
+                if net_devices:
+                    os.environ["UCX_NET_DEVICES"] = ",".join(net_devices)
+
+            device_count = pyefml.efmlDeviceGetCount()
+
             # Get CPU affinity for this GPU
             # We need to determine the CPU set size first
             cpu_count = os.cpu_count()
@@ -397,8 +412,8 @@ class GCUPlatform(Platform):
                 current_process.cpu_affinity(cpu_ids)
                 logger.info(
                     "Set CPU affinity for process %d to " \
-                    "CPUs %s for GCU devices %s",
-                    current_process.pid, cpu_ids, device_id)
+                    "CPUs %s for logical GCU devices %s, physical_device_id %s pci busid %s",
+                    current_process.pid, cpu_ids, device_id, physical_device_id, pci_busid)
             else:
                 logger.warning(
                     "No CPU affinity information available for GCU devices %s",
