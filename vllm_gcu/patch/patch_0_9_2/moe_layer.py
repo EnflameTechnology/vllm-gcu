@@ -53,7 +53,6 @@ def select_gemm_impl_unquant(
     self,
     prepare_finalize: FusedMoEPrepareAndFinalize,
     moe: FusedMoEConfig,
-    layer: torch.nn.Module,
 ) -> FusedMoEPermuteExpertsUnpermute:
     return TritonExpertsPad()
 

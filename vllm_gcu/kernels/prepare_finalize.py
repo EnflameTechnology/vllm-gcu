@@ -81,8 +81,11 @@ class MoEPrepareAndFinalizeNoEP(FusedMoEPrepareAndFinalize):
         topk_ids: torch.Tensor,
         apply_router_weight_on_input: bool,
     ) -> None:
-        fused_expert_output.mul_(self.routed_scaling_factor)
-        output.add_(fused_expert_output)
+        if self.shared_experts is None:
+            output.copy_(fused_expert_output)
+        else:
+            fused_expert_output.mul_(self.routed_scaling_factor)
+            output.add_(fused_expert_output)
 
 
 class AlltoAllPrepareAndFinalize(FusedMoEPrepareAndFinalize):
