@@ -405,6 +405,20 @@ class GCUPlatform(Platform):
         try:
             physical_device_id = cls.device_id_to_physical_device_id(device_id)
             handle = pyefml.efmlDeviceGetHandleByIndex(physical_device_id)
+
+            pci_info = pyefml.efmlDeviceGetPciInfo(handle)
+            pci_busid = pci_info.busId
+
+            net_config = gcu_envs.VLLM_GCU_NET_CONFIG
+            if os.path.exists(net_config):
+                import json
+                with open(net_config, "r") as f:
+                    net_cfgs = json.load(f)
+
+                net_devices = net_cfgs.get(f"{pci_busid[5:].decode()}", None)
+                if net_devices:
+                    os.environ["UCX_NET_DEVICES"] = ",".join(net_devices)
+
             device_count = pyefml.efmlDeviceGetCount()
 
             # Get CPU affinity for this GPU
@@ -451,8 +465,8 @@ class GCUPlatform(Platform):
                 logger.debug("cpu_ids={},slice_step={},affinity_cpu_ids_per_device={}".format(cpu_ids, slice_step,affinity_cpu_ids_per_device))
                 logger.info(
                     "Set CPU affinity for process %d to " \
-                    "CPUs %s for logical GCU devices %s, physical_device_id %s ",
-                    current_process.pid, affinity_cpu_ids_per_device, device_id, physical_device_id )
+                    "CPUs %s for logical GCU devices %s, physical_device_id %s pci busid %s",
+                    current_process.pid, affinity_cpu_ids_per_device, device_id, physical_device_id, pci_busid)
             else:
                 logger.warning(
                     "No CPU affinity information available for GCU devices %s",

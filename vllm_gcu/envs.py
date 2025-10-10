@@ -27,6 +27,9 @@ environment_variables: Dict[str, Callable[[], Any]] = {
     "VLLM_GCU_HOOKS":
     lambda: None if "VLLM_GCU_HOOKS" not in os.environ else os.environ[
         "VLLM_GCU_HOOKS"].split(","),
+    "VLLM_GCU_NET_CONFIG":
+    lambda: (None if os.getenv("VLLM_GCU_NET_CONFIG", None) is None else os.
+             path.expanduser(os.getenv("VLLM_GCU_NET_CONFIG", "."))),
 }
 
 
