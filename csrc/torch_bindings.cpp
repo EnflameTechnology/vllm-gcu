@@ -91,6 +91,7 @@
 #include "src/weak_ref_tensor.h"
 #include "src/weight_only_quant.h"
 #include "src/mha_fwd_kvcache_mla.h"
+#include "src/topk_topp_random_sampler_from_logits.h"
 
 // Note on op signatures:
 // The X_meta signatures are for the meta functions corresponding to op X.
@@ -1240,6 +1241,16 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
   }
   ops.impl("sample_recovered_tokens", torch::kPrivateUse1,
         &sample_recovered_tokens);
+
+  // topk_topp_random_sampler_from_logits func
+  handle = c10::Dispatcher::singleton().findSchema(
+    {"_C::topk_topp_random_sampler_from_logits", ""});
+  if (!handle.has_value()) {
+    ops.def("topk_topp_random_sampler_from_logits(Tensor! output_token_ids, "
+      "Tensor logits,Tensor? k, Tensor? p, Tensor exponential, int dim) -> ()");
+  }
+  ops.impl("topk_topp_random_sampler_from_logits",
+    torch::kPrivateUse1, &topk_topp_random_sampler_from_logits);
 }
 
 // TORCH_LIBRARY_FRAGMENT(CONCAT(_cache_ops, TORCH_EXTENSION_NAME), cache_ops) {

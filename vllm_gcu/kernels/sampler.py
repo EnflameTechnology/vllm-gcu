@@ -6,7 +6,9 @@ from vllm.v1.sample.sampler import Sampler
 from vllm.v1.sample.metadata import SamplingMetadata
 from vllm.v1.outputs import SamplerOutput
 from vllm_gcu.utils import scatter
-
+from vllm.platforms import current_platform
+from typing import Optional
+from vllm.v1.sample.ops.topk_topp_sampler import TopKTopPSampler
 
 class DPParallelSampler(Sampler):
 
@@ -96,3 +98,32 @@ def apply_penalties(
     logits -= frequency_penalties.unsqueeze(dim=1) * output_bin_counts
     logits -= presence_penalties.unsqueeze(dim=1) * output_mask
     return logits
+
+class GCUTopKTopPSampler(TopKTopPSampler):
+    def forward_native(
+            self,
+            logits: torch.Tensor,
+            generators: dict[int, torch.Generator],
+            k: Optional[torch.Tensor],
+            p: Optional[torch.Tensor],) -> torch.Tensor:
+        if current_platform.has_device_capability(140):
+            output_token_ids = torch.empty(
+                size=(logits.shape[0],), dtype=torch.int32, device=logits.device)
+            q = torch.empty_like(logits,dtype=torch.float32,device=logits.device)
+            # NOTE(woosuk): To batch-process the requests without their own seeds,
+            # which is the common case, we first assume that every request does
+            # not have its own seed. Then, we overwrite the values for the requests
+            # that have their own seeds.
+            if len(generators) != logits.shape[0]:
+                q.exponential_()
+            if generators:
+                # TODO(woosuk): This can be slow because we handle each request
+                # one by one. Optimize this.
+                for i, generator in generators.items():
+                    q[i].exponential_(generator=generator)
+
+            torch.ops._C.topk_topp_random_sampler_from_logits(
+                output_token_ids, logits, k, p, q, dim=-1)
+            return output_token_ids
+        else:
+            return super().forward_native(logits, generators, k, p)

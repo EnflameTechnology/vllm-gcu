@@ -259,3 +259,7 @@
 
 - func: sample_recovered_tokens(Tensor(a!) output_token_ids, Tensor cu_num_draft_tokens, Tensor draft_token_ids, Tensor target_probs, Tensor q, Tensor? draft_probs) -> ()
   variants: function
+
+- func: topk_topp_random_sampler_from_logits(Tensor(a!) output_token_ids, Tensor logits, Tensor? k, Tensor? p, Tensor exponential, int dim) -> ()
+  variants: function
+  tags: nondeterministic_seeded
