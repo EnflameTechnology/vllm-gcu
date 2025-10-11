@@ -127,3 +127,10 @@ class GCUTopKTopPSampler(TopKTopPSampler):
             return output_token_ids
         else:
             return super().forward_native(logits, generators, k, p)
+
+
+def apply_top_k_top_p(logits, top_k, top_p):
+    torch.ops._C.top_k_top_p(logits, top_k, top_p)
+    return logits
+
+

@@ -2,11 +2,11 @@ from unittest.mock import patch
 from typing import Optional
 import torch
 from vllm.v1.sample.metadata import SamplingMetadata
-from vllm.v1.sample.ops.topk_topp_sampler import apply_top_k_top_p
 from vllm.v1.sample.rejection_sampler import generate_uniform_probs
 PLACEHOLDER_TOKEN_ID = -1
 GREEDY_TEMPERATURE = -1
 import vllm_gcu.envs as gcu_envs
+from vllm_gcu.kernels.sampler import apply_top_k_top_p
 
 def rejection_greedy_sample_kernel_torch(
     output_token_ids,  # [batch_size, max_spec_len + 1]

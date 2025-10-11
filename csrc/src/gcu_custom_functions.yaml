@@ -263,3 +263,6 @@
 - func: topk_topp_random_sampler_from_logits(Tensor(a!) output_token_ids, Tensor logits, Tensor? k, Tensor? p, Tensor exponential, int dim) -> ()
   variants: function
   tags: nondeterministic_seeded
+
+- func: top_k_top_p(Tensor(a!) logits, Tensor k, Tensor p, int dim, bool descending) -> ()
+  variants: function
