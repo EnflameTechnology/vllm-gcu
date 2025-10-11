@@ -410,7 +410,7 @@ class GCUPlatform(Platform):
             pci_busid = pci_info.busId
 
             net_config = gcu_envs.VLLM_GCU_NET_CONFIG
-            if os.path.exists(net_config):
+            if net_config and os.path.exists(net_config):
                 import json
                 with open(net_config, "r") as f:
                     net_cfgs = json.load(f)
