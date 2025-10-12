@@ -75,6 +75,18 @@ def get_num_new_matched_tokens(
             rounded_num_prompt_tokens = round_down(
                 len(request.prompt_token_ids), self.block_size)
             count = max(rounded_num_prompt_tokens - num_computed_tokens, 0)
+
+        if gcu_envs.VLLM_GCU_NIXL_ENABLE_FIRST_TOKEN_REUSE:
+            logger.debug("VLLM_GCU_NIXL_ENABLE_FIRST_TOKEN_REUSE is enabled, skipping first token")
+            first_token = params.get("first_token")
+            if first_token:
+                logger.debug("NIXLConnector: first_token(%s) from kv_transfer_params", first_token)
+                request.prompt_token_ids.append(first_token)
+                request.num_prompt_tokens = len(request.prompt_token_ids)
+                request._all_token_ids.append(first_token)
+            else:
+                logger.debug("NIXLConnector: no first_token in kv_transfer_params")
+
         if count > 0:
             return count, True
 
@@ -122,6 +134,16 @@ def request_finished(
     # If prompt < block_size, no xfer so free blocks immediately.
     delay_free_blocks = len(computed_block_ids) > 0
 
+    first_token = None
+    if gcu_envs.VLLM_GCU_NIXL_ENABLE_FIRST_TOKEN_REUSE:
+        logger.debug("VLLM_GCU_NIXL_ENABLE_FIRST_TOKEN_REUSE is enabled")
+        # Get the first token from the request's output tokens
+        if request.num_output_tokens > 0:
+            first_token = request.output_token_ids[0]
+        else:
+            logger.debug("No output tokens for request %s", request.request_id)
+    logger.debug("NIXLConnector request_finished, first_token=%s", first_token)
+
     return delay_free_blocks, dict(
         do_remote_prefill=True,
         do_remote_decode=False,
@@ -129,7 +151,8 @@ def request_finished(
         remote_engine_id=self.engine_id,
         remote_host=self.side_channel_host,
         remote_port=self.side_channel_port,
-        tp_size=self.vllm_config.parallel_config.tensor_parallel_size)
+        tp_size=self.vllm_config.parallel_config.tensor_parallel_size,
+        first_token=first_token)
 
 patch("vllm.distributed.kv_transfer.kv_connector.v1.nixl_connector.NixlConnectorScheduler.get_num_new_matched_tokens", get_num_new_matched_tokens).start()
 patch("vllm.distributed.kv_transfer.kv_connector.v1.nixl_connector.NixlConnectorScheduler.request_finished", request_finished).start()

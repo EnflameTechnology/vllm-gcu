@@ -6,6 +6,7 @@ import itertools
 import os
 import uuid
 from contextlib import asynccontextmanager
+import json
 
 import httpx
 from fastapi import FastAPI, Request
@@ -169,12 +170,13 @@ async def send_request_to_service(client_info: dict, endpoint: str,
         "X-Request-Id": request_id
     }
 
-    response = await client_info['client'].post(endpoint,
-                                                json=req_data,
-                                                headers=headers)
-    response.raise_for_status()
-
-    return response
+    async with client_info['client'].stream("POST",
+                                            endpoint,
+                                            json=req_data,
+                                            headers=headers) as response:
+        response.raise_for_status()
+        async for chunk in response.aiter_bytes():
+            yield chunk
 
 
 async def stream_service_response(client_info: dict, endpoint: str,
@@ -187,13 +189,17 @@ async def stream_service_response(client_info: dict, endpoint: str,
         "X-Request-Id": request_id
     }
 
-    async with client_info['client'].stream("POST",
-                                            endpoint,
-                                            json=req_data,
-                                            headers=headers) as response:
-        response.raise_for_status()
-        async for chunk in response.aiter_bytes():
-            yield chunk
+    req_data["max_tokens"] = req_data.get("max_tokens", 1) - 1
+    if req_data["max_tokens"] <= 0:
+        yield "data: [DONE]\n\n"
+    else:
+        async with client_info['client'].stream("POST",
+                                                endpoint,
+                                                json=req_data,
+                                                headers=headers) as response:
+            response.raise_for_status()
+            async for chunk in response.aiter_bytes():
+                yield chunk
 
 
 async def _handle_completions(api: str, request: Request):
@@ -201,26 +207,32 @@ async def _handle_completions(api: str, request: Request):
         req_data = await request.json()
         request_id = str(uuid.uuid4())
 
-        # Get the next prefill client in round-robin fashion
-        prefill_client_info = get_next_client(request.app, 'prefill')
-
-        # Send request to prefill service
-        response = await send_request_to_service(prefill_client_info, api,
-                                                 req_data, request_id)
-
-        # Extract the needed fields
-        response_json = response.json()
-        kv_transfer_params = response_json.get('kv_transfer_params', {})
-        if kv_transfer_params:
-            req_data["kv_transfer_params"] = kv_transfer_params
-
-        # Get the next decode client in round-robin fashion
-        decode_client_info = get_next_client(request.app, 'decode')
-
-        logger.debug("Using %s %s", prefill_client_info, decode_client_info)
-
         # Stream response from decode service
         async def generate_stream():
+            # Prefill Instance response
+            prefill_client_info = get_next_client(request.app, 'prefill')
+            first_token = True
+            async for chunk in send_request_to_service(prefill_client_info,
+                                                      api,
+                                                      req_data,
+                                                      request_id):
+                prefill_response = json.loads(chunk)
+                if first_token:
+                    first_token = False
+                    yield chunk
+                else:
+                    continue
+            # Extract the needed fields
+            kv_transfer_params = prefill_response.get("kv_transfer_params", {})
+            if kv_transfer_params:
+                req_data["kv_transfer_params"] = kv_transfer_params
+
+            # Get the next decode client in round-robin fashion
+            decode_client_info = get_next_client(request.app, 'decode')
+
+            logger.debug("Using %s %s", prefill_client_info, decode_client_info)
+
+            # Decode Instance response
             async for chunk in stream_service_response(decode_client_info,
                                                        api,
                                                        req_data,

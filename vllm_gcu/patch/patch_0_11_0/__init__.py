@@ -10,3 +10,4 @@ import vllm_gcu.patch.patch_0_11_0.compressed_tensor  # noqa
 import vllm_gcu.patch.patch_0_11_0.kv_offload  # noqa
 import vllm_gcu.patch.patch_0_11_0.eplb  # noqa
 import vllm_gcu.patch.patch_0_11_0.gpu_input_batch  # noqa
+import vllm_gcu.patch.patch_0_11_0.nixl_connector  # noqa
