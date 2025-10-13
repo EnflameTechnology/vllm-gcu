@@ -43,7 +43,6 @@ from vllm.distributed import (
     get_ep_group,
     get_pp_group,
     get_tensor_model_parallel_world_size,
-    get_tp_group,
     tensor_model_parallel_all_reduce,
 )
 
@@ -82,7 +81,6 @@ from vllm.sequence import IntermediateTensors, SequenceData
 
 import vllm_gcu.envs as gcu_envs
 import vllm_gcu.distributed.parallel_state  # noqa
-from vllm_gcu.utils import scatter
 from vllm_gcu.kernels.linear import MergedReplicatedLinear, CustomMergedColumnParallelLinear
 from vllm_gcu.models.deepseek_v3.deepseek_v3_fusion import DeepseekV2MLAAttentionFusion
 from vllm_gcu.distributed.sp import slice_tensor_sp, sp_to_tp, tp_to_sp
@@ -938,20 +936,25 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
         self.num_expert_groups = config.n_group
 
         self.moe_layers: list[FusedMoE] = []
+        example_moe = None
         for layer in self.model.layers:
+            if isinstance(layer, PPMissingLayer):
+                continue
+
             assert isinstance(layer, DeepseekV2DecoderLayer)
             if isinstance(layer.mlp, DeepseekV2MoE):
+                example_moe = layer.mlp
                 self.moe_layers.append(layer.mlp.experts)
 
-        # Pick last one layer since the first ones may be dense layers.
-        example_moe = typing.cast(
-            DeepseekV2MoE, self.model.layers[config.num_hidden_layers - 1].mlp)
-        self.num_logical_experts = example_moe.n_logical_experts
-        self.num_physical_experts = example_moe.n_physical_experts
-        self.num_local_physical_experts = example_moe.n_local_physical_experts
-        self.num_routed_experts = example_moe.n_routed_experts
-        self.num_shared_experts = example_moe.n_shared_experts
-        self.num_redundant_experts = example_moe.n_redundant_experts
+        if example_moe is not None:
+            self.num_logical_experts = example_moe.n_logical_experts
+            self.num_physical_experts = example_moe.n_physical_experts
+            self.num_local_physical_experts = example_moe.n_local_physical_experts
+            self.num_routed_experts = example_moe.n_routed_experts
+            self.num_shared_experts = example_moe.n_shared_experts
+            self.num_redundant_experts = example_moe.n_redundant_experts
+        else:
+            self.num_redundant_experts = 0
 
     def set_eplb_state(
         self,
