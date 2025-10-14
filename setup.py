@@ -411,5 +411,6 @@ setup(
         ["register_custom_models = vllm_gcu.models:register_custom_models"],
         "vllm.platform_plugins":
         ["register_platform_plugins = vllm_gcu:register_platform_plugins"],
+        "console_scripts": ["vllm_gcu=vllm_gcu.entrypoints.cli.main:main"],
     },
 )
