@@ -108,7 +108,7 @@ function coverage_build() {
   echo "Current build job: $FUNCNAME"
   echo `pwd`
   sudo python3.12 -m pip install --break-system-packages torch==$TORCH_VERSION patch pyyaml packaging
-  cmake ${project_name} --preset ci_all -B cmake_build -DNEED_DAILY_TEST_CASE=TRUE -DENABLE_CODE_COVERAGE=ON -DPACKAGE_VERSION=$PY_PACKAGE_VERSION
+  cmake ${project_name} --preset ci_all -B cmake_build -DNEED_DAILY_TEST_CASE=TRUE -DENABLE_CODE_COVERAGE=ON -DENABLE_PYTHON_COVERAGE=ON -DPACKAGE_VERSION=$PY_PACKAGE_VERSION
   cd ${BUILD_ROOT_DIR}/cmake_build
   ninja -j4 install
   ninja -j4 package_all

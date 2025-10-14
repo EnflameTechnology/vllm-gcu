@@ -1,0 +1,6 @@
+[run]
+include = 
+    /usr/local/lib/python3.10/dist-packages/vllm_gcu/**
+    /usr/local/lib/python3.10/site-packages/vllm_gcu/**
+concurrency = multiprocessing
+parallel=True
