@@ -30,14 +30,15 @@ from vllm.v1.attention.backends.utils import (
     AttentionCGSupport, AttentionMetadataBuilder, CommonAttentionMetadata,
     create_fast_prefill_custom_backend,
     reorder_batch_to_split_decodes_and_prefills, split_attn_metadata)
-from vllm_gcu import gcumem
 from vllm_gcu.utils import (set_gcu_forward_context,
                             dump_memory_snapshot_when_exception,
                             prepare_communication_buffer_for_model_noep,)
+from vllm_gcu.compilation.pass_manager import PassManager
 import vllm_gcu.envs as gcu_envs
 
 with patch("vllm.forward_context.set_forward_context", set_gcu_forward_context):
     from vllm.v1.worker.gpu_model_runner import GPUModelRunner
+from vllm.v1.worker.gpu_worker import Worker, init_worker_distributed_environment
 
 
 class GCUModelRunner(GPUModelRunner):
@@ -380,6 +381,7 @@ class GCUModelRunner(GPUModelRunner):
         return kv_cache_raw_tensors
 
     def load_model(self, eep_scale_up: bool = False) -> None:
+        self.vllm_config.compilation_config.inductor_compile_config["post_grad_custom_post_pass"] = PassManager(self.vllm_config)
         super().load_model(eep_scale_up)
         if get_ep_group().world_size == 1:
             prepare_communication_buffer_for_model_noep(self.model)
@@ -387,10 +389,6 @@ class GCUModelRunner(GPUModelRunner):
             prepare_communication_buffer_for_model(self.drafter.model)
             if get_ep_group().world_size == 1:
                 prepare_communication_buffer_for_model_noep(self.drafter.model)
-
-
-with patch("vllm.device_allocator", "cumem", gcumem):
-    from vllm.v1.worker.gpu_worker import Worker, init_worker_distributed_environment
 
 
 class GCUWorker(Worker):
@@ -429,7 +427,7 @@ class GCUWorker(Worker):
         os.environ["TORCH_ECCL_AVOID_RECORD_STREAMS"] = "1"
 
         self.device = torch.device(f"gcu:{self.local_rank}")
-        torch.gcu.set_device(self.device)
+        current_platform.set_device(self.device)
 
         current_platform.check_if_supports_dtype(self.model_config.dtype)
         gc.collect()

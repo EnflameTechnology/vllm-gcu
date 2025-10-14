@@ -281,3 +281,11 @@ class CustomInductorAdaptor(InductorAdaptor):
                 file_path is not None
             ), "failed to get the file path of the compiled graph"
         return compiled_graph, (hash_str, file_path)
+
+
+def make_compiler(compilation_config):
+    if compilation_config.use_inductor:
+        return CustomInductorAdaptor()
+    else:
+        from vllm.compilation.compiler_interface import EagerAdaptor
+        return EagerAdaptor()

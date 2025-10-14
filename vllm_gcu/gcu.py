@@ -194,7 +194,7 @@ class GCUPlatform(Platform):
         distributed_executor_backend = parallel_config.distributed_executor_backend
         if isinstance(distributed_executor_backend, str):
             if distributed_executor_backend == "mp":
-                from vllm_gcu.executor import GCUMultiprocExecutor
+                from vllm_gcu.executor.executor import GCUMultiprocExecutor
 
                 parallel_config.distributed_executor_backend = GCUMultiprocExecutor
             elif distributed_executor_backend == "ray":
@@ -205,9 +205,12 @@ class GCUPlatform(Platform):
         if (
             parallel_config.distributed_executor_backend == "mp"
         ):
+            from vllm_gcu.executor.executor import GCUMultiprocExecutor
             # force spawn multiprocessing method as others not support
             os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
             envs.VLLM_WORKER_MULTIPROC_METHOD = "spawn"
+
+            parallel_config.distributed_executor_backend = GCUMultiprocExecutor
 
         if cache_config:
             if cache_config.block_size is None:
@@ -235,19 +238,13 @@ class GCUPlatform(Platform):
                 compilation_config.backend = "topsgraph"
 
             if compilation_config.level == 3:
-                # TODO: remove after rmsnorm pattern fix in official.
-                compilation_config.pass_config.enable_fusion = True
-                compilation_config.custom_ops = ["all"]
+                compilation_config.pass_config.enable_noop = False
+                compilation_config.pass_config.enable_sequence_parallelism = False
+                compilation_config.pass_config.enable_fi_allreduce_fusion = False
+                compilation_config.pass_config.enable_fusion = False
+                compilation_config.pass_config.enable_attn_fusion = False
 
-                if gcu_envs.VLLM_GCU_ENABLE_COMPILE_DUMP:
-                    compilation_config.pass_config.dump_graph_stages.extend(
-                        [
-                            "before_fusion",
-                            "after_pre_pattern_apply",
-                            "after_fusion",
-                            "after_dump",
-                        ]
-                    )
+                compilation_config.custom_ops = ["all"]
 
             if vllm_config.parallel_config.data_parallel_size > 1:
                 compilation_config.compile_sizes.append(0)

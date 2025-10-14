@@ -93,12 +93,12 @@ def scatter(seqlen, size):
 
 
 def custom_pass(graph: torch.fx.Graph) -> torch.fx.Graph:
-    from vllm_gcu.compilation.fusion import GCUFusionPass
+    from vllm_gcu.compilation.pass_manager import PassManager
+    from vllm.compilation.inductor_pass import pass_context
 
     vllm_config = get_current_vllm_config()
-    GCUFusionPass(
-        vllm_config
-    ).patterns.apply(graph)
+    with pass_context(None):
+        PassManager(vllm_config)(graph)
     graph.eliminate_dead_code()
     return graph
 

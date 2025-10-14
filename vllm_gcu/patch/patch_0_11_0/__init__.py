@@ -4,7 +4,6 @@ import vllm_gcu.patch.patch_0_11_0.moe_layer  # noqa
 import vllm_gcu.patch.patch_0_11_0.flash_attn  # noqa
 import vllm_gcu.patch.patch_0_11_0.compilation_backends  # noqa
 import vllm_gcu.patch.patch_0_11_0.utils  # noqa
-import vllm_gcu.patch.patch_0_11_0.noop_elimination  # noqa
 import vllm_gcu.patch.patch_0_11_0.rejection_sampler
 import vllm_gcu.patch.patch_0_11_0.flashmla  # noqa
 import vllm_gcu.patch.patch_0_11_0.compressed_tensor  # noqa

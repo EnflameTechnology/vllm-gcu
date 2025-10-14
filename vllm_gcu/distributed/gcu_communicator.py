@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # coding=utf-8
-from typing import Optional
+from typing import Optional, Union
 
 import torch
 import torch_gcu  # noqa: F401
@@ -14,6 +14,7 @@ from vllm.distributed.device_communicators.cuda_communicator import CudaCommunic
 from vllm.distributed.device_communicators.all2all import NaiveAll2AllManager
 import vllm.envs as envs
 from vllm.logger import init_logger
+from vllm.platforms import current_platform
 
 from vllm_gcu.distributed.pyeccl import PyEcclCommunicator
 
@@ -122,3 +123,29 @@ class GCUCommunicator(CudaCommunicator):
             hidden_states = self.all2all_manager.combine(hidden_states,
                                                          is_sequence_parallel)
         return hidden_states
+
+    def reduce_scatterv(self,
+                        input_: torch.Tensor,
+                        dim: int = -1,
+                        sizes: Optional[list[int]] = None):
+        world_size = self.world_size
+        if dim < 0:
+            dim += input_.dim()
+
+        if sizes is not None:
+            assert len(sizes) == world_size
+            assert input_.shape[0] == sum(sizes)
+            return torch.ops.vllm.reduce_scatter_v(input_, sizes, self.unique_name)
+        else:
+            assert input_.shape[0] % world_size == 0
+            return self.reduce_scatter(input_)
+
+    def all_gatherv(self,
+                    input_: Union[torch.Tensor, list[torch.Tensor]],
+                    dim: int = 0,
+                    sizes: Optional[list[int]] = None):
+        world_size = self.world_size
+        if sizes is not None:
+            return torch.ops.vllm.all_gather_v(input_, sizes, self.unique_name)
+        else:
+            return super().all_gather(input_)
