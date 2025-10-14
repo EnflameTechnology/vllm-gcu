@@ -34,9 +34,12 @@ class GCUModelRunner(GPUModelRunner):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         enable_dp_sampler = not self.vllm_config.additional_config.get("disable_dp_sampler", False)
+        if not current_platform.has_device_capability(140):
+            enable_dp_sampler = False
+
         if enable_dp_sampler:
             if self.parallel_config.tensor_parallel_size > 1:
-                from vllm_gcu.kernels.sampler import apply_penalties, DPParallelSampler
+                from vllm_gcu.kernels.sampler import DPParallelSampler
                 self.sampler = DPParallelSampler()  # parallel sampling
 
     def get_dp_padding(self,

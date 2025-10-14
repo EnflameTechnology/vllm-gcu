@@ -168,7 +168,7 @@ def all_gather_v(inp: torch.Tensor, recv_counts: list[int],
             value=0,
         )
         gathered = [torch.empty_like(inp) for _ in range(world_size)]
-        torch.distributed.all_gather(gathered, inp, group=group)
+        torch.distributed.all_gather(gathered, inp, group=group.device_group)
 
         results = []
         for i in range(world_size):
