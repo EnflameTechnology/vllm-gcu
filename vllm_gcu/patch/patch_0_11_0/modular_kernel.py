@@ -425,11 +425,6 @@ class FusedMoEModularKernel(torch.nn.Module):
             (a1q, a1q_scale, expert_tokens_meta, _expert_topk_ids,
              _expert_topk_weights) = receiver()
 
-        if shared_output is not None:
-            output = a1.copy_(shared_output) if inplace else shared_output
-        else:
-            output = a1.fill_(0) if inplace else torch.zeros_like(a1)
-
         # Maybe prepare gathered topk_ids and topk_weights from other EP ranks.
         topk_ids = topk_ids if _expert_topk_ids is None else _expert_topk_ids
         topk_weights = (topk_weights if _expert_topk_weights is None else
@@ -463,6 +458,13 @@ class FusedMoEModularKernel(torch.nn.Module):
                 a1q_scale_rec=a1_scale_rec,  # vllm_gcu for w4a8
                 a2_scale_rec=a2_scale_rec,  # vllm_gcu for w4a8
             )
+
+        # NOTE: a1 and a1q might be same buffer with output if inplace
+        if shared_output is not None:
+            output = a1.copy_(shared_output) if inplace else shared_output
+        else:
+            output = a1.fill_(0) if inplace else torch.zeros_like(a1)
+        del a1, a1q
 
         if not self.prepare_finalize.supports_async():
             assert not dbo_enabled()
