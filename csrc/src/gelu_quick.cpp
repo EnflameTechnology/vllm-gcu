@@ -17,7 +17,7 @@ void gelu_quick(at::Tensor &out, const at::Tensor &input) {
 
   // TODO: workaround until gelu quick is implemented
   ATEN_ATENOP_CHECK(
-      ATEN_ATENOP_CALL(topsvllm::topsvllmGeluFast)(out, input, stream));
+      ATEN_ATENOP_CALL(topsvllm::topsvllmGeluQuick)(out, input, stream));
 }
 
 }  // namespace vllm_gcu::llm_ops
