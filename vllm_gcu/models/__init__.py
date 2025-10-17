@@ -36,8 +36,6 @@ def register_custom_models():
     ModelRegistry.register_model("XLMRobertaForSequenceClassification", "vllm_gcu.models.roberta.roberta:RobertaForSequenceClassification")
     ModelRegistry.register_model("GotOcr2ForConditionalGeneration", "vllm_gcu.models.got_ocr2.got_ocr2:GotOcr2ForConditionalGeneration")
     ModelRegistry.register_model("Qwen2_5_VLForConditionalGeneration", "vllm_gcu.models.qwen2_5_vl.qwen2_5_vl:Qwen2_5_VLForConditionalGeneration")
-    ModelRegistry.register_model("Qwen3ForCausalLM", "vllm_gcu.models.qwen3.qwen3:Qwen3ForCausalLM")
-    ModelRegistry.register_model("Qwen3MoeForCausalLM", "vllm_gcu.models.qwen3_moe.qwen3_moe:Qwen3MoeForCausalLM")
     ModelRegistry.register_model("Glm4ForCausalLM", "vllm_gcu.models.glm4.glm4:Glm4ForCausalLM")
     ModelRegistry.register_model("QuantDeepseekForCausalLM", "vllm_gcu.models.deepseek_moe_quant.deepseek_moe_quant:QuantDeepseekForCausalLM")
     ModelRegistry.register_model("QuantMixtralForCausalLM", "vllm_gcu.models.mixtral_quant.mixtral_quant:MixtralForCausalLM")
