@@ -171,6 +171,10 @@ class GCUPlatform(Platform):
                 parser._option_string_actions[key].choices += ["gcu"]
                 parser._option_string_actions[key].default = "gcu"
 
+            key = "--block-size"
+            if key in parser._option_string_actions:
+                parser._option_string_actions[key].choices += [256]
+
             # key = "--disable-async-output-proc"
             # if key in parser._option_string_actions:
             #     # set disable_async_output_proc default True

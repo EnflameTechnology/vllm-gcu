@@ -44,3 +44,4 @@ def register_custom_models():
     ModelRegistry.register_model("DeepseekVLV2ForCausalLM", "vllm_gcu.models.deepseek_vl2.deepseek_vl2:DeepseekVLV2ForCausalLMGCU")
     ModelRegistry.register_model("HunYuanDenseV1ForCausalLM", "vllm_gcu.models.hunyuan_v1.hunyuan_v1:HunYuanDenseV1ForCausalLM")
     ModelRegistry.register_model("HunYuanMoEV1ForCausalLM", "vllm_gcu.models.hunyuan_v1.hunyuan_v1:HunYuanMoEV1ForCausalLM")
+    ModelRegistry.register_model("Qwen3NextForCausalLM", "vllm_gcu.models.qwen3_next.qwen3_next:Qwen3NextForCausalLM")
