@@ -120,7 +120,8 @@ def ep_alltoall_threshold(vllm_config: VllmConfig):
     )
     # if vllm_config.speculative_config is not None:
     #     threshold *= vllm_config.speculative_config.num_speculative_tokens + 1
-    if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
+    if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL or \
+            vllm_config.parallel_config.use_sequence_parallel_moe:
         sp_size = vllm_config.parallel_config.tensor_parallel_size
         threshold = round_up(threshold, sp_size)
     threshold *= vllm_config.parallel_config.data_parallel_size
@@ -173,7 +174,8 @@ def set_gcu_forward_context(
                 # for v0 attention backends
                 total_tokens = attn_metadata.num_prefill_tokens + \
                     attn_metadata.num_decode_tokens
-                if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
+                if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL or \
+                        vllm_config.parallel_config.use_sequence_parallel_moe:
                     sp_size = vllm_config.parallel_config.tensor_parallel_size
                     total_tokens = round_up(total_tokens, sp_size)
             else:
