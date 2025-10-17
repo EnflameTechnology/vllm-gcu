@@ -1370,11 +1370,12 @@ TORCH_LIBRARY_FRAGMENT(CONCAT(_flashmla, TORCH_EXTENSION_NAME), _flashmla_ops) {
   if (!handle.has_value()) {
     _flashmla_ops.def(
         "fwd_kvcache_mla("
-        "    Tensor! q, Tensor kcache, Tensor? vcache, "
+        "    Tensor! q, Tensor kcache, "
         "    int head_size_v, Tensor seqlens_k, Tensor block_table, "
         "    float softmax_scale, bool is_causal, "
         "    Tensor tile_scheduler_metadata, "
-        "    Tensor num_splits) -> (Tensor, Tensor)");
+        "    Tensor num_splits, Tensor? descale_q, Tensor? descale_k"
+        "    ) -> (Tensor, Tensor)");
   }
   _flashmla_ops.impl("fwd_kvcache_mla", torch::kPrivateUse1,
                     &mha_fwd_kvcache_mla);

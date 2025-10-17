@@ -6,22 +6,26 @@ from vllm.attention.ops.common import cp_lse_ag_out_rs
 from vllm.distributed.parallel_state import get_dcp_group
 from vllm.logger import init_logger
 from vllm.platforms import current_platform
-from vllm.v1.attention.backends.mla.common import (MLACommonBackend,
-    MLACommonDecodeMetadata, MLACommonImpl, MLACommonMetadata,
-    MLACommonMetadataBuilder)
-from vllm.v1.attention.backends.utils import AttentionCGSupport
+from vllm.v1.attention.backends.mla.common import (
+    MLACommonBackend, MLACommonDecodeMetadata, MLACommonImpl,
+    MLACommonMetadata, MLACommonMetadataBuilder, M, split_decodes_and_prefills)
+from vllm.v1.attention.backends.utils import AttentionCGSupport, CommonAttentionMetadata
 
 import torch
 import vllm_gcu.kernels._custom_ops as gops
 import vllm._custom_ops as ops
 from dataclasses import dataclass
 from typing import Any, Optional, Union
+from functools import partial
+from unittest.mock import patch
 
+from vllm_gcu.attention.ops.flashmla import flash_mla_with_kvcache
 
 logger = init_logger(__name__)
 
 
 class GCUMLABackend(MLACommonBackend):
+
     @staticmethod
     def get_name() -> str:
         return "TRITON_MLA_VLLM_V1"
@@ -50,7 +54,19 @@ class GCUMLAMetadata(MLACommonMetadata[GCUMLADecodeMetadata]):
 
 
 class GCUMLAMetadataBuilder(MLACommonMetadataBuilder[GCUMLAMetadata]):
+    reorder_batch_threshold: int = 8
+    # NOTE: uniform decode graphs will only be selected when q=N*(1+k)
     cudagraph_support = AttentionCGSupport.UNIFORM_BATCH
+
+    def build(self,
+              common_prefix_len: int,
+              common_attn_metadata: CommonAttentionMetadata,
+              fast_build: bool = False) -> M:
+        with patch(
+                'vllm.v1.attention.backends.mla.common.split_decodes_and_prefills',
+                partial(split_decodes_and_prefills, require_uniform=True)):
+            return super().build(common_prefix_len, common_attn_metadata,
+                                 fast_build)
 
     def build_for_cudagraph_capture(self, common_attn_metadata):
         m = common_attn_metadata
@@ -74,6 +90,7 @@ class GCUMLAMetadataBuilder(MLACommonMetadataBuilder[GCUMLAMetadata]):
 
 
 class GCUMLAImpl(MLACommonImpl[GCUMLAMetadata]):
+
     def __init__(
             self,
             num_heads: int,
@@ -241,32 +258,61 @@ class GCUMLAImpl(MLACommonImpl[GCUMLAMetadata]):
             q = torch.cat(q, dim=-1)
 
         assert isinstance(q, torch.Tensor)
-        B = q.shape[0]
-        o = torch.empty(
-            B, self.num_heads, self.kv_lora_rank, dtype=q.dtype, device=q.device
-        )
+        q_dtype = q.dtype
 
-        q_scale=None
-        if self.kv_cache_dtype=="fp8":
-            q, q_scale = gops.scaled_fp8_quant(q, q_scale, scale_ub=None, use_per_token_if_dynamic=True)
+        q_scale = None
+        if self.kv_cache_dtype == "fp8":
+            q, q_scale = gops.scaled_fp8_quant(q,
+                                               q_scale,
+                                               scale_ub=None,
+                                               use_per_token_if_dynamic=True)
 
-        gops.paged_attention_v1(
-            out=o,
-            query=q,
-            key_cache=kv_c_and_k_pe_cache,
-            value_cache=None,
-            num_kv_heads=1,
-            scale=self.scale,
-            block_tables=decode_meta.block_table,
-            seq_lens=decode_meta.seq_lens,
-            block_size=kv_c_and_k_pe_cache.size(1),
-            max_seq_len=decode_meta.max_decode_seq_len,
-            alibi_slopes=None,
-            kv_cache_dtype=self.kv_cache_dtype,
-            k_scale_float=layer._k_scale_float,
-            v_scale_float=layer._k_scale_float,
-            out_scales=None,
-            query_scales=q_scale
-        )
+        sum_seq_q = q.shape[0]
+        batch = decode_meta.block_table.shape[0]
+        assert sum_seq_q % batch == 0
+        if sum_seq_q // batch > 1:
+            q = q.view(batch, sum_seq_q // batch, *q.shape[1:])
+            if q_scale is not None:
+                q_scale = q_scale.view(batch, sum_seq_q // batch, *q_scale.shape[1:])
+            output, softmax_lse = flash_mla_with_kvcache(
+                q=q,
+                k_cache=kv_c_and_k_pe_cache.unsqueeze(-2),
+                block_table=decode_meta.block_table,
+                cache_seqlens=decode_meta.seq_lens,
+                head_dim_v=self.kv_lora_rank,
+                tile_scheduler_metadata=None,
+                num_splits=None,
+                softmax_scale=self.scale,
+                causal=True,
+                descale_q=q_scale,
+                descale_k=layer._k_scale,
+            )
+            output = output.view(-1, *output.shape[2:])
+            # TODO: for dcp
+            # softmax_lse = softmax_lse.transpose(2, 1).reshape(-1, self.num_heads)
+        else:
+            B = q.shape[0]
+            output = torch.empty(B,
+                                 self.num_heads,
+                                 self.kv_lora_rank,
+                                 dtype=q_dtype,
+                                 device=q.device)
+            softmax_lse = None
+            gops.paged_attention_v1(out=output,
+                                    query=q,
+                                    key_cache=kv_c_and_k_pe_cache,
+                                    value_cache=None,
+                                    num_kv_heads=1,
+                                    scale=self.scale,
+                                    block_tables=decode_meta.block_table,
+                                    seq_lens=decode_meta.seq_lens,
+                                    block_size=kv_c_and_k_pe_cache.size(1),
+                                    max_seq_len=decode_meta.max_decode_seq_len,
+                                    alibi_slopes=None,
+                                    kv_cache_dtype=self.kv_cache_dtype,
+                                    k_scale_float=layer._k_scale_float,
+                                    v_scale_float=layer._k_scale_float,
+                                    out_scales=None,
+                                    query_scales=q_scale)
 
-        return o, None
+        return output, softmax_lse

@@ -114,12 +114,12 @@ def ep_alltoall_threshold(vllm_config: VllmConfig):
     use static allocation otherwise. Cudagraph only supports staitc shape,
     so we must ensure threshold >= max_capture_size * dp_size. Decode prefers static.
     """
-    threshold = max(
-        vllm_config.scheduler_config.max_num_seqs,
-        vllm_config.compilation_config.max_capture_size,
-    )
-    # if vllm_config.speculative_config is not None:
-    #     threshold *= vllm_config.speculative_config.num_speculative_tokens + 1
+    threshold = vllm_config.scheduler_config.max_num_seqs
+
+    if vllm_config.speculative_config is not None:
+        threshold *= vllm_config.speculative_config.num_speculative_tokens + 1
+
+    threshold = max(threshold, vllm_config.compilation_config.max_capture_size)
     if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL or \
             vllm_config.parallel_config.use_sequence_parallel_moe:
         sp_size = vllm_config.parallel_config.tensor_parallel_size
