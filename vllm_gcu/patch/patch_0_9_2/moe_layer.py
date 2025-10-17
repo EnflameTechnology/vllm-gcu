@@ -62,7 +62,7 @@ class FusedMoE(FusedMoEOri):
     def forward_impl(self, hidden_states: torch.Tensor,
                      router_logits: torch.Tensor):
         shared_experts = getattr(self, "shared_experts", None)
-        routed_scaling_factor = getattr(self, "routed_scaling_factor", None)
+        routed_scaling_factor = getattr(self, "routed_scaling_factor", 1.0)
 
         if hasattr(self.quant_method, 'fused_experts') and \
             isinstance(self.quant_method.fused_experts, FusedMoEModularKernel):

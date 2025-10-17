@@ -4,6 +4,7 @@ from vllm.v1.executor.multiproc_executor import MultiprocExecutor
 
 
 class GCUMultiprocExecutor(MultiprocExecutor):
+    uses_ray = False
     def _init_executor(self) -> None:
         import tops_extension.torch  # noqa: F401
         import torch_gcu  # noqa: F401
