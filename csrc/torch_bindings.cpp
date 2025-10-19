@@ -999,7 +999,9 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
 
   handle = c10::Dispatcher::singleton().findSchema({"_C::dot_bias_quant", ""});
   if (!handle.has_value()) {
-    ops.def("dot_bias_quant", &dot_bias_quant);
+    ops.def(
+    "dot_bias_quant(Tensor! out, Tensor lhs, Tensor rhs, "
+    "Tensor scale, Tensor? bias) -> ()");
   }
   ops.impl("dot_bias_quant", c10::kPrivateUse1, &dot_bias_quant);
 
