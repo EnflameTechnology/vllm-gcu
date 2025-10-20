@@ -43,6 +43,12 @@
         "rpm_package_name":"topsfactor*.rpm",
         "deb_package_name":"topsfactor*.deb"
     },
+    "triton-gcu": {
+        "type":["deb", "whl", "rpm"],
+        "deb_package_name": "triton-gcu_[0-9][0-9a-z_\\.-]*.deb",
+        "rpm_package_name": "triton-gcu-[0-9][0-9a-z_\\.-]*.rpm",
+        "3.10_package_name": "triton_gcu-*{version}*-py3-*.whl"
+    },
     "topsaten":{
         "type":["deb", "rpm"],
         "rpm_package_name":"topsaten*.rpm",
