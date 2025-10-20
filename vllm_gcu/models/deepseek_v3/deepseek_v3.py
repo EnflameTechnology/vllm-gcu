@@ -87,11 +87,6 @@ from vllm_gcu.models.deepseek_v3.deepseek_v3_fusion import DeepseekV2MLAAttentio
 from vllm_gcu.distributed.sp import slice_tensor_sp, sp_to_tp, tp_to_sp
 
 
-def scatter(seqlen, size):
-    indices = list(range(size))
-    return [(seqlen + indices[i]) // size - indices[i] // size for i in range(size)]
-
-
 def custom_pass(graph: torch.fx.Graph) -> torch.fx.Graph:
     from vllm_gcu.compilation.pass_manager import PassManager
     from vllm.compilation.inductor_pass import pass_context

@@ -150,6 +150,9 @@ class GCUMLAImpl(MLACommonImpl[GCUMLAMetadata]):
 
         fp8_attention = self.kv_cache_dtype.startswith("fp8")
 
+        if fp8_attention:
+            kv_cache = kv_cache.view(current_platform.fp8_dtype())
+
         num_actual_toks = attn_metadata.num_actual_tokens
 
         # Inputs and outputs may be padded for CUDA graphs
@@ -183,9 +186,6 @@ class GCUMLAImpl(MLACommonImpl[GCUMLAMetadata]):
                 kv_cache_dtype=self.kv_cache_dtype,
                 scale=layer._k_scale,
             )
-
-        if fp8_attention:
-            kv_cache = kv_cache.view(current_platform.fp8_dtype())
 
         if has_prefill:
             output[num_decode_tokens:] = self._forward_prefill(

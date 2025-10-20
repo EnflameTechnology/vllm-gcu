@@ -34,6 +34,8 @@ from vllm_gcu.utils import (set_gcu_forward_context,
                             dump_memory_snapshot_when_exception,
                             prepare_communication_buffer_for_model_noep,)
 from vllm_gcu.compilation.pass_manager import PassManager, SingletonPostGradPassManager
+from vllm_gcu.kernels.sampler import ParallelTopKTopPSampler
+from vllm_gcu.kernels.rejection_sampler import GCURejectionSampler
 import vllm_gcu.envs as gcu_envs
 
 with patch("vllm.forward_context.set_forward_context", set_gcu_forward_context):
@@ -42,6 +44,13 @@ from vllm.v1.worker.gpu_worker import Worker, init_worker_distributed_environmen
 
 
 class GCUModelRunner(GPUModelRunner):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        logprobs_mode = self.sampler.topk_topp_sampler.logprobs_mode
+        self.sampler.topk_topp_sampler = ParallelTopKTopPSampler(logprobs_mode)
+        if hasattr(self, "rejection_sampler"):
+            self.rejection_sampler = GCURejectionSampler()
+
     def get_dp_padding(self,
                        num_tokens: int) -> tuple[int, Optional[torch.Tensor]]:
         if self.vllm_config.parallel_config.enable_expert_parallel:
