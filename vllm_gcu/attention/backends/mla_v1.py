@@ -196,7 +196,6 @@ class GCUMLAImpl(MLACommonImpl[GCUMLAMetadata]):
                                               scale_ub=None,
                                               use_per_token_if_dynamic=True)
 
-
         attn_output, attn_softmax_lse = flash_mla_with_kvcache(
             q=chunked_q,
             k_cache=kv_c_and_k_pe_cache.unsqueeze(-2),
@@ -215,7 +214,7 @@ class GCUMLAImpl(MLACommonImpl[GCUMLAMetadata]):
             attn_output.view(-1, *attn_output.shape[2:])).view(
                 (-1, self.num_heads, self.v_head_dim
                  ))  # [num_mtp_prefill_tokens, num_heads, head_size_v]
-        attn_softmax_lse = attn_softmax_lse.transpose(0, 1).view(
+        attn_softmax_lse = attn_softmax_lse.transpose(0, 1).reshape(
             self.num_heads, -1
         )  # [num_mtp_prefills, num_heads, query_len] -> [num_heads, num_mtp_prefill_tokens]
 
