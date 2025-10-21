@@ -266,3 +266,6 @@
 
 - func: eplb_map_to_physical_and_record(Tensor(a!) out, Tensor topk_ids, Tensor(a!) expert_load_view, Tensor logical_to_physical_map, Tensor logical_replica_count) -> ()
   variants: function
+
+- func: silu_mul_fp8_quant_deep_gemm(Tensor input, Tensor counts, Tensor(a!) y_q, Tensor(a!) y_s, int group_size, bool use_ue8m0, int num_parallel_tokens) -> ()
+  variants: function

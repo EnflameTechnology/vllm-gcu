@@ -8,6 +8,7 @@ from contextlib import contextmanager
 import torch
 from packaging import version
 from vllm.config import VllmConfig, CUDAGraphMode
+import vllm.envs as envs
 from vllm.forward_context import set_forward_context, get_forward_context, BatchDescriptor
 from vllm.v1.worker.ubatch_utils import UBatchSlices
 import vllm_gcu.envs as gcu_envs
@@ -138,7 +139,10 @@ def set_gcu_forward_context(
                 # for v1 attention backends or no attn_metadata
                 total_tokens = num_tokens or 0
         use_all2all_v = total_tokens <= threshold
-        if not use_all2all_v:
+
+        if not use_all2all_v and envs.VLLM_ALL2ALL_BACKEND not in [
+                "deepep_high_throughput", "deepep_high_throughput"
+        ]:
             forward_context.cudagraph_runtime_mode = CUDAGraphMode.NONE
         setattr(forward_context, "all2allv_threshold",
                 None if not use_all2all_v else threshold)

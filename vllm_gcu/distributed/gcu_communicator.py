@@ -16,6 +16,7 @@ import vllm.envs as envs
 from vllm.logger import init_logger
 from vllm.platforms import current_platform
 
+import vllm_gcu.envs as gcu_envs
 from vllm_gcu.distributed.pyeccl import PyEcclCommunicator
 
 logger = init_logger(__name__)
@@ -53,13 +54,30 @@ class GCUCommunicator(CudaCommunicator):
         from vllm.config import get_current_vllm_config
         config = get_current_vllm_config()
         self.use_etp = False
+        self.use_ep = False
         if config is not None:
             self.use_etp = config.parallel_config.data_parallel_size > 1 \
                 and not config.parallel_config.enable_expert_parallel
+            self.use_ep = config.parallel_config.enable_expert_parallel \
+                and (config.parallel_config.data_parallel_size > 1
+                     or gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL)
 
         if "ep" in unique_name:
-            if self.use_etp:
-                all2all_backend = envs.VLLM_ALL2ALL_BACKEND
+            all2all_backend = envs.VLLM_ALL2ALL_BACKEND
+            if self.world_size == 1:
+                self.all2all_manager = GCUAll2AllManager()
+            elif self.use_ep:
+                if all2all_backend == "deepep_high_throughput":
+                    from vllm.distributed.device_communicators.all2all import DeepEPHTAll2AllManager
+                    self.all2all_manager = DeepEPHTAll2AllManager(self.cpu_group)
+                    logger.info("Using DeepEP High-Throughput all2all manager.")
+                elif all2all_backend == "deepep_low_latency":
+                    from vllm.distributed.device_communicators.all2all import DeepEPLLAll2AllManager
+                    self.all2all_manager = DeepEPLLAll2AllManager(self.cpu_group)
+                    logger.info("Using DeepEP Low-Latency all2all manager.")
+                else:
+                    self.all2all_manager = GCUAll2AllManager()
+            elif self.use_etp:
                 if all2all_backend == "naive":
                     self.all2all_manager = NaiveAll2AllManager(self.cpu_group)
                     logger.info("Using naive all2all manager.")
@@ -70,7 +88,7 @@ class GCUCommunicator(CudaCommunicator):
                 else:
                     raise ValueError(f"Unknown all2all backend: {all2all_backend}")
             else:
-                # (EP=False && DP==1) || EP=True
+                # EP=False && DP==1
                 self.all2all_manager = GCUAll2AllManager()
 
         # Always init_prepare_finalize.

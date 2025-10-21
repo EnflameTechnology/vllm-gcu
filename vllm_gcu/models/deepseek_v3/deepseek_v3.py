@@ -204,8 +204,8 @@ class DeepseekV2MoE(nn.Module):
         self.is_sequence_parallel = (envs.VLLM_ALL2ALL_BACKEND
                                      in ("deepep_high_throughput",
                                          "deepep_low_latency")
-                                     and parallel_config.enable_expert_parallel
-                                     and self.tp_size > 1)
+                                     and ((parallel_config.enable_expert_parallel
+                                     and self.tp_size > 1) or gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL))
 
         if layer_log2phy is not None:
             self.layer_log2phy = layer_log2phy.to(torch.gcu.current_device())

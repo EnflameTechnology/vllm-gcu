@@ -9,7 +9,7 @@ from vllm.model_executor.layers.fused_moe.modular_kernel import (
     FusedMoEPermuteExpertsUnpermute, SharedResizableBuffer)
 from vllm.utils import cdiv
 import vllm_gcu.envs as gcu_envs
-from vllm_gcu.kernels.prepare_finalize import AlltoAllPrepareAndFinalize, MoEPrepareAndFinalizeNoEP
+from vllm_gcu.kernels.prepare_finalize import AlltoAllPrepareAndFinalize
 from vllm.v1.worker.ubatching import (dbo_current_ubatch_id, dbo_enabled,
                                       dbo_maybe_run_recv_hook,
                                       dbo_register_recv_hook, dbo_yield)
@@ -50,11 +50,16 @@ class FusedMoEModularKernel(torch.nn.Module):
         prepare_finalize: FusedMoEPrepareAndFinalize,
         fused_experts: FusedMoEPermuteExpertsUnpermute,
         shared_experts: Optional[torch.nn.Module] = None,
+        routed_scaling_factor: float = 1.0,
     ):
         super().__init__()
         self.prepare_finalize = prepare_finalize
         self.fused_experts = fused_experts
         self.shared_experts = shared_experts
+        self.routed_scaling_factor = routed_scaling_factor
+        if hasattr(self.prepare_finalize, 'set_shared_experts'):
+            self.prepare_finalize.set_shared_experts(
+                self.shared_experts, self.routed_scaling_factor)
         assert prepare_finalize.activation_format == \
             fused_experts.activation_formats[0], (
                 f"{prepare_finalize.__class__.__name__}."
@@ -234,9 +239,7 @@ class FusedMoEModularKernel(torch.nn.Module):
             c_expert_tokens_meta = None
             if expert_tokens_meta is not None:
                 if isinstance(self.prepare_finalize,
-                              AlltoAllPrepareAndFinalize) or isinstance(
-                                  self.prepare_finalize,
-                                  MoEPrepareAndFinalizeNoEP):
+                              AlltoAllPrepareAndFinalize):
                     c_expert_num_tokens = None
                     if expert_tokens_meta.expert_num_tokens is not None:
                         c_expert_num_tokens = torch.clamp(
@@ -366,13 +369,7 @@ class FusedMoEModularKernel(torch.nn.Module):
             # TODO(lucas): enable in follow-up
             assert not dbo_enabled()
 
-            # Run shared experts serially with dispatch.
-            # TODO: revert this when support async
-            # if self.shared_experts is not None:
-            #     shared_output = self.shared_experts(a1)
-
-            (a1q, a1q_scale, expert_tokens_meta, _expert_topk_ids,
-             _expert_topk_weights, shared_output) = self.prepare_finalize.prepare(
+            prepare_ret = self.prepare_finalize.prepare(
                  a1,
                  topk_weights,
                  topk_ids,
@@ -381,6 +378,12 @@ class FusedMoEModularKernel(torch.nn.Module):
                  apply_router_weight_on_input,
                  self.fused_experts.quant_config,
              )
+            if hasattr(self.prepare_finalize, 'set_shared_experts'):
+                (a1q, a1q_scale, expert_tokens_meta, _expert_topk_ids,
+                _expert_topk_weights, shared_output) = prepare_ret
+            else:
+                (a1q, a1q_scale, expert_tokens_meta, _expert_topk_ids,
+                _expert_topk_weights) = prepare_ret
         else:
             # Overlap shared expert compute with all2all dispatch.
             dbo_maybe_run_recv_hook()
@@ -446,11 +449,14 @@ class FusedMoEModularKernel(torch.nn.Module):
             )
 
         # NOTE: a1 and a1q might be same buffer with output if inplace
-        if shared_output is not None:
-            output = a1.copy_(shared_output) if inplace else shared_output
+        if hasattr(self.prepare_finalize, 'set_shared_experts'):
+            if shared_output is not None:
+                output = a1.copy_(shared_output) if inplace else shared_output
+            else:
+                output = a1.fill_(0) if inplace else torch.zeros_like(a1)
+            del a1, a1q
         else:
-            output = a1.fill_(0) if inplace else torch.zeros_like(a1)
-        del a1, a1q
+            output = torch.zeros_like(a1)
 
         if not self.prepare_finalize.supports_async():
             assert not dbo_enabled()
@@ -495,6 +501,11 @@ class FusedMoEModularKernel(torch.nn.Module):
                     hook()
 
             receiver()
+
+        if not hasattr(self.prepare_finalize, 'set_shared_experts') and self.shared_experts is not None:
+            if self.routed_scaling_factor != 1.0:
+                output.mul_(self.routed_scaling_factor)
+            output.add_(shared_output)
 
         if self.shared_experts is None:
             return output

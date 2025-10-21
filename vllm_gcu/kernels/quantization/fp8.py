@@ -5,6 +5,8 @@ from vllm.model_executor.layers.linear import LinearBase, UnquantizedLinearMetho
 from vllm.model_executor.layers.fused_moe import FusedMoE
 from vllm.model_executor.layers.quantization.fp8 import Fp8Config, Fp8LinearMethod, Fp8MoEMethod
 from vllm.model_executor.layers.quantization.utils.quant_utils import is_layer_skipped
+from vllm.model_executor.layers.fused_moe.modular_kernel import FusedMoEActivationFormat
+from vllm.model_executor.layers.fused_moe.batched_deep_gemm_moe import BatchedDeepGemmExperts
 from vllm.platforms import current_platform
 
 from vllm.utils import vllm_lib
@@ -19,6 +21,7 @@ from vllm_gcu.kernels.modular_experts import TritonExpertsPad
 
 @register_gcu_quantization_config("fp8")
 class Fp8GCUConfig(Fp8Config):
+
     def get_quant_method(self, layer: torch.nn.Module, prefix: str):
         if isinstance(layer, LinearBase):
             if is_layer_skipped(prefix, self.ignored_layers):
@@ -33,18 +36,18 @@ class Fp8GCUConfig(Fp8Config):
         return "fp8_gcu"
 
     @classmethod
-    def override_quantization_method(cls, hf_quant_cfg, user_quant) -> Optional[str]:
-        if (
-            "quant_method" in hf_quant_cfg
-            and hf_quant_cfg["quant_method"] == "fp8"
-            and user_quant in ["fp8", "fp8_gcu", None]
-        ):
+    def override_quantization_method(cls, hf_quant_cfg,
+                                     user_quant) -> Optional[str]:
+        if ("quant_method" in hf_quant_cfg
+                and hf_quant_cfg["quant_method"] == "fp8"
+                and user_quant in ["fp8", "fp8_gcu", None]):
             return cls.get_name()
         return None
 
 
 @register_weight_loader_v2_supported
 class Fp8GCULinearMethod(Fp8LinearMethod):
+
     def apply(
         self,
         layer: torch.nn.Module,
@@ -55,7 +58,8 @@ class Fp8GCULinearMethod(Fp8LinearMethod):
         if self.block_quant:
             assert self.quant_config.weight_block_size is not None
             return apply_w8a8_block_fp8_linear(
-                input=x.view(self.out_dtype) if x.dtype != self.out_dtype else x,
+                input=x.view(self.out_dtype)
+                if x.dtype != self.out_dtype else x,
                 weight=layer.weight,
                 block_size=self.quant_config.weight_block_size,
                 weight_scale=layer.weight_scale,
@@ -74,7 +78,16 @@ class Fp8GCUMoEMethod(Fp8MoEMethod):
         prepare_finalize,
         layer,
     ):
-        return TritonExpertsPad(self.moe_quant_config)
+        if (prepare_finalize.activation_format ==
+                FusedMoEActivationFormat.BatchedExperts):
+            max_num_tokens_per_rank = (
+                prepare_finalize.max_num_tokens_per_rank())
+
+            return BatchedDeepGemmExperts(max_num_tokens_per_rank,
+                                          prepare_finalize.num_dispatchers(),
+                                          self.moe_quant_config)
+        else:
+            return TritonExpertsPad(self.moe_quant_config)
 
     def apply(
         self,

@@ -76,6 +76,7 @@
 #include "src/silu_and_mul.h"
 #include "src/silu_and_mul_pad.h"
 #include "src/silu_asym_quant.h"
+#include "src/silu_mul_fp8_quant_deep_gemm.h"
 #include "src/silu_mul_per_token_group_quant.h"
 #include "src/silu_mul_per_token_group_quant_with_size.h"
 #include "src/silu_mul_static_int8_quant.h"
@@ -1243,6 +1244,17 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
   }
   ops.impl("eplb_map_to_physical_and_record", torch::kPrivateUse1,
         &eplb_map_to_physical_and_record);
+
+  handle = c10::Dispatcher::singleton().findSchema(
+      {"_C::silu_mul_fp8_quant_deep_gemm_cuda", ""});
+  if (!handle.has_value()) {
+    ops.def(
+        "silu_mul_fp8_quant_deep_gemm_cuda(Tensor input, Tensor counts, "
+        "Tensor! y_q, Tensor! y_s, int group_size, "
+        "bool use_ue8m0, int num_parallel_tokens) -> ()");
+  }
+  ops.impl("silu_mul_fp8_quant_deep_gemm_cuda", torch::kPrivateUse1,
+           &silu_mul_fp8_quant_deep_gemm);
 }
 
 // TORCH_LIBRARY_FRAGMENT(CONCAT(_cache_ops, TORCH_EXTENSION_NAME), cache_ops) {
