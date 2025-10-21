@@ -198,8 +198,8 @@ def prepare_communication_buffer_for_model_noep(model: torch.nn.Module) -> None:
 
     moe_modules = [
         module for module in model.modules()
-        if module.__class__.__name__ == "FusedMoE"
+        if (module.__class__.__name__ == "FusedMoE"
+            or module.__class__.__name__ == "SharedFusedMoE")
     ]
     for module in moe_modules:
-        module.quant_method.init_prepare_finalize(module.moe_config,
-                                                  module.quant_config)
+        module.quant_method.init_prepare_finalize(module)
