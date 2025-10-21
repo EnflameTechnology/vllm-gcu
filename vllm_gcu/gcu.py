@@ -157,9 +157,9 @@ class GCUPlatform(Platform):
         import torch_gcu  # noqa: F401
         import torch_gcu.transfer_to_gcu  # noqa: F401
 
+        import vllm_gcu.kernels  # noqa: F401
         import vllm_gcu.compilation  # noqa: F401
         import vllm_gcu.distributed  # noqa: F401
-        import vllm_gcu.kernels  # noqa: F401
         import vllm_gcu.patch  # noqa: F401
 
         os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"

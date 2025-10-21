@@ -33,7 +33,7 @@ from vllm.v1.attention.backends.utils import (
 from vllm_gcu.utils import (set_gcu_forward_context,
                             dump_memory_snapshot_when_exception,
                             prepare_communication_buffer_for_model_noep,)
-from vllm_gcu.compilation.pass_manager import PassManager
+from vllm_gcu.compilation.pass_manager import PassManager, SingletonPostGradPassManager
 import vllm_gcu.envs as gcu_envs
 
 with patch("vllm.forward_context.set_forward_context", set_gcu_forward_context):
@@ -382,7 +382,8 @@ class GCUModelRunner(GPUModelRunner):
 
     def load_model(self, eep_scale_up: bool = False) -> None:
         self.vllm_config.compilation_config.inductor_compile_config["post_grad_custom_post_pass"] = PassManager(self.vllm_config)
-        super().load_model(eep_scale_up)
+        with patch("vllm.compilation.backends.PostGradPassManager", SingletonPostGradPassManager):
+            super().load_model(eep_scale_up)
         if get_ep_group().world_size == 1:
             prepare_communication_buffer_for_model_noep(self.model)
         if hasattr(self, "drafter") and hasattr(self.drafter, 'model'):
