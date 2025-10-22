@@ -8,6 +8,8 @@ export TORCH_VERSION=2.8.0
 function arm_normal_build() {
   echo "Current build job: $FUNCNAME"
   echo `pwd`
+  sudo chown -R $(whoami):$(whoami) /tmp
+  sudo chmod 777 /tmp
   sudo python3.12 -m pip install --break-system-packages torch==$TORCH_VERSION
   cmake ${project_name} --preset ci_all -B cmake_build -DPACKAGE_VERSION=$PY_PACKAGE_VERSION
   cd cmake_build
