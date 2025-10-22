@@ -31,7 +31,7 @@
             },
             "TLINUX_24": {
                 "X86_GCC9": {
-                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/tlinux/qic_tlinux_31_gcc11:1.0.1"
+                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/tlinux/qic_tlinux_31_gcc13:1.0.0"
                 }
             }
         },
@@ -72,7 +72,7 @@
             },
             "TLINUX_24": {
                 "X86_GCC9": {
-                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/tlinux/qic_tlinux_31_gcc11:1.0.1"
+                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/tlinux/qic_tlinux_31_gcc13:1.0.0"
                 }
             }
         }
@@ -81,7 +81,7 @@
         "BUILD": {
             "TLINUX": {
                 "X86_DEFAULT": {
-                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/tlinux/qic_tlinux_31_gcc11:1.0.1"
+                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/tlinux/qic_tlinux_31_gcc13:1.0.0"
                 }
             }
         }
