@@ -9,16 +9,15 @@ from unittest.mock import patch
 import torch
 import torch.fx as fx
 import torch_gcu
-import vllm.envs as envs
 from torch._inductor.codegen.common import device_codegens, get_scheduling_for_device
 from torch._inductor.codegen.triton import TritonScheduling
 from vllm.compilation.compiler_interface import (
     AlwaysHitShapeEnv,
     InductorAdaptor,
 )
+import vllm.envs as envs
 from vllm.compilation.inductor_pass import pass_context
-
-from vllm_gcu.utils import is_torch_equal_or_newer
+from vllm.utils import is_torch_equal_or_newer
 
 try:
     if device_schedule := get_scheduling_for_device("gcu") == TritonScheduling:

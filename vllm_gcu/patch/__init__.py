@@ -1,4 +1,5 @@
-from vllm_gcu.utils import is_vllm_equal, is_torch_equal_or_newer, is_nixl_equal
+from vllm.utils import is_torch_equal_or_newer
+from vllm_gcu.utils import is_vllm_equal, is_nixl_equal
 
 
 if is_vllm_equal("0.8.0"):

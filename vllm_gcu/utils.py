@@ -1,61 +1,21 @@
 #!/usr/bin/env python
 # coding=utf-8
+from typing import Optional
+import sys
 from functools import wraps, lru_cache
 from contextlib import contextmanager
-from typing import Optional
 
-import sys
 import torch
-import importlib
 from packaging import version
-from packaging.version import Version
-from vllm.utils import round_up
-import vllm_gcu.envs as gcu_envs
 from vllm.config import VllmConfig, CUDAGraphMode
 from vllm.forward_context import set_forward_context, get_forward_context, BatchDescriptor
 from vllm.v1.worker.ubatch_utils import UBatchSlices
-
-if sys.version_info < (3, 10):
-    from importlib_metadata import entry_points
-else:
-    from importlib.metadata import entry_points
-
-
-STR_DTYPE_TO_TORCH_DTYPE = {
-    "half": torch.half,
-    "bfloat16": torch.bfloat16,
-    "float": torch.float,
-    "fp8": torch.float8_e4m3fn,
-    "fp8_e4m3": torch.float8_e4m3fn,
-    "fp8_e5m2": torch.uint8,
-    "int8": torch.int8
-}
-
-try:
-    from vllm.utils import is_torch_equal_or_newer
-except Exception:
-
-    def is_torch_equal_or_newer(target: str) -> bool:
-        """Check if the installed torch version is >= the target version.
-
-        Args:
-            target: a version string, like "2.6.0".
-
-        Returns:
-            Whether the condition meets.
-        """
-        try:
-            torch_version = version.parse(str(torch.__version__))
-            return torch_version >= version.parse(target)
-        except Exception:
-            # Fallback to PKG-INFO to load the package info, needed by the doc gen.
-            return Version(importlib.metadata.version("torch")) >= Version(target)
+import vllm_gcu.envs as gcu_envs
 
 
 def dump_memory_snapshot_when_exception(name):
-    def inner(func):
-        import vllm_gcu.envs as gcu_envs
 
+    def inner(func):
         n = gcu_envs.VLLM_DUMP_SNAPSHOT_EVERY_N_STEP
         if n <= 0:
             return func
@@ -66,11 +26,8 @@ def dump_memory_snapshot_when_exception(name):
         @wraps(func)
         def _wrapper(*args, **kwargs):
             nonlocal step
-            rank = (
-                torch.distributed.get_rank()
-                if torch.distributed.is_initialized()
-                else 0
-            )
+            rank = (torch.distributed.get_rank()
+                    if torch.distributed.is_initialized() else 0)
             try:
                 r = func(*args, **kwargs)
             except Exception as err:
@@ -108,7 +65,7 @@ def is_nixl_equal(target: str):
         return False
 
 
-def ep_alltoall_threshold(vllm_config: VllmConfig):
+def _ep_alltoall_threshold(vllm_config: VllmConfig):
     """
     Use dynamic memory allocation in EP dispatch when num_tokens_across_dp > threshold,
     use static allocation otherwise. Cudagraph only supports staitc shape,
@@ -120,10 +77,6 @@ def ep_alltoall_threshold(vllm_config: VllmConfig):
         threshold *= vllm_config.speculative_config.num_speculative_tokens + 1
 
     threshold = max(threshold, vllm_config.compilation_config.max_capture_size)
-    if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL or \
-            vllm_config.parallel_config.use_sequence_parallel_moe:
-        sp_size = vllm_config.parallel_config.tensor_parallel_size
-        threshold = round_up(threshold, sp_size)
     threshold *= vllm_config.parallel_config.data_parallel_size
 
     return threshold
@@ -131,6 +84,11 @@ def ep_alltoall_threshold(vllm_config: VllmConfig):
 
 @lru_cache(maxsize=8)
 def get_hooks(group: str):
+    if sys.version_info < (3, 10):
+        from importlib_metadata import entry_points
+    else:
+        from importlib.metadata import entry_points
+
     return entry_points(group=group)
 
 
@@ -147,44 +105,43 @@ def set_gcu_forward_context(
     is_dummy=False,
 ):
     with set_forward_context(
-        attn_metadata,
-        vllm_config,
-        virtual_engine,
-        num_tokens,
-        num_tokens_across_dp,
-        cudagraph_runtime_mode,
-        batch_descriptor,
-        ubatch_slices,
+            attn_metadata,
+            vllm_config,
+            virtual_engine,
+            num_tokens,
+            num_tokens_across_dp,
+            cudagraph_runtime_mode,
+            batch_descriptor,
+            ubatch_slices,
     ) as ctx:
         # invoke hooks
         discovered_hooks = get_hooks(group="vllm_gcu.hooks")
         if len(discovered_hooks) > 0:
             for hook in discovered_hooks:
                 func = hook.load()
-                func(attn_metadata, vllm_config, num_tokens, num_tokens_across_dp, is_dummy)
+                func(attn_metadata, vllm_config, num_tokens,
+                     num_tokens_across_dp, is_dummy)
 
         forward_context = get_forward_context()
-        threshold = ep_alltoall_threshold(vllm_config)
+        threshold = _ep_alltoall_threshold(vllm_config)
         dp_metadata = forward_context.dp_metadata
         if dp_metadata is not None:
-            total_tokens = torch.sum(dp_metadata.num_tokens_across_dp_cpu).item()
+            total_tokens = torch.sum(
+                dp_metadata.num_tokens_across_dp_cpu).item()
         else:
             if attn_metadata is not None and hasattr(attn_metadata,
-                                                 "num_prefill_tokens"):
+                                                     "num_prefill_tokens"):
                 # for v0 attention backends
                 total_tokens = attn_metadata.num_prefill_tokens + \
                     attn_metadata.num_decode_tokens
-                if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL or \
-                        vllm_config.parallel_config.use_sequence_parallel_moe:
-                    sp_size = vllm_config.parallel_config.tensor_parallel_size
-                    total_tokens = round_up(total_tokens, sp_size)
             else:
                 # for v1 attention backends or no attn_metadata
                 total_tokens = num_tokens or 0
         use_all2all_v = total_tokens <= threshold
         if not use_all2all_v:
             forward_context.cudagraph_runtime_mode = CUDAGraphMode.NONE
-        setattr(forward_context, "all2allv_threshold", None if not use_all2all_v else threshold)
+        setattr(forward_context, "all2allv_threshold",
+                None if not use_all2all_v else threshold)
 
         try:
             yield ctx
@@ -193,7 +150,8 @@ def set_gcu_forward_context(
                 delattr(forward_context, "all2allv_threshold")
 
 
-def prepare_communication_buffer_for_model_noep(model: torch.nn.Module) -> None:
+def prepare_communication_buffer_for_model_noep(
+        model: torch.nn.Module) -> None:
     """
     Prepare the communication buffer for the model.
     """
@@ -209,4 +167,5 @@ def prepare_communication_buffer_for_model_noep(model: torch.nn.Module) -> None:
 
 def scatter(seqlen, size):
     indices = list(range(size))
-    return [(seqlen + indices[i]) // size - indices[i] // size for i in range(size)]
+    return [(seqlen + indices[i]) // size - indices[i] // size
+            for i in range(size)]

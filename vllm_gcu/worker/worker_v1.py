@@ -1,49 +1,43 @@
-import torch
+from typing import Optional, Union, Any
+from importlib.util import find_spec
 from unittest.mock import patch
 import os
 import gc
 import contextlib
 import numpy as np
-from typing import Optional, Union, Any
-from importlib.util import find_spec
-
-# import vllm.device_allocator
+import torch
 from vllm.utils import MemorySnapshot, GiB_bytes, cdiv
 from vllm.model_executor import set_random_seed
 from vllm.distributed.parallel_state import get_pp_group, get_ep_group, prepare_communication_buffer_for_model
 from vllm.config import CUDAGraphMode, VllmConfig
+from vllm.sequence import IntermediateTensors
 from vllm.platforms import current_platform
+from vllm.forward_context import BatchDescriptor
 from vllm.v1.core.sched.output import SchedulerOutput
 from vllm.v1.kv_cache_interface import KVCacheConfig
-
 from vllm.v1.utils import report_usage_stats
 from vllm.v1.outputs import ModelRunnerOutput
-from vllm.sequence import IntermediateTensors
-
-from vllm.v1.attention.backends.utils import CommonAttentionMetadata
-from vllm.forward_context import BatchDescriptor
 from vllm.v1.spec_decode.eagle import EagleProposer
-from vllm.v1.worker.ubatch_splitting import (check_ubatch_thresholds,
-                                             ubatch_split)
-from vllm.v1.worker.ubatch_utils import UBatchSlice, UBatchSlices
-from vllm.v1.attention.backends.utils import (
-    AttentionCGSupport, AttentionMetadataBuilder, CommonAttentionMetadata,
-    create_fast_prefill_custom_backend,
-    reorder_batch_to_split_decodes_and_prefills, split_attn_metadata)
-from vllm_gcu.utils import (set_gcu_forward_context,
-                            dump_memory_snapshot_when_exception,
-                            prepare_communication_buffer_for_model_noep,)
+from vllm.v1.worker.ubatch_splitting import ubatch_split
+from vllm.v1.attention.backends.utils import CommonAttentionMetadata, split_attn_metadata
+from vllm_gcu.utils import (
+    set_gcu_forward_context,
+    dump_memory_snapshot_when_exception,
+    prepare_communication_buffer_for_model_noep,
+)
 from vllm_gcu.compilation.pass_manager import PassManager, SingletonPostGradPassManager
 from vllm_gcu.kernels.sampler import ParallelTopKTopPSampler
 from vllm_gcu.kernels.rejection_sampler import GCURejectionSampler
 import vllm_gcu.envs as gcu_envs
 
-with patch("vllm.forward_context.set_forward_context", set_gcu_forward_context):
+with patch("vllm.forward_context.set_forward_context",
+           set_gcu_forward_context):
     from vllm.v1.worker.gpu_model_runner import GPUModelRunner
 from vllm.v1.worker.gpu_worker import Worker, init_worker_distributed_environment
 
 
 class GCUModelRunner(GPUModelRunner):
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         logprobs_mode = self.sampler.topk_topp_sampler.logprobs_mode
@@ -51,12 +45,31 @@ class GCUModelRunner(GPUModelRunner):
         if hasattr(self, "rejection_sampler"):
             self.rejection_sampler = GCURejectionSampler()
 
+        if hasattr(self, "drafter") and isinstance(self.drafter,
+                                                   EagleProposer):
+            from vllm_gcu.worker.eagle import EagleProposerWithGraph
+
+            self.drafter = EagleProposerWithGraph(self.vllm_config,
+                                                  self.device, self)
+
     def get_dp_padding(self,
                        num_tokens: int) -> tuple[int, Optional[torch.Tensor]]:
         if self.vllm_config.parallel_config.enable_expert_parallel:
             return 0, None
         else:
             return super().get_dp_padding(num_tokens)
+
+    def initialize_cudagraph_capture(self) -> None:
+        super().initialize_cudagraph_capture()
+
+        if hasattr(self, "drafter") and isinstance(self.drafter,
+                                                   EagleProposer):
+            self.drafter.cudagraph_dispatcher1.initialize_cudagraph_keys(
+                self.compilation_config.cudagraph_mode,
+                self.uniform_decode_query_len)
+
+            self.drafter.cudagraph_dispatcher2.initialize_cudagraph_keys(
+                self.compilation_config.cudagraph_mode, 1)
 
     @torch.inference_mode()
     @dump_memory_snapshot_when_exception('step')
@@ -182,8 +195,8 @@ class GCUModelRunner(GPUModelRunner):
             num_tokens_across_dp = num_tokens_after_padding
             num_tokens_after_padding = int(num_tokens_after_padding[0].item())
 
-
         attn_metadata: Optional[dict[str, Any]] = None
+        spec_decode_common_attn_metadata = None
 
         # If force_attention is True, we always capture attention. Otherwise,
         # it only happens for cudagraph_runtime_mode=FULL.
@@ -222,11 +235,20 @@ class GCUModelRunner(GPUModelRunner):
                     num_actual_tokens=num_tokens,
                     max_query_len=max_query_len,
                     max_seq_len=self.max_model_len,
-                    block_table_tensor=self.input_batch.block_table[
-                        kv_cache_group_id].get_device_tensor(num_reqs),
-                    slot_mapping=self.input_batch.
-                    block_table[kv_cache_group_id].slot_mapping.gpu[:num_tokens],
+                    block_table_tensor=self.input_batch.
+                    block_table[kv_cache_group_id].get_device_tensor(num_reqs),
+                    slot_mapping=self.input_batch.block_table[
+                        kv_cache_group_id].slot_mapping.gpu[:num_tokens],
                     causal=True)
+
+                if (self.speculative_config
+                        and spec_decode_common_attn_metadata is None):
+                    if isinstance(self.drafter, EagleProposer):
+                        if (self.drafter.attn_layer_names[0]
+                                in kv_cache_group_spec.layer_names):
+                            spec_decode_common_attn_metadata = common_attn_metadata
+                    else:
+                        spec_decode_common_attn_metadata = common_attn_metadata
 
                 for attn_group in self.attn_groups[kv_cache_group_id]:
                     if ubatch_slices is not None:
@@ -309,15 +331,16 @@ class GCUModelRunner(GPUModelRunner):
                 if num_tokens_across_dp is not None:
                     num_tokens_across_dp[:] = num_tokens_after_padding
 
-            with self.maybe_randomize_inputs(input_ids), set_gcu_forward_context(
-                    attn_metadata,
-                    self.vllm_config,
-                    num_tokens=num_tokens_after_padding,
-                    num_tokens_across_dp=num_tokens_across_dp,
-                    cudagraph_runtime_mode=cudagraph_runtime_mode,
-                    batch_descriptor=batch_descriptor,
-                    ubatch_slices=ubatch_slices,
-                    is_dummy=True):
+            with self.maybe_randomize_inputs(
+                    input_ids), set_gcu_forward_context(
+                        attn_metadata,
+                        self.vllm_config,
+                        num_tokens=num_tokens_after_padding,
+                        num_tokens_across_dp=num_tokens_across_dp,
+                        cudagraph_runtime_mode=cudagraph_runtime_mode,
+                        batch_descriptor=batch_descriptor,
+                        ubatch_slices=ubatch_slices,
+                        is_dummy=True):
                 outputs = self.model(
                     input_ids=input_ids,
                     positions=positions,
@@ -333,7 +356,9 @@ class GCUModelRunner(GPUModelRunner):
 
             if self.speculative_config and self.speculative_config.use_eagle():
                 assert isinstance(self.drafter, EagleProposer)
-                self.drafter.dummy_run(num_tokens)
+                self.drafter.dummy_run(num_tokens,
+                                       spec_decode_common_attn_metadata,
+                                       cudagraph_runtime_mode)
 
         # This is necessary to avoid blocking DP.
         # For dummy runs, we typically skip EPLB since we don't have any real
@@ -390,8 +415,10 @@ class GCUModelRunner(GPUModelRunner):
         return kv_cache_raw_tensors
 
     def load_model(self, eep_scale_up: bool = False) -> None:
-        self.vllm_config.compilation_config.inductor_compile_config["post_grad_custom_post_pass"] = PassManager(self.vllm_config)
-        with patch("vllm.compilation.backends.PostGradPassManager", SingletonPostGradPassManager):
+        self.vllm_config.compilation_config.inductor_compile_config[
+            "post_grad_custom_post_pass"] = PassManager(self.vllm_config)
+        with patch("vllm.compilation.backends.PostGradPassManager",
+                   SingletonPostGradPassManager):
             super().load_model(eep_scale_up)
         if get_ep_group().world_size == 1:
             prepare_communication_buffer_for_model_noep(self.model)
@@ -402,6 +429,7 @@ class GCUModelRunner(GPUModelRunner):
 
 
 class GCUWorker(Worker):
+
     def __init__(
         self,
         vllm_config: VllmConfig,
@@ -419,11 +447,11 @@ class GCUWorker(Worker):
             dp_rank = vllm_config.parallel_config.data_parallel_rank
             world_size = vllm_config.parallel_config.world_size
             rank_across_dp = dp_rank * world_size + rank
-            f = open(os.path.join(gcu_envs.VLLM_GCU_RANK_LOG_PATH,
-                                  f'worker_{rank_across_dp}.log'),
-                     'w', buffering=1)
-            os.dup2(f.fileno(), 1)
-            os.dup2(f.fileno(), 2)
+            rank_log = os.path.join(gcu_envs.VLLM_GCU_RANK_LOG_PATH,
+                                    f"worker_{rank_across_dp}.log")
+            with open(rank_log, "w", buffering=1) as f:
+                os.dup2(f.fileno(), 1)
+                os.dup2(f.fileno(), 2)
         if vllm_config.additional_config.get('set_cpu_affinity', False):
             current_platform.set_cpu_affinity(local_rank)
 
@@ -444,9 +472,8 @@ class GCUWorker(Worker):
         torch.gcu.empty_cache()
 
         self.init_snapshot = MemorySnapshot()
-        self.requested_memory = (
-            self.init_snapshot.total_memory * self.cache_config.gpu_memory_utilization
-        )
+        self.requested_memory = (self.init_snapshot.total_memory *
+                                 self.cache_config.gpu_memory_utilization)
 
         if self.init_snapshot.free_memory < self.requested_memory:
             GiB = lambda b: round(b / GiB_bytes, 2)  # noqa: E731
@@ -457,11 +484,13 @@ class GCUWorker(Worker):
                 f"is less than desired GPU memory utilization "
                 f"({self.cache_config.gpu_memory_utilization}, "
                 f"{GiB(self.requested_memory)} GiB). Decrease GPU memory "
-                f"utilization or reduce GPU memory used by other processes."
-            )
+                f"utilization or reduce GPU memory used by other processes.")
 
         init_worker_distributed_environment(
-            self.vllm_config, self.rank, self.distributed_init_method, self.local_rank,
+            self.vllm_config,
+            self.rank,
+            self.distributed_init_method,
+            self.local_rank,
             current_platform.dist_backend,
         )
         # Set random seed.
@@ -469,8 +498,7 @@ class GCUWorker(Worker):
 
         # Construct the model runner
         self.model_runner: GCUModelRunner = GCUModelRunner(
-            self.vllm_config, self.device
-        )
+            self.vllm_config, self.device)
 
         if self.rank == 0:
             # If usage stat is enabled, collect relevant info.
@@ -486,13 +514,14 @@ class GCUWorker(Worker):
         has_tx = find_spec("topstx") is not None
         if has_tx:
             import topstx
-            tx_ctx = topstx.annotate(f"execute_{num_scheduled_tokens}", color="green", domain="VLLM")
+            tx_ctx = topstx.annotate(f"execute_{num_scheduled_tokens}",
+                                     color="green",
+                                     domain="VLLM")
         else:
             tx_ctx = contextlib.nullcontext()
 
         with tx_ctx:
             return super().execute_model(scheduler_output)
-
 
     def execute_dummy_batch(self) -> None:
         self.model_runner._dummy_run(0)
