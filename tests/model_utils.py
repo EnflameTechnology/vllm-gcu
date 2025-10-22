@@ -1,13 +1,23 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import warnings
-from typing import Dict, List, Optional, Sequence, Tuple, Union
+from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import Any, Optional, Union
 
 import torch
-from vllm.config import ModelConfig, TaskOption
-from vllm.inputs import InputContext
-from vllm.sequence import Logprob, PromptLogprobs, SampleLogprobs
+import torch.nn.functional as F
+from transformers import PretrainedConfig
 
-TokensText = Tuple[List[int], str]
+from vllm.config import ModelConfig, ModelDType, RunnerOption
+from vllm.logprobs import Logprob, PromptLogprobs, SampleLogprobs
+from vllm.multimodal.processing import InputProcessingContext
+from vllm.transformers_utils.tokenizer import cached_tokenizer_from_config
+
+from .registry import HF_EXAMPLE_MODELS
+
+TokensText = tuple[list[int], str]
 
 
 def check_outputs_equal(
@@ -44,7 +54,7 @@ def check_outputs_equal(
 # * List of top sample logprobs for each sampled token
 #
 # Assumes prompt logprobs were not requested.
-TokensTextLogprobs = Tuple[List[int], str, Optional[Union[List[Dict[int,
+TokensTextLogprobs = tuple[list[int], str, Optional[Union[list[dict[int,
                                                                     float]],
                                                           SampleLogprobs]]]
 
@@ -55,8 +65,8 @@ TokensTextLogprobs = Tuple[List[int], str, Optional[Union[List[Dict[int,
 # * Optional list of top sample logprobs for each sampled token
 #
 # Assumes prompt logprobs were not requested.
-TextTextLogprobs = Tuple[List[str], str, Optional[Union[List[Dict[str, float]],
-                                                        List[Dict[str,
+TextTextLogprobs = tuple[list[str], str, Optional[Union[list[dict[str, float]],
+                                                        list[dict[str,
                                                                   Logprob]]]]]
 
 # Representation of generated sequence as a tuple of
@@ -66,9 +76,9 @@ TextTextLogprobs = Tuple[List[str], str, Optional[Union[List[Dict[str, float]],
 # * Optional list of top prompt logprobs for each prompt token
 #
 # Allows prompt logprobs to be requested.
-TokensTextLogprobsPromptLogprobs = Tuple[
-    List[int], str, Optional[Union[List[Dict[int, float]], SampleLogprobs]],
-    Optional[Union[List[Optional[Dict[int, float]]], PromptLogprobs]]]
+TokensTextLogprobsPromptLogprobs = tuple[
+    list[int], str, Optional[Union[list[dict[int, float]], SampleLogprobs]],
+    Optional[Union[list[Optional[dict[int, float]]], PromptLogprobs]]]
 
 
 def check_logprobs_close(
@@ -246,40 +256,228 @@ def check_logprobs_close(
                     warnings.warn(fail_msg, stacklevel=2)
 
 
-def build_model_context(model_name: str,
-                        task: TaskOption = "auto",
-                        tokenizer_name: Optional[str] = None,
-                        trust_remote_code: bool = False,
-                        dtype: Optional[Union[str, torch.dtype]] = None,
-                        mm_processor_kwargs: Optional[Dict] = None,
-                        limit_mm_per_prompt: Optional[Dict] = None):
-    """Creates an InputContext for a given model.
+def build_model_context(
+    model_id: str,
+    runner: RunnerOption = "auto",
+    dtype: ModelDType = "auto",
+    model_config_kwargs: Optional[dict[str, Any]] = None,
+    mm_processor_kwargs: Optional[dict[str, Any]] = None,
+    limit_mm_per_prompt: Optional[dict[str, int]] = None,
+    mm_processor_cache_gb: int = 0,
+):
+    """Creates an InputProcessingContext for a given model.
 
     Args:
-        model_name: Name of the model being considered.
-        tokenizer_name: Name of the tokenizer being considered.
-        trust_remote_code: Whether or not to allow loading remote code.
+        model_id: ID of the model being considered.
         mm_processor_kwargs: optional processor kwargs for to be leveraged
             in the input processor, mapper, dummy data creation, etc.
         limit_mm_per_prompt: Multimodal limits.
 
     Returns:
-        InputContext for the model being considered.
+        InputProcessingContext for the model being considered.
     """
-    if tokenizer_name is None:
-        tokenizer_name = model_name
-    if dtype is None:
-        dtype = "half"
+    model_info = HF_EXAMPLE_MODELS.find_hf_info(model_id)
+    model_info.check_available_online(on_fail="skip")
+    model_info.check_transformers_version(on_fail="skip")
 
+    model_config_kwargs = model_config_kwargs or {}
+    limit_mm_per_prompt = limit_mm_per_prompt or {}
     model_config = ModelConfig(
-        model_name,
-        task=task,
-        tokenizer=tokenizer_name,
-        tokenizer_mode="auto",
-        trust_remote_code=trust_remote_code,
+        model_id,
+        runner=runner,
+        tokenizer=model_info.tokenizer or model_id,
+        tokenizer_mode=model_info.tokenizer_mode,
+        revision=model_info.revision,
+        trust_remote_code=model_info.trust_remote_code,
         dtype=dtype,
         seed=0,
         mm_processor_kwargs=mm_processor_kwargs,
         limit_mm_per_prompt=limit_mm_per_prompt,
+        mm_processor_cache_gb=mm_processor_cache_gb,
+        hf_overrides=model_info.hf_overrides,
+        skip_tokenizer_init=model_info.skip_tokenizer_init,
+        enforce_eager=model_info.enforce_eager,
+        **model_config_kwargs,
     )
-    return InputContext(model_config)
+
+    return InputProcessingContext(
+        model_config,
+        tokenizer=cached_tokenizer_from_config(model_config),
+    )
+
+
+def check_embeddings_close(
+    *,
+    embeddings_0_lst: Sequence[list[float]],
+    embeddings_1_lst: Sequence[list[float]],
+    name_0: str,
+    name_1: str,
+    tol: float = 1e-3,
+) -> None:
+    assert len(embeddings_0_lst) == len(embeddings_1_lst)
+
+    for prompt_idx, (embeddings_0, embeddings_1) in enumerate(
+            zip(embeddings_0_lst, embeddings_1_lst)):
+        assert len(embeddings_0) == len(embeddings_1), (
+            f"Length mismatch: {len(embeddings_0)} vs. {len(embeddings_1)}")
+
+        sim = F.cosine_similarity(torch.tensor(embeddings_0),
+                                  torch.tensor(embeddings_1),
+                                  dim=0)
+
+        fail_msg = (f"Test{prompt_idx}:"
+                    f"\nCosine similarity: \t{sim:.4f}"
+                    f"\n{name_0}:\t{embeddings_0[:16]!r}"
+                    f"\n{name_1}:\t{embeddings_1[:16]!r}")
+
+        assert sim >= 1 - tol, fail_msg
+
+
+def matryoshka_fy(tensor: torch.Tensor, dimensions: int):
+    tensor = torch.tensor(tensor)
+    tensor = tensor[..., :dimensions]
+    tensor = F.normalize(tensor, p=2, dim=1)
+    return tensor
+
+
+def softmax(data):
+    if data.shape[-1] == 1:
+        return F.sigmoid(data)
+    else:
+        return F.softmax(data, dim=-1)
+
+
+@dataclass
+class ModelInfo:
+    name: str
+    architecture: str = ""
+    dtype: str = "auto"
+    hf_dtype: str = "float32"
+    hf_overrides: Optional[dict[str, Any]] = None
+    default_pooling_type: str = ""
+    enable_test: bool = True
+
+
+@dataclass
+class EmbedModelInfo(ModelInfo):
+    mteb_score: Optional[float] = None
+    is_matryoshka: bool = False
+    matryoshka_dimensions: Optional[list[int]] = None
+
+
+@dataclass
+class CLSPoolingEmbedModelInfo(EmbedModelInfo):
+    default_pooling_type: str = "CLS"
+
+
+@dataclass
+class LASTPoolingEmbedModelInfo(EmbedModelInfo):
+    default_pooling_type: str = "LAST"
+
+
+@dataclass
+class RerankModelInfo(ModelInfo):
+    mteb_score: Optional[float] = None
+
+
+@dataclass
+class CLSPoolingRerankModelInfo(RerankModelInfo):
+    default_pooling_type: str = "CLS"
+
+
+@dataclass
+class LASTPoolingRerankModelInfo(RerankModelInfo):
+    default_pooling_type: str = "LAST"
+
+
+@dataclass
+class GenerateModelInfo(ModelInfo):
+    hf_dtype: str = "auto"
+    hf_ppl: Optional[float] = None
+
+
+def dummy_hf_overrides(
+    hf_config: PretrainedConfig,
+    *,
+    model_arch: str = "",
+    exist_overrides: Optional[dict[str, Any]] = None,
+    use_original_num_layers: bool = False,
+) -> PretrainedConfig:
+    """
+    Dummy HF overrides function used to create dummy model
+    with only minimum nums of layer.
+    """
+    hf_config.update(exist_overrides or {})
+
+    text_config = hf_config.get_text_config()
+
+    # Ensure at least 2 expert per group
+    # Since `grouped_topk` assumes top-2
+    n_group = getattr(text_config, 'n_group', None)
+    num_experts = n_group * 2 if n_group is not None else 2
+
+    # we use three layers for Gemma-3n to check
+    # both normal layer and kv_shared_layer
+    if use_original_num_layers:
+        # Use the original number of layers from the config
+        num_layers = getattr(text_config, 'num_layers', 1)
+        num_hidden_layers = getattr(text_config, 'num_hidden_layers', 1)
+    else:
+        # Use minimal layers for testing
+        num_layers = 1
+        num_hidden_layers = (3 if model_arch
+                             == "Gemma3nForConditionalGeneration" else 1)
+
+    update_dict = {
+        "num_layers": num_layers,
+        "num_experts": num_experts,
+        "num_experts_per_tok": 2,
+        "num_local_experts": num_experts,
+        # Otherwise there will not be any expert layers
+        "first_k_dense_replace": 0,
+        # To avoid OOM on DeepSeek-V3
+        "n_routed_experts": num_experts,
+        # For Gemma-3n
+        "num_kv_shared_layers": 1,
+    }
+
+    # Update num_hidden_layers for non-Longcat architectures
+    if model_arch != "LongcatFlashForCausalLM" \
+            and model_arch != "LongCatFlashMTPModel":
+        update_dict["num_hidden_layers"] = num_hidden_layers
+
+    text_config.update(update_dict)
+
+    if hasattr(hf_config, "vision_config"):
+        hf_config.vision_config.update({
+            "num_layers": 1,
+            "num_hidden_layers": 1,
+        })
+
+    # e.g.: ibm-granite/granite-speech-3.3-2b
+    if hasattr(hf_config, "encoder_config"):
+        hf_config.encoder_config.update({
+            "num_layers": 1,
+            "num_hidden_layers": 1,
+        })
+
+    # e.g.: Qwen/Qwen2-Audio-7B-Instruct
+    if hasattr(hf_config, "audio_config"):
+        hf_config.audio_config.update({
+            "num_layers": 1,
+            "num_hidden_layers": 1,
+            "encoder_layers": 1,
+        })
+
+    return hf_config
+
+
+def check_transformers_version(model: str,
+                               min_transformers_version: Optional[str] = None,
+                               max_transformers_version: Optional[str] = None):
+    from .registry import _HfExamplesInfo
+
+    return _HfExamplesInfo(model,
+                           min_transformers_version=min_transformers_version,
+                           max_transformers_version=max_transformers_version
+                           ).check_transformers_version(on_fail="skip")
