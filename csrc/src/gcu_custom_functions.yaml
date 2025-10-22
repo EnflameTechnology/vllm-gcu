@@ -260,3 +260,6 @@
 
 - func: top_k_top_p(Tensor(a!) logits, Tensor k, Tensor p, int dim, bool descending) -> ()
   variants: function
+
+- func: apply_repetition_penalties(Tensor(a!) logits, Tensor prompt_mask, Tensor output_mask, Tensor repetition_penalties) -> ()
+  variants: function

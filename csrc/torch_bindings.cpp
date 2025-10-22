@@ -91,6 +91,7 @@
 #include "src/mha_fwd_kvcache_mla.h"
 #include "src/topk_topp_random_sampler_from_logits.h"
 #include "src/top_k_top_p.h"
+#include "src/apply_repetition_penalties.h"
 
 // Note on op signatures:
 // The X_meta signatures are for the meta functions corresponding to op X.
@@ -1218,6 +1219,16 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
             "descending=False) -> ()");
   }
   ops.impl("top_k_top_p", torch::kPrivateUse1, &top_k_top_p);
+
+  handle = c10::Dispatcher::singleton().findSchema(
+      {"_C::apply_repetition_penalties_", ""});
+  if (!handle.has_value()) {
+    ops.def(
+        "apply_repetition_penalties_(Tensor! logits, Tensor prompt_mask, "
+        "Tensor output_mask, Tensor repetition_penalties) -> ()");
+  }
+  ops.impl("apply_repetition_penalties_", torch::kPrivateUse1,
+           &apply_repetition_penalties);
 }
 
 // TORCH_LIBRARY_FRAGMENT(CONCAT(_cache_ops, TORCH_EXTENSION_NAME), cache_ops) {
