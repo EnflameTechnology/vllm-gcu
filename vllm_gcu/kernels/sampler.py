@@ -13,9 +13,11 @@ class ParallelTopKTopPSampler(TopKTopPSampler):
         super().__init__(logprobs_mode)
 
         vllm_config = get_current_vllm_config()
-        self.enable_dp_parallel = (not vllm_config.additional_config.get(
-            "disable_dp_sampler", False) and
-                                   current_platform.has_device_capability(140))
+        tp_group = get_tp_group()
+        self.enable_dp_parallel = (
+            not vllm_config.additional_config.get("disable_dp_sampler", False)
+            and current_platform.has_device_capability(140)
+            and tp_group.world_size > 1)
         self.forward = self.forward_oot
 
     def forward_oot(
