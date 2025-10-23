@@ -120,9 +120,37 @@ class MoeWNA16GCUConfig(QuantizationConfig):
         return None
 
     @classmethod
+    def is_moe_wna16_gcu_compatible(cls, quant_config: dict[str, Any]):
+        from vllm.platforms import current_platform
+        # Extract data from quant config.
+        quant_method = quant_config.get("quant_method", "").lower()
+        num_bits = quant_config.get("bits")
+        desc_act = quant_config.get("desc_act")
+        static_groups = quant_config.get("static_groups", False)
+
+        capability_tuple = current_platform.get_device_capability()
+        device_capability = (-1 if capability_tuple is None else
+                             capability_tuple.to_int())
+        # Avoid circular import
+        from vllm.model_executor.layers.quantization.awq import AWQConfig
+        awq_min_capability = AWQConfig.get_min_capability()
+
+        #gptq_compatible = quant_method == "gptq" and \
+        #        not desc_act and num_bits in [4, 8]
+        if quant_method == "gptq" and num_bits in [4, 8]:
+            if desc_act and not static_groups:
+                return False
+            return True
+
+        awq_compatible = quant_method == "awq" and num_bits == 4 and \
+            device_capability >= awq_min_capability
+
+        return awq_compatible
+
+    @classmethod
     def override_quantization_method(cls, hf_quant_cfg, user_quant) -> Optional[str]:
         if (
-            MoeWNA16Config.is_moe_wna16_compatible(hf_quant_cfg)
+            MoeWNA16GCUConfig.is_moe_wna16_gcu_compatible(hf_quant_cfg)
             and user_quant == "moe_wna16_gcu"
         ):
             return cls.get_name()

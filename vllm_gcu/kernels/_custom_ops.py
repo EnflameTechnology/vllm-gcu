@@ -274,6 +274,25 @@ def gptq_gemm_gcu(
         )
         return output
 
+@register_fake("_C::gptq_gemm_gcu")
+def _gptq_gemm_gcu_fake(
+    a: torch.Tensor,
+    b_q_weight: torch.Tensor,
+    b_gptq_qzeros: torch.Tensor,
+    b_gptq_scales: torch.Tensor,
+    b_g_idx: torch.Tensor,
+    bit: int,
+    bias=None,
+    group_size=128,
+) -> torch.Tensor:
+    if bit == 4:
+        out_shape = a.shape[:-1] + (b_q_weight.shape[-1],)
+    elif bit == 8:
+        out_shape = a.shape[:-1] + (b_q_weight.shape[0],)
+
+    return torch.empty(out_shape, dtype=a.dtype, device=a.device)
+
+
 
 # 8bit
 def scaled_fp8_quant(

@@ -233,6 +233,7 @@ class GPTQGCULinearMethod(GPTQLinearMethod):
         layer.qzeros = Parameter(layer.qzeros.data, requires_grad=False)
         layer.qweight = Parameter(layer.qweight.data, requires_grad=False)
         layer.g_idx = Parameter(layer.g_idx.data, requires_grad=False)
+        layer.scales = Parameter(layer.scales.data, requires_grad=False)
 
         if self.quant_config.weight_bits == 4:
             from vllm_gcu.kernels.quantization.rearrange import (

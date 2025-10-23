@@ -840,10 +840,12 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
            &context_attention_forward);
 
   handle =
-      c10::Dispatcher::singleton().findSchema({"_C::weight_only_quant", ""});
-  if (!handle.has_value()) {
-    ops.def("weight_only_quant", &weight_only_quant);
-  }
+        c10::Dispatcher::singleton().findSchema({"_C::weight_only_quant", ""});
+    if (!handle.has_value()) {
+      ops.def(
+          "weight_only_quant(Tensor! output, Tensor input, Tensor qweight, "
+          "Tensor? bias, Tensor scale, int group_size) -> ()");
+    }
   ops.impl("weight_only_quant", c10::kPrivateUse1, &weight_only_quant);
 
   handle = c10::Dispatcher::singleton().findSchema(
