@@ -9,6 +9,7 @@ from vllm.model_executor.layers.fused_moe import FusedMoE as FusedMoEOri
 
 from vllm.logger import init_logger
 
+import vllm_gcu.envs as gcu_envs
 from vllm_gcu.kernels.prepare_finalize import AlltoAllSelector, MoEPrepareAndFinalizeNoEP
 from vllm_gcu.kernels.modular_experts import TritonExpertsPad
 from vllm_gcu.patch.patch_0_11_0.modular_kernel import FusedMoEModularKernel
@@ -26,10 +27,14 @@ def maybe_make_prepare_finalize(self) -> Optional[FusedMoEPrepareAndFinalize]:
 
     prepare_finalize: Optional[FusedMoEPrepareAndFinalize] = None
 
-    if self.moe.moe_parallel_config.ep_size > 1:
+    if self.moe.moe_parallel_config.ep_size > 1 and (
+            self.moe.moe_parallel_config.dp_size > 1
+            or gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL):
+        # DP*SP -> EP
         prepare_finalize = AlltoAllSelector(
             None, self.moe.moe_parallel_config.dp_size)
     else:
+        # TP -> EP || 1 card
         prepare_finalize = MoEPrepareAndFinalizeNoEP()
 
     return prepare_finalize
