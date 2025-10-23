@@ -18,18 +18,19 @@
     "whl" :
     {
       "3.10" : ["vllm-gcu","tops-extension", "triton-gcu", "flash_attn"],
+      "3.12" : ["vllm-gcu","tops-extension", "triton-gcu", "flash_attn"],
       "3.9" : ["vllm-gcu","tops-extension", "triton-gcu", "flash_attn"]
     },
     "special_cmd" : [
       {
           "name" : "opencv-python",
-          "install" : "sudo python3.10 -m pip install opencv-python==4.12.0.88",
-          "uninstall" : "sudo python3.10 -m pip uninstall opencv-python -y || true"
+          "install" : "sudo python -m pip install opencv-python==4.12.0.88",
+          "uninstall" : "sudo python -m pip uninstall opencv-python -y || true"
       },
       {
           "name" : "opencv-python-headless",
-          "install" : "sudo python3.10 -m pip install opencv-python-headless==4.12.0.88",
-          "uninstall" : "sudo python3.10 -m pip uninstall opencv-python-headless -y || true"
+          "install" : "sudo python -m pip install opencv-python-headless==4.12.0.88",
+          "uninstall" : "sudo python -m pip uninstall opencv-python-headless -y || true"
       },
       {
           "name" : "triton 3.3.0",
@@ -53,8 +54,8 @@
       },
       {
           "name" : "protobuf",
-          "install" : "sudo python3.10 -m pip install protobuf==6.31.1",
-          "uninstall" : "sudo python3.10 -m pip uninstall protobuf -y || true"
+          "install" : "sudo python -m pip install protobuf==6.31.1",
+          "uninstall" : "sudo python -m pip uninstall protobuf -y || true"
       },
       {
           "name" : "tblib",
@@ -158,6 +159,7 @@
     "whl" :
     {
       "3.10" : ["torch-gcu==2.8.0"],
+      "3.12" : ["torch-gcu==2.8.0"],
       "3.9" : ["torch-gcu==2.8.0"]
     }
   },

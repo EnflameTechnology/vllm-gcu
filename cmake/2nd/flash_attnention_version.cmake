@@ -6,14 +6,16 @@ if ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "x86_64")
     set(_MNAME      flash_attn)
     set(_SEMI_NAME  "")
     set(_BRANCH master)
-    set(_pv 310)
-    set(_link module_package/flash-attention/${_COMMIT_ID}/${_MNAME}${_SEMI_NAME}-${_VERSION}-cp${_pv}-cp${_pv}-linux_x86_64.whl)
-    fetchFromArtifactory(fetch_${_MNAME}_${_pv}_28
-        FILE ${_link}
-        PKG_COMMAND ${PACKAGE_CMDS}
-        PKG_FILES ${PACKAGE_FILES}
-        PKG_ONLY ON
-        BRANCH ${_BRANCH}
-        VERSION ${_VERSION}
-    )
+    set(_pvs "310" "312")
+    foreach(_pv IN LISTS _pvs)
+        set(_link module_package/flash-attention/${_COMMIT_ID}/${_MNAME}${_SEMI_NAME}-${_VERSION}-cp${_pv}-cp${_pv}-linux_x86_64.whl)
+        fetchFromArtifactory(fetch_${_MNAME}_${_pv}_28
+            FILE ${_link}
+            PKG_COMMAND ${PACKAGE_CMDS}
+            PKG_FILES ${PACKAGE_FILES}
+            PKG_ONLY ON
+            BRANCH ${_BRANCH}
+            VERSION ${_VERSION}
+        )
+    endforeach()
 endif ()
