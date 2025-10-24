@@ -92,6 +92,7 @@
 #include "src/topk_topp_random_sampler_from_logits.h"
 #include "src/top_k_top_p.h"
 #include "src/apply_repetition_penalties.h"
+#include "src/eplb_map_to_physical_and_record.h"
 
 // Note on op signatures:
 // The X_meta signatures are for the meta functions corresponding to op X.
@@ -1229,6 +1230,17 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
   }
   ops.impl("apply_repetition_penalties_", torch::kPrivateUse1,
            &apply_repetition_penalties);
+
+  handle = c10::Dispatcher::singleton().findSchema(
+    {"_C::eplb_map_to_physical_and_record", ""});
+  if (!handle.has_value()) {
+    ops.def(
+        "eplb_map_to_physical_and_record(Tensor! out, Tensor topk_ids, "
+        "Tensor! expert_load_view, Tensor logical_to_physical_map, "
+        "Tensor logical_replica_count) -> ()");
+  }
+  ops.impl("eplb_map_to_physical_and_record", torch::kPrivateUse1,
+        &eplb_map_to_physical_and_record);
 }
 
 // TORCH_LIBRARY_FRAGMENT(CONCAT(_cache_ops, TORCH_EXTENSION_NAME), cache_ops) {

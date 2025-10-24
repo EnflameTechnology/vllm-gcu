@@ -12,6 +12,7 @@ from vllm.logger import init_logger
 from vllm_gcu.kernels.prepare_finalize import AlltoAllSelector, MoEPrepareAndFinalizeNoEP
 from vllm_gcu.kernels.modular_experts import TritonExpertsPad
 from vllm_gcu.patch.patch_0_11_0.modular_kernel import FusedMoEModularKernel
+from vllm_gcu.kernels._custom_ops import eplb_map_to_physical_and_record
 
 logger = init_logger(__name__)
 
@@ -61,3 +62,4 @@ patch("vllm.model_executor.layers.shared_fused_moe.shared_fused_moe.FusedMoE.for
 patch("vllm.model_executor.layers.fused_moe.layer.FusedMoEMethodBase.maybe_make_prepare_finalize", maybe_make_prepare_finalize).start()
 patch("vllm.model_executor.layers.fused_moe.FusedMoEMethodBase.maybe_make_prepare_finalize", maybe_make_prepare_finalize).start()
 patch("vllm.model_executor.layers.fused_moe.layer.UnquantizedFusedMoEMethod.select_gemm_impl", select_gemm_impl_unquant).start()
+patch("vllm.model_executor.layers.fused_moe.layer.eplb_map_to_physical_and_record", eplb_map_to_physical_and_record).start()

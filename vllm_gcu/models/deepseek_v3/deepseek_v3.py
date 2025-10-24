@@ -993,8 +993,6 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
 
             NON_EXPERT_WEIGHTS = {
                 "e_score_correction_bias",
-                "w13_scales",
-                "w2_scales",
                 "w13_input_scale",
                 "w2_input_scale",
                 "w13_input_scale_rec",
