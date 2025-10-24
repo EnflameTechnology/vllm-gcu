@@ -151,6 +151,16 @@
           "name" : "watchfiles",
           "install" : "sudo python -m pip install --break-system-packages watchfiles==1.1.1",
           "uninstall" : "sudo python -m pip uninstall watchfiles -y || true"
+      },
+      {
+          "name" : "datasets",
+          "install" : "sudo python -m pip install --break-system-packages datasets==3.0.2",
+          "uninstall" : "sudo python -m pip uninstall datasets -y || true"
+      },
+      {
+          "name" : "lm_eval",
+          "install" : "sudo python -m pip install --break-system-packages lm_eval==0.4.9.1",
+          "uninstall" : "sudo python -m pip uninstall lm_eval -y || true"
       }
     ]
   },
