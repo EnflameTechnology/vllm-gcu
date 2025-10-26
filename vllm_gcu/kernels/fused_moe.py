@@ -164,6 +164,10 @@ def invoke_fused_moe_kernel(
         elif use_int8_w8a16:
             A_scale = None
             group_size = -1
+            if B_scale.dim() == 3 and B_scale.shape[1] > 1:
+                group_size = B.shape[2] // B_scale.shape[1]
+                assert group_size in [64, 128], \
+                    f"Unsupported shape, B: {B.shape}, B_scale: {B_scale.shape} for w8a16(int8)."
         else:
             raise NotImplementedError
         if use_fp8_w8a8 and B.dtype == torch.int8:
