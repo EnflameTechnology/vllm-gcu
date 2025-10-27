@@ -1249,6 +1249,33 @@ TORCH_LIBRARY_FRAGMENT(CONCAT(TORCH_EXTENSION_NAME, _cache_ops),
   // Cache ops
   std::optional<c10::OperatorHandle> handle;
 
+  // Swap in (out) the cache blocks from src to dst.
+  handle = c10::Dispatcher::singleton().findSchema(
+      {"_C_cache_ops::swap_blocks", ""});
+  if (!handle.has_value()) {
+    cache_ops.def(
+        "swap_blocks(Tensor src, Tensor! dst, Tensor block_mapping) -> ()");
+  }
+  cache_ops.impl("swap_blocks", torch::kPrivateUse1, &swap_blocks);
+
+  // Copy the cache blocks from src to dst.
+  handle = c10::Dispatcher::singleton().findSchema(
+      {"_C_cache_ops::copy_blocks", ""});
+  if (!handle.has_value()) {
+    cache_ops.def(
+        "copy_blocks(Tensor(a!)[] key_caches, Tensor[](b!) value_caches, "
+        "Tensor block_mapping) -> ()");
+  }
+  cache_ops.impl("copy_blocks", torch::kPrivateUse1, &copy_blocks);
+
+  handle = c10::Dispatcher::singleton().findSchema(
+      {"_C_cache_ops::copy_blocks_mla", ""});
+  if (!handle.has_value()) {
+    cache_ops.def(
+        "copy_blocks_mla(Tensor(a!)[] kv_caches, Tensor block_mapping) -> ()");
+  }
+  // cache_ops.impl("copy_blocks_mla", torch::kPrivateUse1, &copy_blocks_mla);
+
   // Reshape the key and value tensors and cache them.
   // TODO change to Tensor
   handle = c10::Dispatcher::singleton().findSchema(
