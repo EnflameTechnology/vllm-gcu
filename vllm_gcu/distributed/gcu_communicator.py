@@ -144,8 +144,22 @@ class GCUCommunicator(CudaCommunicator):
                     input_: Union[torch.Tensor, list[torch.Tensor]],
                     dim: int = 0,
                     sizes: Optional[list[int]] = None):
+        if dim != 0:
+            raise NotImplementedError("only dim 0 all-gatherv is supported")
         world_size = self.world_size
-        if sizes is not None:
-            return torch.ops.vllm.all_gather_v(input_, sizes, self.unique_name)
-        else:
-            return super().all_gather(input_)
+
+        def _all_gather_single(input_: torch.Tensor,
+                               sizes: Optional[list[int]] = None):
+            if sizes is not None:
+                return torch.ops.vllm.all_gather_v(input_, sizes, self.unique_name)
+            else:
+                return self.all_gather(input_)
+
+        if isinstance(input_, torch.Tensor):
+            return _all_gather_single(input_, sizes)
+
+        output_list = []
+        for inp in input_:
+            output_list.append(_all_gather_single(inp, sizes=sizes))
+
+        return output_list
