@@ -234,3 +234,89 @@ export VLLM_ATTENTION_BACKEND=XFORMERS
 *  本模型支持的`max-model-len`为131072；
 *  `input-len`、`output-len`和`num-prompts`可按需调整；
 
+### Qwen3-Next-80B-A3B-Instruct
+
+#### 模型下载
+*  url: [Qwen3-Next-80B-A3B-Instruct](https://modelscope.cn/models/Qwen/Qwen3-Next-80B-A3B-Instruct/)
+
+*  branch: `master`
+
+*  commit id: `34fec46d`
+
+将上述url设定的路径下的内容全部下载到`Qwen3-Next-80B-A3B-Instruct`文件夹中。
+
+#### 环境变量
+
+```
+export TORCHGCU_INDUCTOR_ENABLE=0
+export PYTORCH_EFML_BASED_GCU_CHECK=1
+export TORCH_ECCL_AVOID_RECORD_STREAMS=1
+export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=30000
+```
+
+#### serving模式
+```shell
+# 启动服务器
+vllm serve  "[path of Qwen3-Next-80B-A3B-Instruct]" \
+	--tensor-parallel-size 8 \
+	--dtype=bfloat16 \
+	--trust-remote-code \
+	--block-size=256 \
+	--max-model-len=262144 \
+	--no-enable-prefix-caching \
+	--async-scheduling \
+	--compilation_config '{"cudagraph_mode":"FULL"}' \
+	--gpu-memory-utilization 0.8
+
+# 启动客户端
+curl http://localhost:8000/v1/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+        "model": "[path of Qwen3-Next-80B-A3B-Instruct]",
+        "prompt": [
+          "请介绍北京的旅游景点",
+          "介绍一下大熊猫",
+          "晚上睡不着应该怎么办",
+          "李白的代表作有哪些？"
+        ],
+        "max_tokens": 128,
+        "temperature": 0
+     }'
+
+
+```
+
+#### 性能测试
+
+```shell
+# 启动服务端
+vllm serve  "[path of Qwen3-Next-80B-A3B-Instruct]" \
+	--tensor-parallel-size 8 \
+	--dtype=bfloat16 \
+	--trust-remote-code \
+	--block-size=256 \
+	--max-model-len=262144 \
+	--no-enable-prefix-caching \
+	--async-scheduling \
+	--compilation_config '{"cudagraph_mode":"FULL"}' \
+	--gpu-memory-utilization 0.8
+
+
+# 启动客户端
+vllm bench serve --model "[path of Qwen3-Next-80B-A3B-Instruct]" \
+ --dataset-name random \
+ --random-input-len 1024 \
+ --random-output-len 1024 \
+ --num-prompts 4 \
+ --max-concurrency 1 \
+ --trust-remote-code \
+ --save-result \
+ --ignore-eos \
+ --result-filename serving_result.json \
+ --percentile-metrics ttft,tpot,itl \
+ --metric-percentiles 25,50,75,90,99,100
+```
+注：
+*  本模型支持的`max-model-len`为262144；
+*  `input-len`、`output-len`和`num-prompts`可按需调整；
+
