@@ -226,7 +226,7 @@ class DeepseekV2MoE(nn.Module):
         parallel_config = vllm_config.parallel_config
         self.enable_eplb = enable_eplb
 
-        self.n_redundant_experts = parallel_config.num_redundant_experts
+        self.n_redundant_experts = parallel_config.num_redundant_experts if enable_eplb else 0
         self.n_logical_experts = self.n_routed_experts
         self.n_physical_experts = (self.n_logical_experts +
                                    self.n_redundant_experts)
