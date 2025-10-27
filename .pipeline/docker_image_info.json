@@ -86,7 +86,7 @@
         "BUILD": {
             "TLINUX": {
                 "X86_DEFAULT": {
-                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/tlinux/qic_tlinux_31_gcc13:1.0.0"
+                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/zixiao/tlinux4.4_vllm_0.9_base:0.1"
                 }
             }
         }
