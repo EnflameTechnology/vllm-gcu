@@ -16,25 +16,24 @@ void gather_and_maybe_dequant_cache(
     const at::Tensor& scale, const c10::optional<at::Tensor> &seq_starts) {
   const torch_gcu::OptionalGCUGuard device_guard(device_of(dst));
   const topsStream_t stream = torch_gcu::getCurrentGCUStream();
+  const char* kv_dtype = kv_cache_dtype.data();
+
   at::Tensor seq_starts_tensor;
   if (seq_starts.has_value()) {
     seq_starts_tensor = seq_starts.value();
   }
-  at::Tensor dst_kvdtype;
-  if (kv_cache_dtype == "fp8" || kv_cache_dtype == "fp8_e4m3") {
-    dst_kvdtype = dst.to(src_cache.dtype());
-  } else if (kv_cache_dtype == "auto") {
-    dst_kvdtype = dst;
+
+  at::Tensor scale_tensor;
+  if (scale.dim() == 0) {
+    scale_tensor = scale.unsqueeze(0);
   } else {
-    assert(false);
+    scale_tensor = scale;
   }
 
-  ATEN_ATENOP_CHECK(ATEN_ATENOP_CALL(topsvllm::topsvllmGatherCache)(
-      src_cache, dst_kvdtype, block_table, cu_seq_lens, batch_size,
-      seq_starts_tensor, stream));
-  if (kv_cache_dtype == "fp8" || kv_cache_dtype == "fp8_e4m3") {
-    dst.copy_(dst_kvdtype);
+  ATEN_ATENOP_CHECK(
+  ATEN_ATENOP_CALL(
+      topsvllm::topsvllmGatherAndMaybeDequantCache)(
+    dst, src_cache, block_table, cu_seq_lens, batch_size, kv_dtype,
+    scale_tensor, seq_starts_tensor, stream));
   }
-}
-
 }  // namespace vllm_gcu::llm_ops
