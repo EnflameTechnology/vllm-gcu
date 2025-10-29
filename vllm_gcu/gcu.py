@@ -189,7 +189,7 @@ class GCUPlatform(Platform):
         compilation_config = vllm_config.compilation_config
 
         if parallel_config.worker_cls == "auto":
-            parallel_config.worker_cls = "vllm_gcu.worker.worker_v1.GCUWorker"
+            parallel_config.worker_cls = "vllm_gcu.worker.gcu_worker.GCUWorker"
 
         distributed_executor_backend = parallel_config.distributed_executor_backend
         if isinstance(distributed_executor_backend, str):

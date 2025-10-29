@@ -6,7 +6,7 @@ import torch
 
 from vllm.config import VllmConfig, CUDAGraphMode
 from vllm.utils import cdiv
-from vllm.forward_context import BatchDescriptor
+from vllm.forward_context import BatchDescriptor, get_forward_context
 from vllm.v1.spec_decode.eagle import EagleProposer, PADDING_SLOT_ID
 from vllm.v1.cudagraph_dispatcher import CudagraphDispatcher
 from vllm.v1.attention.backends.utils import CommonAttentionMetadata
@@ -79,6 +79,10 @@ class EagleProposerWithGraph(EagleProposer):
         sampling_metadata: SamplingMetadata,
         mm_embeds: tuple[list[torch.Tensor], torch.Tensor] | None = None,
     ) -> torch.Tensor:
+        forward_context = get_forward_context()
+        num_tokens_across_dp = None
+        if forward_context.dp_metadata is not None:
+            num_tokens_across_dp = forward_context.dp_metadata.num_tokens_across_dp
         num_tokens = target_token_ids.shape[0]
         batch_size = next_token_ids.shape[0]
 
@@ -168,6 +172,7 @@ class EagleProposerWithGraph(EagleProposer):
                 per_layer_attn_metadata,
                 self.vllm_config,
                 num_tokens=num_input_tokens,
+                num_tokens_across_dp=num_tokens_across_dp,
                 cudagraph_runtime_mode=cudagraph_runtime_mode,
                 batch_descriptor=batch_descriptor,
         ):
@@ -190,6 +195,8 @@ class EagleProposerWithGraph(EagleProposer):
             draft_token_ids = logits.argmax(dim=-1)
             return draft_token_ids.view(-1, 1)
 
+        if num_tokens_across_dp is not None:
+            num_tokens_across_dp = cdiv(num_tokens_across_dp, self.num_speculative_tokens + 1)
         positions = target_positions[last_token_indices]
         if self.method in ("deepseek_mtp", "ernie_mtp", "longcat_flash_mtp"):
             hidden_states = self.hidden_states[last_token_indices]
@@ -305,6 +312,7 @@ class EagleProposerWithGraph(EagleProposer):
                     per_layer_attn_metadata,
                     self.mtp_config,
                     num_tokens=input_batch_size,
+                    num_tokens_across_dp=num_tokens_across_dp,
                     cudagraph_runtime_mode=cudagraph_runtime_mode,
                     batch_descriptor=batch_descriptor,
             ):

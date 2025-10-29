@@ -1,24 +1,21 @@
 from typing import Optional, Union, Any
-from importlib.util import find_spec
 from unittest.mock import patch
-import os
-import gc
-import contextlib
 import numpy as np
 import torch
-from vllm.utils import MemorySnapshot, GiB_bytes, cdiv
-from vllm.model_executor import set_random_seed
-from vllm.distributed.parallel_state import get_pp_group, get_ep_group, prepare_communication_buffer_for_model
-from vllm.config import CUDAGraphMode, VllmConfig
+from vllm.utils import cdiv
+from vllm.distributed.parallel_state import get_tp_group, get_pp_group, get_ep_group, prepare_communication_buffer_for_model
+from vllm.distributed.kv_transfer import has_kv_transfer_group
+from vllm.config import CUDAGraphMode
 from vllm.sequence import IntermediateTensors
-from vllm.platforms import current_platform
-from vllm.forward_context import BatchDescriptor
-from vllm.v1.core.sched.output import SchedulerOutput
+from vllm.forward_context import BatchDescriptor, get_forward_context
 from vllm.v1.kv_cache_interface import KVCacheConfig
-from vllm.v1.utils import report_usage_stats
-from vllm.v1.outputs import ModelRunnerOutput
+from vllm.v1.utils import record_function_or_nullcontext
+from vllm.v1.outputs import ModelRunnerOutput, EMPTY_MODEL_RUNNER_OUTPUT
 from vllm.v1.spec_decode.eagle import EagleProposer
+from vllm.v1.structured_output.utils import apply_grammar_bitmask
 from vllm.v1.worker.ubatch_splitting import ubatch_split
+from vllm.v1.worker.utils import is_residual_scattered_for_sp
+from vllm.v1.worker.gpu_model_runner import GPUModelRunner, AsyncGPUModelRunnerOutput
 from vllm.v1.attention.backends.utils import CommonAttentionMetadata, split_attn_metadata
 from vllm_gcu.utils import (
     set_gcu_forward_context,
@@ -28,12 +25,6 @@ from vllm_gcu.utils import (
 from vllm_gcu.compilation.pass_manager import PassManager, SingletonPostGradPassManager
 from vllm_gcu.kernels.sampler import ParallelTopKTopPSampler
 from vllm_gcu.kernels.rejection_sampler import GCURejectionSampler
-import vllm_gcu.envs as gcu_envs
-
-with patch("vllm.forward_context.set_forward_context",
-           set_gcu_forward_context):
-    from vllm.v1.worker.gpu_model_runner import GPUModelRunner
-from vllm.v1.worker.gpu_worker import Worker, init_worker_distributed_environment
 
 
 class GCUModelRunner(GPUModelRunner):
@@ -380,7 +371,225 @@ class GCUModelRunner(GPUModelRunner):
         scheduler_output: "SchedulerOutput",
         intermediate_tensors: Optional[IntermediateTensors] = None,
     ) -> Union[ModelRunnerOutput, IntermediateTensors]:
-        return super().execute_model(scheduler_output, intermediate_tensors)
+        with record_function_or_nullcontext("Preprocess"):
+            with self.synchronize_input_prep():
+                # Update persistent batch states.
+                self._update_states(scheduler_output)
+
+                if not scheduler_output.total_num_scheduled_tokens:
+                    if not has_kv_transfer_group():
+                        # Return empty ModelRunnerOutput if no work to do.
+                        return EMPTY_MODEL_RUNNER_OUTPUT
+                    return self.kv_connector_no_forward(
+                        scheduler_output, self.vllm_config)
+                if self.cache_config.kv_sharing_fast_prefill:
+                    assert not self.input_batch.num_prompt_logprobs, (
+                        "--kv-sharing-fast-prefill produces incorrect "
+                        "logprobs for prompt tokens, tokens, please disable "
+                        "it when the requests need prompt logprobs")
+
+                # Prepare the decoder inputs.
+                (attn_metadata, logits_indices, spec_decode_metadata,
+                 num_scheduled_tokens_np, spec_decode_common_attn_metadata,
+                 max_query_len, ubatch_slices, num_tokens_after_padding
+                 ) = self._prepare_inputs(scheduler_output)
+
+            (
+                num_scheduled_tokens,
+                num_input_tokens,
+                num_tokens_across_dp,
+                input_ids,
+                inputs_embeds,
+                positions,
+                intermediate_tensors,
+                model_kwargs,
+            ) = self._preprocess(scheduler_output, intermediate_tensors,
+                                 ubatch_slices, num_tokens_after_padding)
+
+            uniform_decode = (max_query_len
+                              == self.uniform_decode_query_len) and (
+                                  num_scheduled_tokens
+                                  == self.input_batch.num_reqs * max_query_len)
+            batch_descriptor = BatchDescriptor(num_tokens=num_input_tokens,
+                                               uniform_decode=uniform_decode)
+            cudagraph_runtime_mode, batch_descriptor = \
+                self.cudagraph_dispatcher.dispatch(batch_descriptor)
+
+        # This is currently to get around the assert in the DPMetadata
+        # where it wants `num_tokens_across_dp` to align with `num_tokens`
+        if ubatch_slices is not None:
+            num_input_tokens = ubatch_slices[0].num_tokens
+
+        # Run the model.
+        # Use persistent buffers for CUDA graphs.
+        with (set_gcu_forward_context(
+                attn_metadata,
+                self.vllm_config,
+                num_tokens=num_input_tokens,
+                num_tokens_across_dp=num_tokens_across_dp,
+                cudagraph_runtime_mode=cudagraph_runtime_mode,
+                batch_descriptor=batch_descriptor,
+                ubatch_slices=ubatch_slices,
+        ), record_function_or_nullcontext("Forward"),
+              self.maybe_get_kv_connector_output(scheduler_output) as
+              kv_connector_output):
+            dp_metadata = get_forward_context().dp_metadata
+            num_tokens_across_dp = None if dp_metadata is None else dp_metadata.num_tokens_across_dp_cpu
+            model_output = self.model(
+                input_ids=input_ids,
+                positions=positions,
+                intermediate_tensors=intermediate_tensors,
+                inputs_embeds=inputs_embeds,
+                **model_kwargs,
+            )
+
+        with record_function_or_nullcontext("Postprocess"):
+            if self.use_aux_hidden_state_outputs:
+                # True when EAGLE 3 is used.
+                hidden_states, aux_hidden_states = model_output
+            else:
+                # Common case.
+                hidden_states = model_output
+                aux_hidden_states = None
+
+            if not self.broadcast_pp_output:
+                # Common case.
+                if not get_pp_group().is_last_rank:
+                    # Return the intermediate tensors.
+                    assert isinstance(hidden_states, IntermediateTensors)
+                    hidden_states.kv_connector_output = kv_connector_output
+                    return hidden_states
+
+                if self.is_pooling_model:
+                    # Return the pooling output.
+                    output = self._pool(hidden_states, num_scheduled_tokens,
+                                        num_scheduled_tokens_np)
+                    output.kv_connector_output = kv_connector_output
+                    return output
+
+                sample_hidden_states = hidden_states[logits_indices]
+                logits = self.model.compute_logits(sample_hidden_states)
+            else:
+                # Rare case.
+                assert not self.is_pooling_model
+
+                if not get_pp_group().is_last_rank:
+                    all_gather_tensors = {
+                        "residual":
+                        not is_residual_scattered_for_sp(
+                            self.vllm_config, num_input_tokens)
+                    }
+                    get_pp_group().send_tensor_dict(
+                        hidden_states.tensors,
+                        all_gather_group=get_tp_group(),
+                        all_gather_tensors=all_gather_tensors)
+                    logits = None
+                else:
+                    sample_hidden_states = hidden_states[logits_indices]
+                    logits = self.model.compute_logits(sample_hidden_states)
+
+                model_output_broadcast_data = {}
+                if logits is not None:
+                    model_output_broadcast_data["logits"] = logits.contiguous()
+
+                model_output_broadcast_data = get_pp_group(
+                ).broadcast_tensor_dict(model_output_broadcast_data,
+                                        src=len(get_pp_group().ranks) - 1)
+                assert model_output_broadcast_data is not None
+                logits = model_output_broadcast_data["logits"]
+
+            # Apply structured output bitmasks if present
+            if scheduler_output.grammar_bitmask is not None:
+                apply_grammar_bitmask(scheduler_output, self.input_batch,
+                                      logits, self.device)
+
+        with record_function_or_nullcontext("Sample"):
+            sampler_output = self._sample(logits, spec_decode_metadata)
+
+        def propose_draft_token_ids(sampled_token_ids,
+                                    num_tokens_across_dp_cpu=None):
+            assert spec_decode_common_attn_metadata is not None
+            with record_function_or_nullcontext(
+                    "Draft"), set_gcu_forward_context(
+                        None,
+                        self.vllm_config,
+                        num_tokens_across_dp=num_tokens_across_dp_cpu):
+                self._draft_token_ids = self.propose_draft_token_ids(
+                    scheduler_output,
+                    sampled_token_ids,
+                    self.input_batch.sampling_metadata,
+                    hidden_states,
+                    sample_hidden_states,
+                    aux_hidden_states,
+                    spec_decode_metadata,
+                    spec_decode_common_attn_metadata,
+                )
+
+        use_padded_batch_for_eagle = self.speculative_config and \
+            self.speculative_config.use_eagle() and \
+            not self.speculative_config.disable_padded_drafter_batch
+        effective_drafter_max_model_len = self.max_model_len
+        if effective_drafter_max_model_len is None:
+            effective_drafter_max_model_len = self.model_config.max_model_len
+        if (self.speculative_config
+                and self.speculative_config.draft_model_config is not None
+                and self.speculative_config.draft_model_config.max_model_len
+                is not None):
+            effective_drafter_max_model_len = (
+                self.speculative_config.draft_model_config.max_model_len)
+        # pick https://github.com/vllm-project/vllm/pull/25884
+        input_fits_in_drafter = spec_decode_common_attn_metadata and (
+            spec_decode_common_attn_metadata.max_seq_len +
+            self.speculative_config.num_speculative_tokens
+            <= effective_drafter_max_model_len)
+        if use_padded_batch_for_eagle and input_fits_in_drafter:
+            # EAGLE speculative decoding can use the GPU sampled tokens
+            # as inputs, and does not need to wait for bookkeeping to finish.
+            propose_draft_token_ids(sampler_output.sampled_token_ids,
+                                    num_tokens_across_dp)
+
+        with record_function_or_nullcontext("Bookkeep"):
+            (
+                num_nans_in_logits,
+                logprobs_lists,
+                valid_sampled_token_ids,
+                prompt_logprobs_dict,
+                req_ids_output_copy,
+                req_id_to_index_output_copy,
+                invalid_req_indices,
+            ) = self._bookkeeping_sync(scheduler_output, sampler_output,
+                                       logits, hidden_states,
+                                       num_scheduled_tokens)
+
+        if (self.speculative_config and not use_padded_batch_for_eagle
+                and input_fits_in_drafter):
+            # ngram and other speculative decoding methods use the sampled
+            # tokens on the CPU, so they are run after bookkeeping.
+            propose_draft_token_ids(valid_sampled_token_ids)
+
+        with record_function_or_nullcontext("EPLB"):
+            self.eplb_step()
+
+        output = ModelRunnerOutput(
+            req_ids=req_ids_output_copy,
+            req_id_to_index=req_id_to_index_output_copy,
+            sampled_token_ids=valid_sampled_token_ids,
+            logprobs=logprobs_lists,
+            prompt_logprobs_dict=prompt_logprobs_dict,
+            pooler_output=[],
+            kv_connector_output=kv_connector_output,
+            num_nans_in_logits=num_nans_in_logits,
+        )
+
+        if not self.use_async_scheduling:
+            return output
+
+        return AsyncGPUModelRunnerOutput(
+            model_runner_output=output,
+            sampled_token_ids=sampler_output.sampled_token_ids,
+            invalid_req_indices=invalid_req_indices,
+            async_output_copy_stream=self.async_output_copy_stream,
+        )
 
     def _allocate_kv_cache_tensors(
             self, kv_cache_config: KVCacheConfig) -> dict[str, torch.Tensor]:
@@ -426,102 +635,3 @@ class GCUModelRunner(GPUModelRunner):
             prepare_communication_buffer_for_model(self.drafter.model)
             if get_ep_group().world_size == 1:
                 prepare_communication_buffer_for_model_noep(self.drafter.model)
-
-
-class GCUWorker(Worker):
-
-    def __init__(
-        self,
-        vllm_config: VllmConfig,
-        local_rank: int,
-        rank: int,
-        distributed_init_method: str,
-        is_driver_worker: bool = False,
-    ):
-        import vllm_gcu.kernels  # noqa: F401
-        import vllm_gcu.compilation  # noqa: F401
-        import vllm_gcu.patch  # noqa: F401
-        import vllm_gcu.distributed  # noqa
-        if gcu_envs.VLLM_GCU_RANK_LOG_PATH:
-            # before init dist, since we want to split eccl init logs
-            dp_rank = vllm_config.parallel_config.data_parallel_rank
-            world_size = vllm_config.parallel_config.world_size
-            rank_across_dp = dp_rank * world_size + rank
-            rank_log = os.path.join(gcu_envs.VLLM_GCU_RANK_LOG_PATH,
-                                    f"worker_{rank_across_dp}.log")
-            with open(rank_log, "w", buffering=1) as f:
-                os.dup2(f.fileno(), 1)
-                os.dup2(f.fileno(), 2)
-        if vllm_config.additional_config.get('set_cpu_affinity', False):
-            current_platform.set_cpu_affinity(local_rank)
-
-        super().__init__(vllm_config=vllm_config,
-                         local_rank=local_rank,
-                         rank=rank,
-                         distributed_init_method=distributed_init_method,
-                         is_driver_worker=is_driver_worker)
-
-    def init_device(self):
-        os.environ["TORCH_ECCL_AVOID_RECORD_STREAMS"] = "1"
-
-        self.device = torch.device(f"gcu:{self.local_rank}")
-        current_platform.set_device(self.device)
-
-        current_platform.check_if_supports_dtype(self.model_config.dtype)
-        gc.collect()
-        torch.gcu.empty_cache()
-
-        self.init_snapshot = MemorySnapshot()
-        self.requested_memory = (self.init_snapshot.total_memory *
-                                 self.cache_config.gpu_memory_utilization)
-
-        if self.init_snapshot.free_memory < self.requested_memory:
-            GiB = lambda b: round(b / GiB_bytes, 2)  # noqa: E731
-            raise ValueError(
-                f"Free memory on device "
-                f"({GiB(self.init_snapshot.free_memory)}/"
-                f"{GiB(self.init_snapshot.total_memory)} GiB) on startup "
-                f"is less than desired GPU memory utilization "
-                f"({self.cache_config.gpu_memory_utilization}, "
-                f"{GiB(self.requested_memory)} GiB). Decrease GPU memory "
-                f"utilization or reduce GPU memory used by other processes.")
-
-        init_worker_distributed_environment(
-            self.vllm_config,
-            self.rank,
-            self.distributed_init_method,
-            self.local_rank,
-            current_platform.dist_backend,
-        )
-        # Set random seed.
-        set_random_seed(self.model_config.seed)
-
-        # Construct the model runner
-        self.model_runner: GCUModelRunner = GCUModelRunner(
-            self.vllm_config, self.device)
-
-        if self.rank == 0:
-            # If usage stat is enabled, collect relevant info.
-            report_usage_stats(self.vllm_config)
-
-    @torch.inference_mode()
-    def execute_model(
-        self,
-        scheduler_output,
-    ):
-        num_scheduled_tokens = scheduler_output.num_scheduled_tokens
-
-        has_tx = find_spec("topstx") is not None
-        if has_tx:
-            import topstx
-            tx_ctx = topstx.annotate(f"execute_{num_scheduled_tokens}",
-                                     color="green",
-                                     domain="VLLM")
-        else:
-            tx_ctx = contextlib.nullcontext()
-
-        with tx_ctx:
-            return super().execute_model(scheduler_output)
-
-    def execute_dummy_batch(self) -> None:
-        self.model_runner._dummy_run(0)
