@@ -402,13 +402,16 @@ class MoeW4A8Method(Fp8MoEMethod):
     def get_fused_moe_quant_config(
             self, layer: torch.nn.Module) -> Optional[FusedMoEQuantConfig]:
 
-        return fp8_w8a8_moe_quant_config(
+        config = fp8_w8a8_moe_quant_config(
             w1_scale=layer.w13_scales,
             w2_scale=layer.w2_scales,
             a1_scale=layer.w13_input_scale,
             a2_scale=layer.w2_input_scale,
             block_shape=None,
         )
+        config.w13_input_scale_rec = layer.w13_input_scale_rec
+        config.w2_input_scale_rec = layer.w2_input_scale_rec
+        return config
 
     def apply(
         self,
@@ -471,8 +474,6 @@ class MoeW4A8Method(Fp8MoEMethod):
             global_num_experts=global_num_experts,
             expert_map=expert_map,
             apply_router_weight_on_input=apply_router_weight_on_input,
-            a1_scale_rec=layer.w13_input_scale_rec,
-            a2_scale_rec=layer.w2_input_scale_rec,
         )
 
     @staticmethod

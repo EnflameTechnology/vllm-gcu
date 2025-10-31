@@ -81,8 +81,6 @@ class TritonExpertsPad(mk.FusedMoEPermuteExpertsUnpermute):
         workspace2: torch.Tensor,
         expert_tokens_meta: Optional[mk.ExpertTokensMetadata],
         apply_router_weight_on_input: bool,
-        a1q_scale_rec: Optional[torch.Tensor],
-        a2_scale_rec: Optional[torch.Tensor],
     ):
         expert_num_tokens = expert_tokens_meta.expert_num_tokens
         # TODO:bias
@@ -147,6 +145,7 @@ class TritonExpertsPad(mk.FusedMoEPermuteExpertsUnpermute):
                                  global_num_experts, expert_map,
                                  expert_num_tokens))
 
+        w13_input_scale_rec = getattr(self.quant_config, 'w13_input_scale_rec', None)
         invoke_fused_moe_kernel(
             hidden_states,
             w1,
@@ -169,7 +168,7 @@ class TritonExpertsPad(mk.FusedMoEPermuteExpertsUnpermute):
             per_channel_quant=self.per_act_token_quant,
             block_shape=self.block_shape,
             real_token_num=expert_num_tokens if is_static else None,
-            A_scale_rec=a1q_scale_rec,
+            A_scale_rec=w13_input_scale_rec,
         )
 
         if activation == "silu":
@@ -214,6 +213,7 @@ class TritonExpertsPad(mk.FusedMoEPermuteExpertsUnpermute):
         else:
             raise ValueError(f"Unsupported FusedMoe activation: {activation}")
 
+        w2_input_scale_rec = getattr(self.quant_config, 'w2_input_scale_rec', None)
         invoke_fused_moe_kernel(
             intermediate_cache2,
             w2,
@@ -236,7 +236,7 @@ class TritonExpertsPad(mk.FusedMoEPermuteExpertsUnpermute):
             per_channel_quant=self.per_act_token_quant,
             block_shape=self.block_shape,
             real_token_num=expert_num_tokens if is_static else None,
-            A_scale_rec=a2_scale_rec,
+            A_scale_rec=w2_input_scale_rec,
         )
 
         torch.ops._moe_C.moe_sum_pad(
