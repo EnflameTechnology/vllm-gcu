@@ -389,6 +389,10 @@ setup(
             "**/**/**/*",
             "**/**/**/**/*",
             "**/**/**/**/**/*",
+        ],
+        "vllm_gcu": [
+            "models/*.jinja",
+            "models/**/*.jinja",
         ]
     },
     python_requires=">=3.8",

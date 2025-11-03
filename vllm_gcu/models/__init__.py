@@ -18,12 +18,25 @@ def _try_register_config(name, module_name, class_name):
     except AttributeError as _e:
         _warnings.warn(f"Failed to import {name}: {_e}")
 
+
+def _try_register_chat_template(model_type, chat_template_path):
+    from pathlib import Path
+    CHAT_TEMPLATES_DIR = Path(__file__).parent
+    from vllm.transformers_utils.chat_templates.registry import register_chat_template_fallback_path
+    register_chat_template_fallback_path(model_type, CHAT_TEMPLATES_DIR / chat_template_path)
+
 def register_custom_models():
     from vllm import ModelRegistry
     custom_configs = []
 
     for name, module_name, class_name in custom_configs:
         _try_register_config(name, module_name, class_name)
+
+    chat_templates = [
+        ['deepseek_ocr', 'deepseek_ocr/template_deepseek_ocr.jinja'],
+    ]
+    for model_type, chat_template in chat_templates:
+        _try_register_chat_template(model_type, chat_template)
 
     if gcu_envs.VLLM_GCU_ENABLE_DEEPSEEK_MTP_FUSION:
         ModelRegistry.register_model("DeepseekV3ForCausalLM", "vllm_gcu.models.deepseek_v3.deepseek_v3_with_fused_mtp:DeepseekV3ForCausalLM")
@@ -35,5 +48,8 @@ def register_custom_models():
     ModelRegistry.register_model("Qwen3NextForCausalLM", "vllm_gcu.models.qwen3_next.qwen3_next:Qwen3NextForCausalLM")
     ModelRegistry.register_model("HunYuanDenseV1ForCausalLM", "vllm_gcu.models.hunyuan_v1:HunYuanDenseV1ForCausalLM")
     ModelRegistry.register_model("HunYuanMoEV1ForCausalLM", "vllm_gcu.models.hunyuan_v1:HunYuanMoEV1ForCausalLM")
+
     ModelRegistry.register_model("KeyeVL1_5ForConditionalGeneration", "vllm_gcu.models.keye_vl:KeyeVL1_5ForConditionalGeneration")#gitleaks:allow
     ModelRegistry.register_model("Qwen2VLForConditionalGeneration", "vllm_gcu.models.qwen2_vl:Qwen2VLForConditionalGeneration")
+    ModelRegistry.register_model("DeepseekOCRForCausalLM", "vllm_gcu.models.deepseek_ocr.deepseek_ocr:DeepseekOCRForCausalLM")
+    ModelRegistry.register_model("DeepseekForCausalLM", "vllm_gcu.models.deepseek_ocr.deepseek:DeepseekForCausalLMGCU")
