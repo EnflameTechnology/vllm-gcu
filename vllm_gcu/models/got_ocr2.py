@@ -702,28 +702,26 @@ def _got_ocr2_field_config(
 
 class GotOcr2DummyInputsBuilder(BaseDummyInputsBuilder[GotOcr2ProcessingInfo]):
 
-    def get_dummy_processor_inputs(
-        self,
-        seq_len: int,
-        mm_counts: Mapping[str, int],
-    ) -> ProcessorInputs:
-        num_images = mm_counts.get("image", 0)
-
+    def get_dummy_text(self, mm_counts: Mapping[str, int]) -> str:
         hf_processor = self.info.get_hf_processor()
         image_token: str = hf_processor.img_pad_token
 
-        target_width, target_height = 1024, 1024
+        return image_token * 256
 
-        mm_data = {
+    def get_dummy_mm_data(
+        self,
+        seq_len: int,
+        mm_counts: Mapping[str, int],
+    ):
+        num_images = mm_counts.get("image", 0)
+        target_width, target_height = 1024, 1024
+        return {
             "image":
             self._get_dummy_images(width=target_width,
                                    height=target_height,
                                    num_images=num_images)
         }
-        return ProcessorInputs(
-            prompt_text=image_token * 256,
-            mm_data=mm_data,
-        )
+
 
 class GotOcr2MultiModalDataParser(MultiModalDataParser):
 
@@ -751,6 +749,7 @@ class GotOcr2MultiModalProcessor(BaseMultiModalProcessor[GotOcr2ProcessingInfo]
         prompt: str,
         mm_data: Mapping[str, object],
         mm_kwargs: Mapping[str, object],
+        tok_kwargs: Mapping[str, object],
     ) -> BatchFeature:
         if not mm_data:
             tokenizer = self.info.get_tokenizer()
@@ -760,10 +759,14 @@ class GotOcr2MultiModalProcessor(BaseMultiModalProcessor[GotOcr2ProcessingInfo]
         return self.info.ctx.call_hf_processor(
             self.info.get_hf_processor(**mm_kwargs),
             dict(text=prompt, **mm_data),
-            self.info._get_image_processor_kwargs(**mm_kwargs),
+            dict(**mm_kwargs, **tok_kwargs),
         )
 
-    def _apply_hf_processor_text_only(self, prompt_text: str) -> list[int]:
+    def _apply_hf_processor_text_only(
+        self,
+        prompt_text: str,
+        tokenization_kwargs: Mapping[str, object],
+    ) -> list[int]:
         """
         Apply the HF processor on the prompt text only.
 

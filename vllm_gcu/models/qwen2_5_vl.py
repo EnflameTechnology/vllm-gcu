@@ -62,53 +62,17 @@ from vllm.transformers_utils.config import uses_mrope
 from vllm.model_executor.models.interfaces import (MultiModalEmbeddings, SupportsLoRA,
                          SupportsMultiModal, SupportsPP, SupportsQuant)
 from vllm.model_executor.models.qwen2_vl import Qwen2VLDummyInputsBuilder as Qwen2_5_VLDummyInputsBuilder
-from vllm.model_executor.models.qwen2_vl import (Qwen2VLMultiModalProcessor, Qwen2VLProcessingInfo,
-                       apply_rotary_pos_emb_vision)
+from vllm.model_executor.models.qwen2_vl import Qwen2VLMultiModalProcessor, Qwen2VLProcessingInfo
 from vllm.model_executor.models.utils import (AutoWeightsLoader, WeightsMapper, cast_overflow_tensors,
                     init_vllm_registered_model, maybe_prefix,
                     merge_multimodal_embeddings)
-from vllm.attention.selector import (backend_name_to_enum,
-                                     get_global_forced_attn_backend)
-import vllm.envs as envs
+from vllm.model_executor.models.vision import get_vit_attn_backend
+
 from vllm_gcu.kernels import _custom_ops as ops
 from vllm_gcu.kernels.quantization.fp8 import Fp8GCUConfig
 
 
 logger = init_logger(__name__)
-
-# === Vision Inputs === #
-
-def get_vit_attn_backend(support_fa: bool = False) -> _Backend:
-    """
-    Get the available attention backend for Vision Transformer.
-    """
-    # TODO(Isotr0py): Remove `support_fa` after support FA for all ViTs attn.
-    selected_backend: Optional[_Backend] = get_global_forced_attn_backend()
-    if selected_backend is None:
-        backend_by_env_var: Optional[str] = envs.VLLM_ATTENTION_BACKEND
-        if backend_by_env_var is not None:
-            selected_backend = backend_name_to_enum(backend_by_env_var)
-    if selected_backend is None:
-        if current_platform.is_cuda():
-            device_available = current_platform.has_device_capability(80)
-            if device_available and support_fa:
-                from transformers.utils import is_flash_attn_2_available
-                if is_flash_attn_2_available():
-                    selected_backend = _Backend.FLASH_ATTN
-                else:
-                    logger.warning_once(
-                        "Current `vllm-flash-attn` has a bug inside vision "
-                        "module, so we use xformers backend instead. You can "
-                        "run `pip install flash-attn` to use flash-attention "
-                        "backend.")
-                    selected_backend = _Backend.XFORMERS
-            else:
-                # For Volta and Turing GPUs, use xformers instead.
-                selected_backend = _Backend.XFORMERS
-        else:
-            # workaround for s60 inference
-            selected_backend = _Backend.XFORMERS
-    return selected_backend
 
 
 class Qwen2_5_VLImagePixelInputs(TypedDict):
@@ -284,7 +248,10 @@ class Qwen2_5_VisionAttention(nn.Module):
                                       prefix=f"{prefix}.proj")
 
         # Detect attention implementation.
-        self.attn_backend: _Backend = get_vit_attn_backend(support_fa=True)
+        self.attn_backend: _Backend = get_vit_attn_backend(
+            head_size=self.hidden_size_per_attention_head,
+            dtype=torch.get_default_dtype()
+        )
         if self.attn_backend not in {
                 _Backend.FLASH_ATTN, _Backend.TORCH_SDPA, _Backend.XFORMERS
         }:
@@ -611,7 +578,8 @@ class Qwen2_5_VisionTransformer(nn.Module):
             quant_config=quant_config,
             prefix=f"{prefix}.merger",
         )
-        self.attn_backend: _Backend = get_vit_attn_backend(support_fa=True)
+        self.attn_backend = get_vit_attn_backend(
+            head_size=head_dim, dtype=torch.get_default_dtype())
 
     @property
     def dtype(self) -> torch.dtype:
@@ -859,25 +827,10 @@ class Qwen2_5_VLProcessingInfo(Qwen2VLProcessingInfo):
     def get_hf_config(self):
         return self.ctx.get_hf_config(Qwen2_5_VLConfig)
 
-    def get_hf_processor(
-        self,
-        *,
-        min_pixels: Optional[int] = None,
-        max_pixels: Optional[int] = None,
-        size: Optional[dict[str, int]] = None,
-        fps: Optional[Union[float, list[float]]] = None,
-        **kwargs: object,
-    ) -> Qwen2_5_VLProcessor:
-        if fps is not None:
-            kwargs["fps"] = fps
-
+    def get_hf_processor(self, **kwargs: object) -> Qwen2_5_VLProcessor:
         return self.ctx.get_hf_processor(
             Qwen2_5_VLProcessor,
-            image_processor=self.get_image_processor(min_pixels=min_pixels,
-                                                     max_pixels=max_pixels,
-                                                     size=size,
-                                                     use_fast=kwargs.get(
-                                                         "use_fast", True)),
+            use_fast=kwargs.pop("use_fast", True),
             **kwargs,
         )
 
