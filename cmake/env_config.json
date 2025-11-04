@@ -163,6 +163,11 @@
           "uninstall" : "sudo python -m pip uninstall lm_eval -y || true"
       },
       {
+        "name" : "lm-eval[api]",
+        "install" : "sudo python -m pip install --break-system-packages lm-eval[api]",
+        "uninstall" : "sudo python -m pip uninstall lm-eval[api] -y || true"
+      },
+      {
           "name" : "quart",
           "install" : "sudo python -m pip install --break-system-packages Quart==0.20.0",
           "uninstall" : "sudo python -m pip uninstall Quart -y || true"
