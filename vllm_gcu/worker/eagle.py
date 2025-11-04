@@ -12,9 +12,55 @@ from vllm.v1.cudagraph_dispatcher import CudagraphDispatcher
 from vllm.v1.attention.backends.utils import CommonAttentionMetadata
 from vllm.v1.sample.metadata import SamplingMetadata
 from vllm.v1.attention.backends.tree_attn import TreeAttentionMetadata
+from vllm.v1.worker.gpu_input_batch import CachedRequestState, InputBatch
 from vllm.model_executor.models.llama_eagle3 import Eagle3LlamaForCausalLM
 from vllm.compilation.cuda_graph import CUDAGraphWrapper
 from vllm_gcu.utils import set_gcu_forward_context
+
+import triton_gcu.triton
+import triton
+import triton.language as tl
+
+import numpy as np
+
+
+
+@triton.jit
+def prepare_next_token_ids_kernel(
+    sampled_ptr,      # *int32,  [num_reqs, max_gen_len]
+    backup_ptr,       # *int32,  [num_reqs]
+    discard_mask_ptr, # *int32,  [num_reqs]
+    vocab_size,       # int32
+    max_gen_len,      # int32
+    num_reqs,         # int32
+    next_ptr,         # *int32, [num_reqs]
+    count_ptr,        # *int32, [num_reqs]
+    BLOCK_SIZE: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    if pid >= num_reqs:
+        return
+
+    discard = tl.load(discard_mask_ptr + pid)
+    row_start = pid * max_gen_len
+
+    cols = tl.arange(0, BLOCK_SIZE)
+    mask = cols < max_gen_len
+    tokens = tl.load(sampled_ptr + row_start + cols, mask=mask, other=-1)
+    tokens = tl.where(discard == 1, -1, tokens)
+
+    valid = (tokens != -1) & (tokens < vocab_size)
+    cnt = tl.sum(valid.to(tl.int32))
+    tl.store(count_ptr + pid, cnt)
+
+    idxs = tl.where(valid, cols, -1)
+    rightmost_idx = tl.max(idxs, axis=0)
+    has_valid = rightmost_idx != -1
+
+    chosen = tl.load(sampled_ptr + row_start + rightmost_idx) if has_valid else -1
+    backup = tl.load(backup_ptr + pid)
+    final = tl.where(has_valid, chosen, backup)
+    tl.store(next_ptr + pid, final)
 
 
 class EagleProposerWithGraph(EagleProposer):
@@ -477,3 +523,59 @@ class EagleProposerWithGraph(EagleProposer):
                     hidden_states=self.hidden_states[:input_batch_size],
                     inputs_embeds=inputs_embeds,
                 )
+    
+    def prepare_next_token_ids_padded(self,
+                               common_attn_metadata: CommonAttentionMetadata,
+                               sampled_token_ids: torch.Tensor,
+                               requests: dict[str, CachedRequestState],
+                               gpu_input_batch: InputBatch,
+                               discard_request_indices: torch.Tensor,
+                               num_discarded_requests: int) -> \
+                                tuple[torch.Tensor, torch.Tensor]:
+        """
+        This function is used to prepare the inputs for speculative decoding.
+        It calculates the next token ids and the number of valid sampled tokens
+        for each request, considering the "discarded" requests whose next token
+        is not sampled and comes from `request.get_token_id()` instead.
+        It also accounts for the rejected tokens in `sampled_token_ids`.
+        This function must use device functions to operate on the inputs, and
+        should not introduce any blocking CPU-GPU synchronization.
+        """
+
+        # Precompute get_token_id for when there is no valid next token
+        num_reqs = gpu_input_batch.num_reqs
+        self.backup_next_token_ids.np[:num_reqs] = np.array([
+            requests[gpu_input_batch.req_ids[i]].get_token_id(
+                common_attn_metadata.seq_lens_cpu[i].item())
+            for i in range(num_reqs)
+        ])
+        self.backup_next_token_ids.copy_to_gpu(num_reqs)
+
+        # Mask out the sampled tokens indices that should not be sampled.
+        discard_sampled_tokens_req_indices = \
+            discard_request_indices[:num_discarded_requests]
+
+        max_gen_len = sampled_token_ids.shape[-1]
+        device = sampled_token_ids.device
+
+        discard_mask = torch.zeros(num_reqs, dtype=torch.int32, device=device)
+        discard_mask[discard_sampled_tokens_req_indices.long()] = 1
+
+        next_ids = torch.empty(num_reqs, dtype=torch.int32, device=device)
+        valid_cnt = torch.empty(num_reqs, dtype=torch.int32, device=device)
+
+        BLOCK = triton.next_power_of_2(max_gen_len)
+        grid = (num_reqs,)
+
+        prepare_next_token_ids_kernel[grid](
+            sampled_token_ids,
+            self.backup_next_token_ids.gpu,
+            discard_mask,
+            gpu_input_batch.vocab_size,
+            max_gen_len,
+            num_reqs,
+            next_ids,
+            valid_cnt,
+            BLOCK_SIZE=BLOCK,
+        )
+        return next_ids, valid_cnt
