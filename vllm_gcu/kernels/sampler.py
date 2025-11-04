@@ -1,11 +1,15 @@
 import torch
 from typing import Optional
+from vllm.utils import is_pin_memory_available
 from vllm.v1.sample.ops.topk_topp_sampler import TopKTopPSampler, random_sample
+from vllm.v1.sample.sampler import Sampler, _SAMPLING_EPS
+from vllm.v1.sample.metadata import SamplingMetadata
 from vllm.config import LogprobsMode, get_current_vllm_config
 from vllm.platforms import current_platform
 from vllm.distributed.parallel_state import get_tp_group
 from vllm_gcu.utils import scatter
 
+_SAMPLING_EPS_INV = 1.0 / _SAMPLING_EPS
 
 class ParallelTopKTopPSampler(TopKTopPSampler):
 
@@ -72,3 +76,20 @@ class ParallelTopKTopPSampler(TopKTopPSampler):
                                                           q,
                                                           dim=-1)
         return sampled_tokens, logits_to_return
+
+class GCUSampler(Sampler):
+    def __init__(self, logprobs_mode: LogprobsMode = "raw_logprobs"):
+        super().__init__(logprobs_mode)
+        self.topk_topp_sampler = ParallelTopKTopPSampler(logprobs_mode)
+
+    def apply_temperature(
+        self,
+        logits: torch.Tensor,
+        temp_inv: torch.Tensor,
+        all_random: bool,
+    ) -> torch.Tensor:
+        # Use in-place division to avoid creating a new tensor.
+        # Avoid division by zero if there are greedy requests.
+        if not all_random:
+            temp_inv = torch.where(temp_inv > _SAMPLING_EPS_INV, 1.0, temp_inv)
+        return logits.mul_(temp_inv.unsqueeze(dim=1))

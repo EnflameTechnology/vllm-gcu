@@ -23,7 +23,7 @@ from vllm_gcu.utils import (
     prepare_communication_buffer_for_model_noep,
 )
 from vllm_gcu.compilation.pass_manager import PassManager, SingletonPostGradPassManager
-from vllm_gcu.kernels.sampler import ParallelTopKTopPSampler
+from vllm_gcu.kernels.sampler import GCUSampler
 from vllm_gcu.kernels.rejection_sampler import GCURejectionSampler
 
 
@@ -32,7 +32,7 @@ class GCUModelRunner(GPUModelRunner):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         logprobs_mode = self.sampler.topk_topp_sampler.logprobs_mode
-        self.sampler.topk_topp_sampler = ParallelTopKTopPSampler(logprobs_mode)
+        self.sampler = GCUSampler(logprobs_mode)
         if hasattr(self, "rejection_sampler"):
             self.rejection_sampler = GCURejectionSampler()
 

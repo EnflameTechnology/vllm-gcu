@@ -75,7 +75,7 @@ def compute_probs(
         replace_to=1,
     )
 
-    logits.div_(temperature.unsqueeze(-1))
+    logits.mul_(temperature.unsqueeze(-1))
 
     top_k = None
     if sampling_metadata.top_k is not None:
