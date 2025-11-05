@@ -73,3 +73,88 @@ python3 -m vllm_utils.benchmark_serving \
 注：
 *  本模型支持的`max-model-len`为131072；
 *  `input-len`、`output-len`和`num-prompts`可按需调整；
+
+### DeepSeek-R1-Distill-Llama-8B
+
+#### 模型下载
+*  url: [DeepSeek-R1-Distill-Llama-8B](https://www.modelscope.cn/models/deepseek-ai/DeepSeek-R1-Distill-Llama-8B/)
+
+*  branch: `master`
+
+*  commit id: `b1a59cb3`
+
+将上述url设定的路径下的内容全部下载到`DeepSeek-R1-Distill-Llama-8B`文件夹中。
+
+#### 环境变量
+
+```
+export TORCHGCU_INDUCTOR_ENABLE=0
+export PYTORCH_EFML_BASED_GCU_CHECK=1
+export TORCH_ECCL_AVOID_RECORD_STREAMS=1
+export VLLM_ATTENTION_BACKEND=FLASH_ATTN
+```
+
+#### serving模式
+```shell
+# 启动服务器
+vllm serve "[path of DeepSeek-R1-Distill-Llama-8B]" \
+ --max-model-len 32768 \
+ --tensor-parallel-size 1 \
+ --dtype=bfloat16 \
+ --block-size=64 \
+ --no-enable-prefix-caching \
+ --async-scheduling \
+ --compilation_config '{"cudagraph_mode":"FULL"}' \
+ --trust-remote-code
+
+
+# 启动客户端
+curl http://localhost:8000/v1/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+        "model": "[path of DeepSeek-R1-Distill-Llama-8B]",
+        "prompt": [
+          "请介绍北京的旅游景点",
+          "介绍一下大熊猫",
+          "晚上睡不着应该怎么办",
+          "李白的代表作有哪些？"
+        ],
+        "max_tokens": 128,
+        "temperature": 0
+     }'
+
+```
+
+#### 性能测试
+
+```shell
+# 启动服务端
+vllm serve "[path of DeepSeek-R1-Distill-Llama-8B]" \
+ --max-model-len 32768 \
+ --tensor-parallel-size 1 \
+ --dtype=bfloat16 \
+ --block-size=64 \
+ --no-enable-prefix-caching \
+ --async-scheduling \
+ --compilation_config '{"cudagraph_mode":"FULL"}' \
+ --trust-remote-code
+
+
+# 启动客户端
+vllm bench serve --model "[path of DeepSeek-R1-Distill-Llama-8B]" \
+ --dataset-name random \
+ --random-input-len 1024 \
+ --random-output-len 1024 \
+ --num-prompts 2 \
+ --max-concurrency 1 \
+ --trust-remote-code \
+ --save-result \
+ --ignore-eos \
+ --result-filename serving_result.json \
+ --percentile-metrics ttft,tpot,itl \
+ --metric-percentiles 25,50,75,90,99,100
+```
+注：
+*  本模型支持的`max-model-len`为32768；
+*  `input-len`、`output-len`和`num-prompts`可按需调整；
+
