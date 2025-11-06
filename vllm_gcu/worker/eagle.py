@@ -24,17 +24,16 @@ import triton.language as tl
 import numpy as np
 
 
-
 @triton.jit
 def prepare_next_token_ids_kernel(
-    sampled_ptr,      # *int32,  [num_reqs, max_gen_len]
-    backup_ptr,       # *int32,  [num_reqs]
-    discard_mask_ptr, # *int32,  [num_reqs]
-    vocab_size,       # int32
-    max_gen_len,      # int32
-    num_reqs,         # int32
-    next_ptr,         # *int32, [num_reqs]
-    count_ptr,        # *int32, [num_reqs]
+    sampled_ptr,  # *int32,  [num_reqs, max_gen_len]
+    backup_ptr,  # *int32,  [num_reqs]
+    discard_mask_ptr,  # *int32,  [num_reqs]
+    vocab_size,  # int32
+    max_gen_len,  # int32
+    num_reqs,  # int32
+    next_ptr,  # *int32, [num_reqs]
+    count_ptr,  # *int32, [num_reqs]
     BLOCK_SIZE: tl.constexpr,
 ):
     pid = tl.program_id(0)
@@ -57,7 +56,8 @@ def prepare_next_token_ids_kernel(
     rightmost_idx = tl.max(idxs, axis=0)
     has_valid = rightmost_idx != -1
 
-    chosen = tl.load(sampled_ptr + row_start + rightmost_idx) if has_valid else -1
+    chosen = tl.load(sampled_ptr + row_start +
+                     rightmost_idx) if has_valid else -1
     backup = tl.load(backup_ptr + pid)
     final = tl.where(has_valid, chosen, backup)
     tl.store(next_ptr + pid, final)
@@ -70,8 +70,8 @@ class EagleProposerWithGraph(EagleProposer):
                  device: torch.device,
                  runner=None):
         super().__init__(vllm_config=vllm_config, device=device, runner=runner)
-        cudagraph_mode = self.vllm_config.compilation_config.cudagraph_mode
-        self.runtime_mode = cudagraph_mode.decode_mode()
+        self.cudagraph_mode = self.vllm_config.compilation_config.cudagraph_mode
+        self.runtime_mode = self.cudagraph_mode.decode_mode()
         self.cudagraph_dispatcher1 = CudagraphDispatcher(self.vllm_config)
 
         mtp_config = copy.deepcopy(vllm_config)
@@ -98,15 +98,15 @@ class EagleProposerWithGraph(EagleProposer):
         self.mtp_config.compilation_config.static_forward_context = (
             self.vllm_config.compilation_config.static_forward_context)
 
-        if self.runtime_mode == CUDAGraphMode.NONE:
-            self.model1 = self.model2 = self.model
-        else:
+        if self.cudagraph_mode.has_full_cudagraphs():
             self.model1 = CUDAGraphWrapper(self.model,
                                            self.vllm_config,
-                                           runtime_mode=self.runtime_mode)
+                                           runtime_mode=CUDAGraphMode.FULL)
             self.model2 = CUDAGraphWrapper(self.model,
                                            self.mtp_config,
-                                           runtime_mode=self.runtime_mode)
+                                           runtime_mode=CUDAGraphMode.FULL)
+        else:
+            self.model1 = self.model2 = self.model
 
     def _get_positions(self, num_tokens: int):
         return self.positions[:num_tokens]
@@ -125,10 +125,6 @@ class EagleProposerWithGraph(EagleProposer):
         sampling_metadata: SamplingMetadata,
         mm_embeds: tuple[list[torch.Tensor], torch.Tensor] | None = None,
     ) -> torch.Tensor:
-        forward_context = get_forward_context()
-        num_tokens_across_dp = None
-        if forward_context.dp_metadata is not None:
-            num_tokens_across_dp = forward_context.dp_metadata.num_tokens_across_dp
         num_tokens = target_token_ids.shape[0]
         batch_size = next_token_ids.shape[0]
 
@@ -140,7 +136,9 @@ class EagleProposerWithGraph(EagleProposer):
             last_token_indices = common_attn_metadata.query_start_loc[1:] - 1
 
         if self.method == "eagle3":
-            assert isinstance(self.model1, Eagle3LlamaForCausalLM)
+            assert isinstance(self.model1, Eagle3LlamaForCausalLM) or (
+                isinstance(self.model1, CUDAGraphWrapper)
+                and isinstance(self.model1.unwrap(), Eagle3LlamaForCausalLM))
             target_hidden_states = self.model1.combine_hidden_states(
                 target_hidden_states)
             assert target_hidden_states.shape[-1] == self.hidden_size
@@ -179,22 +177,18 @@ class EagleProposerWithGraph(EagleProposer):
             assert draft_indexer_metadata is not None
             per_layer_attn_metadata[layer_name] = draft_indexer_metadata
 
-        if num_tokens <= self.cudagraph_batch_sizes[
-                -1] and num_tokens == batch_size * (
-                    self.num_speculative_tokens + 1):
-            cudagraph_runtime_mode = self.runtime_mode
-        else:
-            cudagraph_runtime_mode = CUDAGraphMode.NONE
-
-        batch_descriptor = None
         num_input_tokens = num_tokens
-        if cudagraph_runtime_mode != CUDAGraphMode.NONE:
+        if self.runtime_mode != CUDAGraphMode.NONE and \
+            num_tokens <= self.cudagraph_batch_sizes[-1]:
             num_input_tokens = self.vllm_config.pad_for_cudagraph(num_tokens)
 
-            batch_descriptor = BatchDescriptor(num_tokens=num_input_tokens,
-                                               uniform_decode=True)
-            cudagraph_runtime_mode, batch_descriptor = (
-                self.cudagraph_dispatcher1.dispatch(batch_descriptor))
+        uniform_decode = num_tokens == batch_size * (
+            self.num_speculative_tokens + 1)
+        batch_descriptor = BatchDescriptor(num_tokens=num_input_tokens,
+                                           uniform_decode=uniform_decode)
+        cudagraph_runtime_mode, batch_descriptor = self.cudagraph_dispatcher1.dispatch(
+            batch_descriptor)
+
         # copy inputs to buffer for cudagraph
         self._set_positions(num_tokens, target_positions)
         self.hidden_states[:num_tokens] = target_hidden_states
@@ -218,7 +212,6 @@ class EagleProposerWithGraph(EagleProposer):
                 per_layer_attn_metadata,
                 self.vllm_config,
                 num_tokens=num_input_tokens,
-                num_tokens_across_dp=num_tokens_across_dp,
                 cudagraph_runtime_mode=cudagraph_runtime_mode,
                 batch_descriptor=batch_descriptor,
         ):
@@ -241,8 +234,6 @@ class EagleProposerWithGraph(EagleProposer):
             draft_token_ids = logits.argmax(dim=-1)
             return draft_token_ids.view(-1, 1)
 
-        if num_tokens_across_dp is not None:
-            num_tokens_across_dp = cdiv(num_tokens_across_dp, self.num_speculative_tokens + 1)
         positions = target_positions[last_token_indices]
         if self.method in ("deepseek_mtp", "ernie_mtp", "longcat_flash_mtp"):
             hidden_states = self.hidden_states[last_token_indices]
@@ -275,18 +266,15 @@ class EagleProposerWithGraph(EagleProposer):
         # Generate the remaining draft tokens.
         draft_token_ids_list = [draft_token_ids]
 
-        if (self.runtime_mode != CUDAGraphMode.NONE
-                and batch_size <= self.mtp_cudagraph_batch_sizes[-1]):
-            cudagraph_runtime_mode = self.runtime_mode
+        input_batch_size = batch_size
+        if self.runtime_mode != CUDAGraphMode.NONE and \
+            batch_size <= self.mtp_cudagraph_batch_sizes[-1]:
             input_batch_size = self.mtp_config.pad_for_cudagraph(batch_size)
-            batch_descriptor = BatchDescriptor(num_tokens=input_batch_size,
-                                               uniform_decode=True)
-            cudagraph_runtime_mode, batch_descriptor = (
-                self.cudagraph_dispatcher2.dispatch(batch_descriptor))
-        else:
-            input_batch_size = batch_size
-            batch_descriptor = None
-            cudagraph_runtime_mode = CUDAGraphMode.NONE
+
+        batch_descriptor = BatchDescriptor(num_tokens=input_batch_size,
+                                           uniform_decode=True)
+        cudagraph_runtime_mode, batch_descriptor = self.cudagraph_dispatcher2.dispatch(
+            batch_descriptor)
 
         common_attn_metadata.num_actual_tokens = batch_size
         common_attn_metadata.max_query_len = 1
@@ -358,7 +346,6 @@ class EagleProposerWithGraph(EagleProposer):
                     per_layer_attn_metadata,
                     self.mtp_config,
                     num_tokens=input_batch_size,
-                    num_tokens_across_dp=num_tokens_across_dp,
                     cudagraph_runtime_mode=cudagraph_runtime_mode,
                     batch_descriptor=batch_descriptor,
             ):
@@ -390,13 +377,8 @@ class EagleProposerWithGraph(EagleProposer):
         common_attn_metadata: Optional[CommonAttentionMetadata] = None,
         cudagraph_runtime_mode: CUDAGraphMode = CUDAGraphMode.NONE,
     ) -> None:
-
-        if cudagraph_runtime_mode != CUDAGraphMode.NONE:
-            cudagraph_runtime_mode = (
-                self.runtime_mode if cudagraph_runtime_mode
-                == self.runtime_mode else CUDAGraphMode.NONE)
-
-        if common_attn_metadata is not None:
+        if cudagraph_runtime_mode == CUDAGraphMode.FULL:
+            assert common_attn_metadata is not None
             spec_common_attn_metadata = CommonAttentionMetadata(
                 query_start_loc=common_attn_metadata.query_start_loc,
                 seq_lens=common_attn_metadata.seq_lens,
@@ -416,18 +398,8 @@ class EagleProposerWithGraph(EagleProposer):
             spec_common_attn_metadata = None
 
         # mtp1
-        cudagraph_runtime_mode1 = cudagraph_runtime_mode
-        if num_tokens > self.cudagraph_batch_sizes[-1]:
-            cudagraph_runtime_mode1 = CUDAGraphMode.NONE
-
         per_layer_attn_metadata = None
-        batch_descriptor = None
-        num_input_tokens = num_tokens
-
-        if cudagraph_runtime_mode1 != CUDAGraphMode.NONE:
-            num_input_tokens = self.vllm_config.pad_for_cudagraph(num_tokens)
-
-            assert spec_common_attn_metadata is not None
+        if spec_common_attn_metadata is not None:
             per_layer_attn_metadata = {}
             if self.attn_metadata_builder is None:
                 attn_metadata_builder = self._get_attention_metadata_builder()
@@ -438,30 +410,30 @@ class EagleProposerWithGraph(EagleProposer):
             for layer_name in self.attn_layer_names:
                 per_layer_attn_metadata[layer_name] = attn_metadata
 
-            uniform_decode = cudagraph_runtime_mode1 == CUDAGraphMode.FULL
-            batch_descriptor = BatchDescriptor(num_tokens=num_input_tokens,
-                                               uniform_decode=uniform_decode)
-            cudagraph_runtime_mode1, batch_descriptor = (
-                self.cudagraph_dispatcher1.dispatch(batch_descriptor))
+        batch_descriptor = BatchDescriptor(
+            num_tokens=num_tokens,
+            uniform_decode=cudagraph_runtime_mode == CUDAGraphMode.FULL)
+        cudagraph_runtime_mode1, batch_descriptor = self.cudagraph_dispatcher1.dispatch(
+            batch_descriptor)
 
         with set_gcu_forward_context(
                 per_layer_attn_metadata,
                 self.vllm_config,
-                num_tokens=num_input_tokens,
-                cudagraph_runtime_mode=cudagraph_runtime_mode1,
+                num_tokens=num_tokens,
+                cudagraph_runtime_mode=cudagraph_runtime_mode,
                 batch_descriptor=batch_descriptor,
         ):
             if self.is_multimodal_model:
                 input_ids = None
-                inputs_embeds = self.inputs_embeds[:num_input_tokens]
+                inputs_embeds = self.inputs_embeds[:num_tokens]
             else:
-                input_ids = self.input_ids[:num_input_tokens]
+                input_ids = self.input_ids[:num_tokens]
                 inputs_embeds = None
 
             self.model1(
                 input_ids=input_ids,
-                positions=self.positions[:num_input_tokens],
-                hidden_states=self.hidden_states[:num_input_tokens],
+                positions=self.positions[:num_tokens],
+                hidden_states=self.hidden_states[:num_tokens],
                 inputs_embeds=inputs_embeds,
             )
 
@@ -471,59 +443,50 @@ class EagleProposerWithGraph(EagleProposer):
         batch_size = cdiv(num_tokens, (self.num_speculative_tokens + 1))
 
         # mtp>1
-        cudagraph_runtime_mode2 = cudagraph_runtime_mode
-        if batch_size > self.mtp_cudagraph_batch_sizes[-1]:
-            cudagraph_runtime_mode2 = CUDAGraphMode.NONE
-
         per_layer_attn_metadata = None
-        batch_descriptor = None
-        input_batch_size = batch_size
-
-        if cudagraph_runtime_mode2 != CUDAGraphMode.NONE:
-            input_batch_size = self.mtp_config.pad_for_cudagraph(batch_size)
-
-            assert spec_common_attn_metadata is not None
+        if spec_common_attn_metadata is not None:
             per_layer_attn_metadata = {}
-
             spec_common_attn_metadata.num_actual_tokens = batch_size
             spec_common_attn_metadata.max_query_len = 1
-            spec_common_attn_metadata.query_start_loc = self.arange[:batch_size + 1]
+            spec_common_attn_metadata.query_start_loc = self.arange[:batch_size
+                                                                    + 1]
             spec_common_attn_metadata.query_start_loc_cpu = torch.from_numpy(
                 self.token_arange_np[:batch_size + 1]).clone()
-            spec_common_attn_metadata.slot_mapping=self.slot_mapping[:batch_size]
+            spec_common_attn_metadata.slot_mapping = self.slot_mapping[:
+                                                                       batch_size]
             attn_metadata = attn_metadata_builder.build_for_drafting(
                 common_attn_metadata=spec_common_attn_metadata, draft_index=1)
             for layer_name in self.attn_layer_names:
                 per_layer_attn_metadata[layer_name] = attn_metadata
 
-            uniform_decode = cudagraph_runtime_mode2 == CUDAGraphMode.FULL
-            batch_descriptor = BatchDescriptor(num_tokens=input_batch_size,
-                                               uniform_decode=uniform_decode)
-            cudagraph_runtime_mode2, batch_descriptor = (
-                self.cudagraph_dispatcher2.dispatch(batch_descriptor))
+        batch_descriptor = BatchDescriptor(
+            num_tokens=batch_size,
+            uniform_decode=cudagraph_runtime_mode == CUDAGraphMode.FULL)
+        cudagraph_runtime_mode2, batch_descriptor = self.cudagraph_dispatcher2.dispatch(
+            batch_descriptor)
 
         for token_index in range(self.num_speculative_tokens - 1):
             with set_gcu_forward_context(
                     per_layer_attn_metadata,
                     self.mtp_config,
-                    num_tokens=input_batch_size,
-                    cudagraph_runtime_mode=cudagraph_runtime_mode2,
+                    num_tokens=batch_size,
+                    cudagraph_runtime_mode=cudagraph_runtime_mode,
                     batch_descriptor=batch_descriptor,
             ):
                 if self.is_multimodal_model:
                     input_ids = None
-                    inputs_embeds = self.inputs_embeds[:input_batch_size]
+                    inputs_embeds = self.inputs_embeds[:batch_size]
                 else:
-                    input_ids = self.input_ids[:input_batch_size]
+                    input_ids = self.input_ids[:batch_size]
                     inputs_embeds = None
 
                 self.model2(
                     input_ids=input_ids,
-                    positions=self.positions[:input_batch_size],
-                    hidden_states=self.hidden_states[:input_batch_size],
+                    positions=self.positions[:batch_size],
+                    hidden_states=self.hidden_states[:batch_size],
                     inputs_embeds=inputs_embeds,
                 )
-    
+
     def prepare_next_token_ids_padded(self,
                                common_attn_metadata: CommonAttentionMetadata,
                                sampled_token_ids: torch.Tensor,
@@ -565,7 +528,7 @@ class EagleProposerWithGraph(EagleProposer):
         valid_cnt = torch.empty(num_reqs, dtype=torch.int32, device=device)
 
         BLOCK = triton.next_power_of_2(max_gen_len)
-        grid = (num_reqs,)
+        grid = (num_reqs, )
 
         prepare_next_token_ids_kernel[grid](
             sampled_token_ids,

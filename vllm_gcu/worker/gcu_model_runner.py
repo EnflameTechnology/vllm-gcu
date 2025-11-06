@@ -433,8 +433,6 @@ class GCUModelRunner(GPUModelRunner):
         ), record_function_or_nullcontext("Forward"),
               self.maybe_get_kv_connector_output(scheduler_output) as
               kv_connector_output):
-            dp_metadata = get_forward_context().dp_metadata
-            num_tokens_across_dp = None if dp_metadata is None else dp_metadata.num_tokens_across_dp_cpu
             model_output = self.model(
                 input_ids=input_ids,
                 positions=positions,
@@ -506,14 +504,9 @@ class GCUModelRunner(GPUModelRunner):
         with record_function_or_nullcontext("Sample"):
             sampler_output = self._sample(logits, spec_decode_metadata)
 
-        def propose_draft_token_ids(sampled_token_ids,
-                                    num_tokens_across_dp_cpu=None):
+        def propose_draft_token_ids(sampled_token_ids):
             assert spec_decode_common_attn_metadata is not None
-            with record_function_or_nullcontext(
-                    "Draft"), set_gcu_forward_context(
-                        None,
-                        self.vllm_config,
-                        num_tokens_across_dp=num_tokens_across_dp_cpu):
+            with record_function_or_nullcontext("Draft"):
                 self._draft_token_ids = self.propose_draft_token_ids(
                     scheduler_output,
                     sampled_token_ids,
@@ -545,8 +538,7 @@ class GCUModelRunner(GPUModelRunner):
         if use_padded_batch_for_eagle and input_fits_in_drafter:
             # EAGLE speculative decoding can use the GPU sampled tokens
             # as inputs, and does not need to wait for bookkeeping to finish.
-            propose_draft_token_ids(sampler_output.sampled_token_ids,
-                                    num_tokens_across_dp)
+            propose_draft_token_ids(sampler_output.sampled_token_ids)
 
         with record_function_or_nullcontext("Bookkeep"):
             (
