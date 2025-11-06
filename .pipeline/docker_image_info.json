@@ -81,7 +81,8 @@
             },
             "UBUNTU_DEFAULT": {
                 "X86_DEFAULT": {
-                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2404_gcc13_vllm_0.11:0.0.2"
+                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2404_gcc13_vllm_0.11:0.0.2",
+                    "COVERAGE": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2404_gcc13_codecov:0.0.1"
                 }
             }
         }
