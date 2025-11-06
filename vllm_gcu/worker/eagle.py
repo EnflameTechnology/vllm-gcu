@@ -68,8 +68,11 @@ class EagleProposerWithGraph(EagleProposer):
     def __init__(self,
                  vllm_config: VllmConfig,
                  device: torch.device,
-                 runner=None):
+                 runner=None,
+                 prepare_next_token_ids_padded_event=None):
         super().__init__(vllm_config=vllm_config, device=device, runner=runner)
+        self.prepare_next_token_ids_padded_event = prepare_next_token_ids_padded_event
+
         self.cudagraph_mode = self.vllm_config.compilation_config.cudagraph_mode
         self.runtime_mode = self.cudagraph_mode.decode_mode()
         self.cudagraph_dispatcher1 = CudagraphDispatcher(self.vllm_config)
@@ -524,8 +527,8 @@ class EagleProposerWithGraph(EagleProposer):
         discard_mask = torch.zeros(num_reqs, dtype=torch.int32, device=device)
         discard_mask[discard_sampled_tokens_req_indices.long()] = 1
 
-        next_ids = torch.empty(num_reqs, dtype=torch.int32, device=device)
-        valid_cnt = torch.empty(num_reqs, dtype=torch.int32, device=device)
+        next_token_ids = torch.empty(num_reqs, dtype=torch.int32, device=device)
+        valid_sampled_tokens_count = torch.empty(num_reqs, dtype=torch.int32, device=device)
 
         BLOCK = triton.next_power_of_2(max_gen_len)
         grid = (num_reqs, )
@@ -537,8 +540,16 @@ class EagleProposerWithGraph(EagleProposer):
             gpu_input_batch.vocab_size,
             max_gen_len,
             num_reqs,
-            next_ids,
-            valid_cnt,
+            next_token_ids,
+            valid_sampled_tokens_count,
             BLOCK_SIZE=BLOCK,
         )
-        return next_ids, valid_cnt
+
+        if self.prepare_next_token_ids_padded_event is not None:
+            self.runner.prev_valid_sampled_tokens_count_pinned_cpu[:valid_sampled_tokens_count.shape[0]].copy_(valid_sampled_tokens_count, non_blocking=True)
+            self.runner.prev_valid_sampled_tokens_count_pinned_cpu[-1] = 1
+            self.prepare_next_token_ids_padded_event.record()
+
+            self.runner.prev_next_token_ids = next_token_ids
+
+        return next_token_ids, valid_sampled_tokens_count

@@ -187,6 +187,7 @@ class GCUPlatform(Platform):
         cache_config = vllm_config.cache_config
         model_config = vllm_config.model_config
         compilation_config = vllm_config.compilation_config
+        speculative_config = vllm_config.speculative_config
 
         if parallel_config.worker_cls == "auto":
             parallel_config.worker_cls = "vllm_gcu.worker.gcu_worker.GCUWorker"
@@ -223,16 +224,6 @@ class GCUPlatform(Platform):
             ):
                 cache_config.cache_dtype = "int8"
 
-        if (
-            parallel_config.data_parallel_size > 1
-            and parallel_config.enable_expert_parallel
-            and scheduler_config.policy == "priority"
-        ):
-            # use prioritied scheduling when DP and EP
-            scheduler_config.scheduler_cls = (
-                "vllm_gcu.scheduler.PriorityScheduler"  # priority to preempt
-            )
-
         if compilation_config:
             if compilation_config.level > 0:
                 compilation_config.backend = "topsgraph"
@@ -254,6 +245,14 @@ class GCUPlatform(Platform):
             model_config.enable_sleep_mode = False
 
         additional_config = vllm_config.additional_config
+        async_scheduling = additional_config.get("async_scheduling", None)
+        if async_scheduling is not None:
+            scheduler_config.async_scheduling = async_scheduling
+            logger.info("override async_scheduling of scheduler_config by additional_config")
+
+        if speculative_config is not None and scheduler_config.async_scheduling:
+            scheduler_config.scheduler_cls = "vllm_gcu.core.scheduler.AsyncScheduler"
+
         if additional_config.get("enable_eplb", False):
             parallel_config.enable_eplb = True
         num_redundant_experts = additional_config.get("num_redundant_experts", 0)
