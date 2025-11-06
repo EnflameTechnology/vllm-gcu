@@ -1,3 +1,4 @@
+import asyncio
 import torch
 from unittest.mock import patch
 import os
@@ -10,7 +11,7 @@ from importlib.util import find_spec
 # import vllm.device_allocator
 from vllm.utils import MemorySnapshot, GiB_bytes
 from vllm.model_executor import set_random_seed
-from vllm.distributed.parallel_state import get_pp_group, get_ep_group, prepare_communication_buffer_for_model
+from vllm.distributed.parallel_state import get_pp_group, get_ep_group, get_tp_group, prepare_communication_buffer_for_model
 from vllm.config import VllmConfig
 from vllm.platforms import current_platform
 from vllm.v1.core.sched.output import SchedulerOutput
@@ -28,8 +29,7 @@ import vllm_gcu.envs as gcu_envs
 
 with patch("vllm.forward_context.set_forward_context", set_gcu_forward_context):
     from vllm.v1.worker.gpu_model_runner import GPUModelRunner
-
-
+    
 class GCUModelRunner(GPUModelRunner):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -233,7 +233,6 @@ class GCUModelRunner(GPUModelRunner):
 with patch("vllm.device_allocator", "cumem", gcumem):
     from vllm.v1.worker.gpu_worker import Worker, init_worker_distributed_environment
 
-
 class GCUWorker(Worker):
     def __init__(
         self,
@@ -296,11 +295,24 @@ class GCUWorker(Worker):
         )
         # Set random seed.
         set_random_seed(self.model_config.seed)
+        
+        additional_config = self.vllm_config.additional_config
 
-        # Construct the model runner
-        self.model_runner: GCUModelRunner = GCUModelRunner(
-            self.vllm_config, self.device
-        )
+        enable_async_executing  = additional_config.get("async_executing", False)
+
+        self.enable_async_executing = enable_async_executing
+
+        # 如果开启异步执行，则使用AsyncGCUModelRunner
+        if enable_async_executing:
+            from vllm_gcu.v1.gcu_async_model_runner import AsyncGCUModelRunner
+            self.model_runner: AsyncGCUModelRunner = AsyncGCUModelRunner(
+            self.vllm_config, self.device)
+            self.exec_buffer = 0
+        else:
+            # Construct the model runner
+            self.model_runner: GCUModelRunner = GCUModelRunner(
+                self.vllm_config, self.device
+            )
 
         if self.rank == 0:
             # If usage stat is enabled, collect relevant info.
@@ -319,10 +331,37 @@ class GCUWorker(Worker):
             tx_ctx = topstx.annotate(f"execute_{num_scheduled_tokens}", color="green", domain="VLLM")
         else:
             tx_ctx = contextlib.nullcontext()
-
         with tx_ctx:
-            return super().execute_model(scheduler_output)
+            return self._execute_model(scheduler_output)
 
+    def _execute_model(
+        self,
+        scheduler_output: "SchedulerOutput",
+    ) -> Optional[ModelRunnerOutput]:
+        intermediate_tensors = None
+        if not get_pp_group().is_first_rank:
+            intermediate_tensors = IntermediateTensors(
+                get_pp_group().recv_tensor_dict(
+                    all_gather_group=get_tp_group()))
+
+        if self.enable_async_executing:
+            self.exec_buffer = (self.exec_buffer + 1) % 2
+            output = self.model_runner.execute_model(scheduler_output,
+                                                    intermediate_tensors, exec_buffer=self.exec_buffer)
+        else:
+            output = self.model_runner.execute_model(scheduler_output,
+                                                    intermediate_tensors)
+        parallel_config = self.vllm_config.parallel_config
+        if parallel_config.distributed_executor_backend != "external_launcher" \
+            and not get_pp_group().is_last_rank:
+            assert isinstance(output, IntermediateTensors)
+            get_pp_group().send_tensor_dict(output.tensors,
+                                            all_gather_group=get_tp_group())
+            return None
+        if asyncio.iscoroutine(output):
+            return output, self.is_driver_worker
+        assert isinstance(output, ModelRunnerOutput)
+        return output if self.is_driver_worker else None
 
     def execute_dummy_batch(self) -> None:
         self.model_runner._dummy_run(0)

@@ -5,7 +5,7 @@ from unittest.mock import patch
 from vllm.config import ParallelConfig
 from vllm.forward_context import DPMetadata
 import vllm_gcu.envs as gcu_envs
-from vllm_gcu.utils import round_up
+from vllm_gcu.utils import round_up, set_gcu_forward_context
 
 def make(
     parallel_config: ParallelConfig,
@@ -41,3 +41,6 @@ def make(
     return DPMetadata(max_tokens_across_dp_cpu, cu_tokens_across_dp_cpu)
 
 patch("vllm.forward_context.DPMetadata.make", make).start()
+
+
+patch("vllm.v1.worker.gpu_model_runner.set_forward_context", set_gcu_forward_context).start()

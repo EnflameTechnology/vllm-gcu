@@ -134,6 +134,7 @@ def set_gcu_forward_context(
     num_tokens_across_dp=None,
     skip_cuda_graphs=False,
     is_dummy=False,
+    exec_buffer=0
 ):
     with set_forward_context(
             attn_metadata,
@@ -172,6 +173,8 @@ def set_gcu_forward_context(
         forward_context.skip_cuda_graphs |= not use_all2all_v
         setattr(forward_context, "all2allv_threshold",
                 None if not use_all2all_v else threshold)
+
+        setattr(forward_context, "exec_buffer", exec_buffer)
 
         try:
             yield ctx

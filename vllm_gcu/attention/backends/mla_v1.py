@@ -1,21 +1,21 @@
 #!/usr/bin/env python
 # coding=utf-8
 
-from dataclasses import dataclass
-from typing import Any, Optional
 
 import torch
+import vllm_gcu.kernels._custom_ops as ops
+import vllm_gcu._C  # noqa
 
+from dataclasses import dataclass
+from typing import Any, Optional
 from vllm.logger import init_logger
+from vllm_gcu.kernels._custom_ops import merge_attn_states
+from vllm.v1.attention.backends.utils import CommonAttentionMetadata
 from vllm.v1.attention.backends.mla.common import (MLACommonBackend,
                                                    MLACommonDecodeMetadata,
                                                    MLACommonImpl,
                                                    MLACommonMetadata,
                                                    MLACommonMetadataBuilder)
-
-import vllm_gcu.kernels._custom_ops as ops
-import vllm_gcu._C  # noqa
-from vllm_gcu.kernels._custom_ops import merge_attn_states
 
 logger = init_logger(__name__)
 
@@ -63,11 +63,25 @@ class GCUMLAMetadataBuilder(MLACommonMetadataBuilder[GCUMLAMetadata]):
         return self.build(0, m)
 
     def _build_decode(self, block_table_tensor: torch.Tensor,
-                      seq_lens: torch.Tensor):
-        return GCUMLADecodeMetadata(block_table=block_table_tensor,
-                                    seq_lens=seq_lens,
-                                    max_query_len=seq_lens.max().item())
+                      seq_lens: torch.Tensor) -> GCUMLADecodeMetadata:
 
+        if hasattr(self.common_attn_metadata, 'max_query_len_item'):
+            max_query_len = self.common_attn_metadata.max_query_len_item
+        else:
+            max_query_len=seq_lens.max().item()
+
+        return GCUMLADecodeMetadata(
+            block_table=block_table_tensor,
+            seq_lens=seq_lens,
+            max_query_len=max_query_len
+        )
+
+    def build(self, common_prefix_len: int,
+              common_attn_metadata: CommonAttentionMetadata) -> GCUMLAMetadata:
+        
+        self.common_attn_metadata = common_attn_metadata 
+
+        return super().build(common_prefix_len, common_attn_metadata)
 
 class GCUMLAImpl(MLACommonImpl[GCUMLAMetadata]):
 

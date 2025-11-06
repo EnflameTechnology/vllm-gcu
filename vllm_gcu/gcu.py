@@ -322,6 +322,38 @@ class GCUPlatform(Platform):
         if gcu_envs.VLLM_GCU_ENABLE_PARALLEL_COMPUTE:
             logger.info("Overlap shared experts with dispatch enabled.")
 
+        enable_async_executing = additional_config.get("async_executing", False)
+        enable_async_scheduling = additional_config.get("async_scheduling", False)
+
+        # 开启异步执行，异步调度也必须得打开
+        assert  not enable_async_executing or \
+            (enable_async_scheduling and enable_async_executing), "Async scheduling must be enabled to allow async executing!"
+
+
+        # 如果开启异步调度，则必须更换scheduler_cls和distributed_executor_backend
+        if enable_async_scheduling:
+            from vllm_gcu.v1.executor.async_multiproc_executor import AsyncMultiprocExecutor
+            scheduler_config.scheduler_cls = "vllm_gcu.v1.core.sched.async_scheduler.AsyncScheduler"
+            # Async scheduling does not work with the uniprocess backend.
+            parallel_config.distributed_executor_backend = AsyncMultiprocExecutor
+            
+            # 该版本目前不支持流水线并行
+            if parallel_config.pipeline_parallel_size > 1:
+                raise ValueError("Async scheduling is not supported with "
+                                "pipeline-parallel-size > 1.")
+
+            # 该版本目前不支持推测解码
+            if vllm_config.speculative_config is not None:
+                raise ValueError(
+                    "Currently, speculative decoding is not supported with "
+                    "async scheduling.")
+
+            logger.info("async_scheduling enabled.")
+        
+        if enable_async_executing:
+            logger.info("enable_sync_executing enabled.")
+
+
     @classmethod
     def verify_model_arch(cls, model_arch: str) -> None:
         not_supported_model_archs = []
@@ -378,10 +410,6 @@ class GCUPlatform(Platform):
 
     def is_sleep_mode_available(self) -> bool:
         return False
-
-    @classmethod
-    def get_piecewise_backend_cls(cls) -> str:
-        return "vllm_gcu.compilation.gcu_piecewise_backend.GCUPiecewiseBackend"  # noqa
 
     @classmethod
     def default_v1(cls, model_config) -> bool:
@@ -476,3 +504,6 @@ class GCUPlatform(Platform):
             logger.warning("Failed to set CPU affinity for GCU devices %s: %s",
                            device_id, str(e))
 
+    @classmethod
+    def get_piecewise_backend_cls(cls) -> str:
+        return "vllm_gcu.compilation.double_cuda_piecewise_backend.DoubleCUDAPiecewiseBackend"  # noqa
