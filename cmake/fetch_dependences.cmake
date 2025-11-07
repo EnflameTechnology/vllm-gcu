@@ -64,22 +64,23 @@ endfunction()
 function(download_tx_whl repo_name fetch_file_name)
     message("---begin download ${repo_name}: load file ${fetch_file_name}---")
     download_tx_project(${repo_name} ${fetch_file_name})
+    set(unzip_command "echo begin unzip")
     if (fetch_file_name MATCHES "_cape")
         string(REGEX REPLACE "_cape" "" fetch_output_file_name "${fetch_file_name}")
-        if (NOT EXISTS "${CMAKE_CURRENT_BINARY_DIR}/${repo_name}/${fetch_output_file_name}")
-            execute_process(
-                COMMAND mv "${fetch_file_name}" "${fetch_output_file_name}"
-                WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/${repo_name}
-            )
-            message("---Renamed ${fetch_file_name} to ${fetch_output_file_name}---")
-            set(fetch_file_name ${fetch_output_file_name})
+        if (EXISTS "${CMAKE_CURRENT_BINARY_DIR}/${repo_name}/${fetch_output_file_name}")
+            set(unzip_command "${unzip_command};rm -rf ${CMAKE_CURRENT_BINARY_DIR}/${repo_name}/${fetch_output_file_name}")
+            message("---Removed ${CMAKE_CURRENT_BINARY_DIR}/${repo_name}/${fetch_output_file_name}---")
         endif()
+        set(unzip_command "${unzip_command};mv ${CMAKE_CURRENT_BINARY_DIR}/${repo_name}/${fetch_file_name} ${CMAKE_CURRENT_BINARY_DIR}/${repo_name}/${fetch_output_file_name}")
+        message("---Renamed ${CMAKE_CURRENT_BINARY_DIR}/${repo_name}/${fetch_file_name} to ${CMAKE_CURRENT_BINARY_DIR}/${repo_name}/${fetch_output_file_name}---")
+        set(fetch_file_name ${fetch_output_file_name})
     else()
-        message("---No '_cape' found in ${fetch_file_name}, skipping rename.---")
+        message("---No '_cape' found in ${CMAKE_CURRENT_BINARY_DIR}/${repo_name}/${fetch_file_name}, skipping rename.---")
     endif()
-    
+    set(unzip_command "${unzip_command};unzip -o ${CMAKE_CURRENT_BINARY_DIR}/${repo_name}/${fetch_file_name} -d ${CMAKE_CURRENT_BINARY_DIR}/${repo_name}")
+
     execute_process(
-        COMMAND unzip -o ${CMAKE_CURRENT_BINARY_DIR}/${repo_name}/${fetch_file_name} -d ${CMAKE_CURRENT_BINARY_DIR}/${repo_name}
+        COMMAND bash -c "${unzip_command}"
         RESULT_VARIABLE res_val
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     )
@@ -89,6 +90,7 @@ function(download_tx_whl repo_name fetch_file_name)
     endif()
 
 endfunction()
+
 
 function(download_tx_deb  repo_name fetch_file_name)
     message("---begin download ${repo_name}: load file ${fetch_file_name}---")
