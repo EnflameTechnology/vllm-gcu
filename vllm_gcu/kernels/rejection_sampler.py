@@ -1,5 +1,8 @@
 from typing import Optional
 import torch
+from vllm.config import get_current_vllm_config
+from vllm.platforms import current_platform
+from vllm.distributed.parallel_state import get_tp_group
 from vllm.v1.sample.rejection_sampler import (
     RejectionSampler,
     MAX_SPEC_LEN,
@@ -9,6 +12,7 @@ from vllm.v1.sample.rejection_sampler import (
 )
 from vllm.v1.sample.metadata import SamplingMetadata
 from vllm.v1.spec_decode.metadata import SpecDecodeMetadata
+from vllm_gcu.kernels.sampler import apply_top_k_top_p
 
 
 def sample_recovered_tokens(
@@ -58,6 +62,7 @@ def compute_probs(
     logits: torch.Tensor,  # [num_tokens, vocab_size]
     cu_num_draft_tokens: torch.Tensor,  # [batch_size]
     sampling_metadata: SamplingMetadata,
+    world_size: int = 1,
 ) -> torch.Tensor:
     assert logits.ndim == 2
     assert cu_num_draft_tokens.ndim == 1
@@ -103,7 +108,7 @@ def compute_probs(
             replace_to=0,
         )
 
-    torch.ops._C.top_k_top_p(logits, top_k, top_p)
+    logits = apply_top_k_top_p(logits, top_k, top_p, world_size)
     output_prob = logits.softmax(dim=-1, dtype=torch.float32)
     return output_prob
 
@@ -206,6 +211,10 @@ def rejection_sample(
 
 
 class GCURejectionSampler(RejectionSampler):
+    def __init__(self):
+        super().__init__()
+        vllm_config = get_current_vllm_config()
+        self.enable_dp_parallel = not vllm_config.additional_config.get("disable_dp_sampler", False)
 
     def forward(
         self,
@@ -215,12 +224,17 @@ class GCURejectionSampler(RejectionSampler):
         bonus_token_ids: torch.Tensor,
         sampling_metadata: SamplingMetadata,
     ) -> torch.Tensor:
+        assert current_platform.has_device_capability(140)
         assert metadata.max_spec_len <= MAX_SPEC_LEN
+
+        tp_group = get_tp_group()
+        world_size = tp_group.world_size if self.enable_dp_parallel else 1
 
         target_probs = compute_probs(
             target_logits,
             metadata.cu_num_draft_tokens,
             sampling_metadata,
+            world_size,
         )
         output_token_ids = rejection_sample(
             metadata.draft_token_ids,

@@ -11,17 +11,40 @@ from vllm_gcu.utils import scatter
 
 _SAMPLING_EPS_INV = 1.0 / _SAMPLING_EPS
 
+
+def apply_top_k_top_p(
+    logits: torch.Tensor,
+    k: Optional[torch.Tensor],
+    p: Optional[torch.Tensor],
+    world_size: int = 1,
+) -> torch.Tensor:
+    if world_size > 1:
+        tp_group = get_tp_group()
+        local_rank = tp_group.rank_in_group
+
+        scatter_counts = scatter(logits.shape[0], world_size)
+        start = sum(scatter_counts[:local_rank])
+        end = sum(scatter_counts[:local_rank + 1])
+
+        dp_logits = logits[start:end]
+        dp_k = None if k is None else k[start:end]
+        dp_p = None if p is None else p[start:end]
+        torch.ops._C.top_k_top_p(dp_logits, dp_k, dp_p)
+
+        logits = tp_group.all_gatherv(dp_logits, sizes=scatter_counts)
+    else:
+        torch.ops._C.top_k_top_p(logits, k, p)
+
+    return logits
+
+
 class ParallelTopKTopPSampler(TopKTopPSampler):
 
     def __init__(self, logprobs_mode: LogprobsMode = "raw_logprobs") -> None:
         super().__init__(logprobs_mode)
 
         vllm_config = get_current_vllm_config()
-        tp_group = get_tp_group()
-        self.enable_dp_parallel = (
-            not vllm_config.additional_config.get("disable_dp_sampler", False)
-            and current_platform.has_device_capability(140)
-            and tp_group.world_size > 1)
+        self.enable_dp_parallel = not vllm_config.additional_config.get("disable_dp_sampler", False)
         self.forward = self.forward_oot
 
     def forward_oot(
@@ -34,23 +57,10 @@ class ParallelTopKTopPSampler(TopKTopPSampler):
         if not current_platform.has_device_capability(140):
             return super().forward_native(logits, generators, k, p)
 
-        if self.enable_dp_parallel:
-            tp_group = get_tp_group()
-            world_size = tp_group.world_size
-            local_rank = tp_group.rank_in_group
+        tp_group = get_tp_group()
+        world_size = tp_group.world_size if self.enable_dp_parallel else 1
 
-            scatter_counts = scatter(logits.shape[0], world_size)
-            start = sum(scatter_counts[:local_rank])
-            end = sum(scatter_counts[:local_rank + 1])
-
-            dp_logits = logits[start:end]
-            dp_k = None if k is None else k[start:end]
-            dp_p = None if p is None else p[start:end]
-            torch.ops._C.top_k_top_p(dp_logits, dp_k, dp_p)
-
-            logits = tp_group.all_gatherv(dp_logits, sizes=scatter_counts)
-        else:
-            torch.ops._C.top_k_top_p(logits, k, p)
+        logits = apply_top_k_top_p(logits, k, p, world_size)
 
         logits_to_return = None
         if self.logprobs_mode == "processed_logits":
@@ -77,7 +87,9 @@ class ParallelTopKTopPSampler(TopKTopPSampler):
                                                           dim=-1)
         return sampled_tokens, logits_to_return
 
+
 class GCUSampler(Sampler):
+
     def __init__(self, logprobs_mode: LogprobsMode = "raw_logprobs"):
         super().__init__(logprobs_mode)
         self.topk_topp_sampler = ParallelTopKTopPSampler(logprobs_mode)
