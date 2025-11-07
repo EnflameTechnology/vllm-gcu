@@ -21,47 +21,55 @@ python3 -m pip install triton==3.1.0
 #### 环境变量
 
 ```
-export VLLM_USE_V1=0
+export VLLM_USE_V1=1
 export TORCHGCU_INDUCTOR_ENABLE=0
 export PYTORCH_EFML_BASED_GCU_CHECK=1
 export TORCH_ECCL_AVOID_RECORD_STREAMS=1
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
-export VLLM_ATTENTION_BACKEND=XFORMERS
+export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 ```
 
-#### 批量离线推理
+#### 在线测试
 
 ```shell
-python3 -m vllm_utils.benchmark_test \
- --model=[path of Meta-Llama-3.1-8B-Instruct] \
- --demo=te \
+# 服务端
+vllm serve "[path of Meta-Llama-3.1-8B-Instruct]" \
  --dtype=bfloat16 \
- --output-len=256 \
- --device=gcu \
  --max-model-len=32768 \
+ --block-size=64 \
  --tensor-parallel-size 1 \
  --gpu-memory-utilization 0.9 \
- --disable-async-output-proc
+ --no-enable-prefix-caching \
+ --trust_remote_code 
+
+# 客户端
+curl "http://127.0.0.1:8000/v1/chat/completions" -H "Content-Type: application/json" -d '{"max_tokens": 500,"messages": [{"role": "system", "content": "You are a helpful assistant."},{"role":"user","content":"李白是谁？"}],"model":"/ard-data/pretrained_models/Meta-Llama-3.1-8B-Instruct/","stop": null,"stream": false}'
 ```
 
 #### 性能测试
 
 ```shell
-python3 -m vllm_utils.benchmark_test --perf \
- --model=[path of Meta-Llama-3.1-8B-Instruct] \
- --max-model-len=32768 \
- --tokenizer=[path of Meta-Llama-3.1-8B-Instruct] \
- --input-len=8192 \
- --output-len=512 \
- --num-prompts=1 \
+
+# 服务端
+vllm serve "[path of Meta-Llama-3.1-8B-Instruct]" \
+ --tensor-parallel-size 1 \
+ --max-model-len 32768 \
+ --disable-log-requests \
+ --gpu-memory-utilization 0.9 \
  --block-size=64 \
  --dtype=bfloat16 \
- --device gcu \
- --tensor-parallel-size 1 \
- --gpu-memory-utilization 0.9 \
- --disable-async-output-proc
+ --no-enable-prefix-caching
+
+ # 客户端
+vllm bench serve --model [path of Meta-Llama-3.1-8B-Instruct] \
+  --backend vllm \
+  --dataset-name random \
+  --num-prompts 1 \
+  --random-input-len 8192 \
+  --random-output-len 512 \
+  --trust-remote-code \
+  --ignore_eos 
 ```
 注：
 *  本模型支持的`max-model-len`为131072, 单张卡可跑32768；
 *  `input-len`、`output-len`和`num-prompts`可按需调整；
-*  配置 `output-len`为1时,输出内容中的`latency`即为time_to_first_token_latency;

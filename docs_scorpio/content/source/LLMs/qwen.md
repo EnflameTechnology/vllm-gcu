@@ -14,41 +14,60 @@
 注：需要安装以下依赖：
 
 ```shell
-python3 -m pip install transformers==4.53.2
-python3 -m pip install triton==3.1.0
+python3 -m pip install transformers==4.57.1
 ```
 
 #### 环境变量
 
 ```
-export VLLM_USE_V1=0
+export VLLM_USE_V1=1
 export TORCHGCU_INDUCTOR_ENABLE=0
 export PYTORCH_EFML_BASED_GCU_CHECK=1
 export TORCH_ECCL_AVOID_RECORD_STREAMS=1
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
-export VLLM_ATTENTION_BACKEND=XFORMERS
+export VLLM_ATTENTION_BACKEND=FLASH_ATTN
+
 ```
 
-#### 批量离线推理
+#### 在线测试
 ```shell
-python3 -m vllm_utils.benchmark_test \
- --model [path of Qwen3-32B] \
+# 启动服务端
+vllm serve "[path of Qwen3-32B]" \
  --tensor-parallel-size 4 \
- --max-model-len=40960 \
- --output-len=128 \
- --demo=te \
+ --max-model-len 32768 \
+ --disable-log-requests \
+ --gpu-memory-utilization 0.9 \
+ --block-size=64 \
  --dtype=bfloat16 \
- --device gcu \
- --trust-remote-code \
- --disable-async-output-proc
+ --async-scheduling \
+ --no-enable-prefix-caching
+
+# 启动客户端
+curl "http://127.0.0.1:8000/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "max_tokens": 500,
+        "messages": [
+                        {
+                            "role": "system",
+                             "content": "You are a helpful assistant."
+                         },
+                         {
+                             "role":"user",
+                             "content":"李白是谁？"
+                         }
+                     ],
+        "model":"[path of Qwen3-32B]",
+        "stop": null,
+        "stream": false
+      }'
 ```
 
-#### serving模式
+#### 性能测试
 
 ```shell
 # 启动服务端
-python3 -m vllm.entrypoints.openai.api_server \
- --model [path of Qwen3-32B] \
+vllm serve "[path of Qwen3-32B]" \
  --tensor-parallel-size 4 \
  --max-model-len 131072 \
  --disable-log-requests \
@@ -56,13 +75,12 @@ python3 -m vllm.entrypoints.openai.api_server \
  --rope-scaling '{"rope_type":"yarn","factor":4.0,"original_max_position_embeddings":32768}' \
  --block-size=64 \
  --dtype=bfloat16 \
- --device gcu \
- --enable-chunked-prefill \
- --disable-async-output-proc
+ --async-scheduling \
+ --no-enable-prefix-caching
 
 
 # 启动客户端
-python3 -m vllm_utils.benchmark_serving \
+vllm bench serve \
  --backend vllm \
  --dataset-name random \
  --model [path of Qwen3-32B] \
@@ -70,9 +88,7 @@ python3 -m vllm_utils.benchmark_serving \
  --random-input-len 1000 \
  --random-output-len 700 \
  --trust-remote-code \
- --ignore_eos \
- --strict-in-out-len \
- --keep-special-tokens
+ --ignore_eos 
 ```
 注：
 *  本模型支持的`max-model-len`为131072；
@@ -90,57 +106,73 @@ python3 -m vllm_utils.benchmark_serving \
 注：需要安装以下依赖：
 
 ```shell
-python3 -m pip install transformers==4.53.2
-python3 -m pip install triton==3.1.0
+python3 -m pip install transformers==4.57.1
 ```
 
 #### 环境变量
 
 ```
-export VLLM_USE_V1=0
+export VLLM_USE_V1=1
 export TORCHGCU_INDUCTOR_ENABLE=0
 export PYTORCH_EFML_BASED_GCU_CHECK=1
 export TORCH_ECCL_AVOID_RECORD_STREAMS=1
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
-export VLLM_ATTENTION_BACKEND=XFORMERS
+export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 ```
 
-#### 批量离线推理
+#### 在线测试
 ```shell
- python3.10 -m vllm_utils.benchmark_test \
- --model=[path of QwQ-32B] \
- --demo=te \
- --tensor-parallel-size 4 \
- --max-model-len=32768 \
- --output-len=1024 \
- --dtype=bfloat16 \
- --device gcu \
- --num-prompts 1 \
- --block-size=64 \
- --gpu-memory-utilization 0.9 \
- --trust-remote-code \
- --disable-async-output-proc
-```
-
-#### serving模式
-
-```shell
-# 启动服务端
-  python3 -m vllm.entrypoints.openai.api_server \
-  --model [path of QwQ-32B] \
+ # 启动服务端
+  vllm serve "[path of QwQ-32B]" \
   --num-scheduler-steps=16 \
   --tensor-parallel-size 4 \
-  --max-seq-len-to-capture=32768 \
   --max-model-len 32768 \
   --disable-log-requests \
   --gpu-memory-utilization 0.9 \
   --block-size=64 \
   --dtype=bfloat16 \
-  --disable-async-output-proc
+  --async-scheduling \
+  --no-enable-prefix-caching
+
+# 启动客户端
+curl "http://127.0.0.1:8000/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "max_tokens": 500,
+        "messages": [
+                       {
+                           "role": "system",
+                           "content": "You are a helpful assistant."
+                       },
+                       {
+                           "role":"user",
+                           "content":"李白是谁？"
+                       }
+                   ],
+        "model":"[path of QwQ-32B]",
+        "stop": null,
+        "stream": false
+      }'
+```
+
+#### 性能测试
+
+```shell
+# 启动服务端
+  vllm serve "[path of QwQ-32B]" \
+  --num-scheduler-steps=16 \
+  --tensor-parallel-size 4 \
+  --max-model-len 32768 \
+  --disable-log-requests \
+  --gpu-memory-utilization 0.9 \
+  --block-size=64 \
+  --dtype=bfloat16 \
+  --async-scheduling \
+  --no-enable-prefix-caching
 
 
 # 启动客户端
-  python3 -m vllm_utils.benchmark_serving \
+  vllm bench serve \
   --backend vllm \
   --dataset-name random \
   --model [path of QwQ-32B] \
@@ -148,9 +180,7 @@ export VLLM_ATTENTION_BACKEND=XFORMERS
   --random-input-len 512 \
   --random-output-len 512 \
   --trust-remote-code \
-  --ignore_eos \
-  --strict-in-out-len \
-  --keep-special-tokens
+  --ignore_eos 
 ```
 注：
 *  本模型支持的`max-model-len`为131072；
@@ -170,16 +200,19 @@ export VLLM_ATTENTION_BACKEND=XFORMERS
 #### 环境变量
 
 ```
+export VLLM_USE_V1=1
 export TORCHGCU_INDUCTOR_ENABLE=0
 export PYTORCH_EFML_BASED_GCU_CHECK=1
 export TORCH_ECCL_AVOID_RECORD_STREAMS=1
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 export VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=30000
 ```
 
-#### serving模式
+#### 在线测试
 ```shell
 # 启动服务器
-vllm serve  "[path of Qwen3-Next-80B-A3B-Instruct]" \
+vllm serve "[path of Qwen3-Next-80B-A3B-Instruct]" \
 	--tensor-parallel-size 8 \
 	--dtype=bfloat16 \
 	--trust-remote-code \
@@ -212,7 +245,7 @@ curl http://localhost:8000/v1/completions \
 
 ```shell
 # 启动服务端
-vllm serve  "[path of Qwen3-Next-80B-A3B-Instruct]" \
+vllm serve "[path of Qwen3-Next-80B-A3B-Instruct]" \
 	--tensor-parallel-size 8 \
 	--dtype=bfloat16 \
 	--trust-remote-code \
@@ -256,13 +289,15 @@ vllm bench serve --model "[path of Qwen3-Next-80B-A3B-Instruct]" \
 #### 环境变量
 
 ```
+export VLLM_USE_V1=1
 export TORCHGCU_INDUCTOR_ENABLE=0
 export PYTORCH_EFML_BASED_GCU_CHECK=1
 export TORCH_ECCL_AVOID_RECORD_STREAMS=1
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 ```
 
-#### serving模式
+#### 在线测试
 ```shell
 # 启动服务器
 vllm serve "[path of Qwen3-30B-A3B]" \
@@ -340,13 +375,15 @@ vllm bench serve --model "[path of Qwen3-30B-A3B]" \
 #### 环境变量
 
 ```
+export VLLM_USE_V1=1
 export TORCHGCU_INDUCTOR_ENABLE=0
 export PYTORCH_EFML_BASED_GCU_CHECK=1
 export TORCH_ECCL_AVOID_RECORD_STREAMS=1
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 ```
 
-#### serving模式
+#### 在线测试
 ```shell
 # 启动服务器
 vllm serve "[path of Qwen3-32B-AWQ]" \
@@ -410,4 +447,259 @@ vllm bench serve --model "[path of Qwen3-30B-A3B]" \
 注：
 *  本模型支持的`max-model-len`为131072；
 *  `input-len`、`output-len`和`num-prompts`可按需调整；
+`
+### Qwen2-1.5B
+#### 模型下载
+*  url: [Qwen2-1.5B](https://modelscope.cn/models/Qwen/Qwen2-1.5B/files)
 
+*  branch: `master`
+
+*  commit id: `2f0ed2d6049f639abf50250b719a8a432ef0f283`
+
+将上述url设定的路径下的内容全部下载到`Qwen2-1.5B`文件夹中。
+注：需要安装以下依赖：
+
+```shell
+python3 -m pip install transformers==4.57.1
+```
+
+#### 环境变量
+
+```
+# v1 engine
+export VLLM_USE_V1=1
+export TORCHGCU_INDUCTOR_ENABLE=0
+export PYTORCH_EFML_BASED_GCU_CHECK=1
+export TORCH_ECCL_AVOID_RECORD_STREAMS=1
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export VLLM_ATTENTION_BACKEND=FLASH_ATTN
+```
+
+#### 在线测试
+```shell
+# 启动服务端
+  vllm serve [path of Qwen2-1.5B] \
+    --served-model-name Qwen2-1.5B \
+    --tensor-parallel-size 1\
+    --max-model-len=32768 \
+    --dtype=bfloat16 \
+    --gpu-memory-utilization 0.9 \
+    --block-size=64 \
+    --no-enable-prefix-caching
+
+
+# 启动客户端
+  curl "http://localhost:8000/v1/completions" \
+  -H "Content-Type: application/json" \
+  -d '{"max_tokens": 64,"prompt":"李白是谁","model":"Qwen2-1.5B","stop": null,"stream": false}'
+```
+
+#### 性能测试
+
+```shell
+# 启动服务端
+  vllm serve [path of Qwen2-1.5B] \
+    --tensor-parallel-size 1\
+    --max-model-len=32768 \
+    --disable-log-requests \
+    --dtype=bfloat16 \
+    --gpu-memory-utilization 0.9 \
+    --block-size=64 \
+    --no-enable-prefix-caching \
+    --async-scheduling
+
+
+# 启动客户端
+  vllm bench serve \
+  --backend vllm \
+  --dataset-name random \
+  --model [path of Qwen2-1.5B] \
+  --num-prompts 16 \
+  --max-concurrency 4 \
+  --random-input-len 1024 \
+  --random-output-len 32 \
+  --trust-remote-code \
+  --ignore_eos
+```
+注：
+*  本模型支持的`max-model-len`为131072；
+*  `input-len`、`output-len`和`num-prompts`可按需调整；
+
+
+### Qwen2.5-32B
+
+#### 模型下载
+*  url: [Qwen2.5-32B](https://www.modelscope.cn/models/qwen/Qwen2.5-32B)
+
+*  branch: `master`
+
+*  commit id: `357d2bb7`
+
+将上述url设定的路径下的内容全部下载到`Qwen2.5-32B`文件夹中。
+注：需要安装以下依赖：
+
+```shell
+python3 -m pip install transformers==4.57.1
+
+```
+#### 环境变量
+
+```
+export TORCHGCU_INDUCTOR_ENABLE=0
+export PYTORCH_EFML_BASED_GCU_CHECK=1
+export TORCH_ECCL_AVOID_RECORD_STREAMS=1
+export VLLM_USE_V1=1
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export VLLM_ATTENTION_BACKEND=FLASH_ATTN
+```
+
+#### 在线测试
+```shell
+# 启动服务器
+vllm serve "[path of Qwen2.5-32B]" \
+ --tokenizer=[path of Qwen2.5-32B] \
+ --dtype=bfloat16 \
+ --max-model-len=131072 \
+ --served-model-name Qwen2.5-32B \
+ --tensor-parallel-size=4 \
+ --block-size=64 \
+ --disable-log-requests \
+ --gpu-memory-utilization=0.9 \
+ --trust-remote-code \
+ --no-enable-prefix-caching
+
+# 启动客户端
+curl "http://127.0.0.1:8000/v1/completions" \
+-H "Content-Type: application/json" \
+-d '{
+    "max_tokens": 500,
+    "prompt":["请介绍北京的旅游景点"],
+    "model":"Qwen2.5-32B",
+    "stop": null,
+    "stream": false
+    }'
+
+
+```
+
+#### 性能测试
+
+```shell
+# 启动服务端
+vllm serve "[path of Qwen2.5-32B]" \
+ --tokenizer=[path of Qwen2.5-32B] \
+ --dtype=bfloat16 \
+ --max-model-len=131072 \
+ --tensor-parallel-size=4 \
+ --block-size=64 \
+ --gpu-memory-utilization=0.9 \
+  --no-enable-prefix-caching \
+ --trust-remote-code \
+ --async-scheduling
+
+
+# 启动客户端
+vllm bench serve \
+ --model [path of Qwen2.5-32B] \
+ --backend vllm \
+ --dataset-name random \
+ --num-prompts 32 \
+ --disable-log-requests \
+ --random-input-len 1024 \
+ --random-output-len 1024 \
+ --request-rate 1 \
+ --trust-remote-code \
+ --ignore_eos
+```
+注：
+*  本模型支持的`max-model-len`为131072；
+*  `input-len`、`output-len`和`num-prompts`可按需调整；
+
+### Qwen2.5-32b-Instruct-GPTQ-Int8
+
+#### 模型下载
+*  url: [Qwen2.5-32b-Instruct-GPTQ-Int8](https://www.modelscope.cn/models/Qwen/Qwen2.5-32B-Instruct-GPTQ-Int8/)
+
+*  branch: `master`
+
+*  commit id: `fca9cc95`
+
+将上述url设定的路径下的内容全部下载到`Qwen2.5-32b-Instruct-GPTQ-Int8`文件夹中。
+
+#### 环境变量
+
+```
+export VLLM_USE_V1=1
+export TORCHGCU_INDUCTOR_ENABLE=0
+export PYTORCH_EFML_BASED_GCU_CHECK=1
+export TORCH_ECCL_AVOID_RECORD_STREAMS=1
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export VLLM_ATTENTION_BACKEND=FLASH_ATTN
+```
+
+#### 在线测试
+```shell
+# 启动服务器
+
+vllm serve "[path of Qwen2.5-32b-Instruct-GPTQ-Int8]" \
+ --tokenizer [path of Qwen2.5-32b-Instruct-GPTQ-Int8] \
+ --max-model-len 32768 \
+ --tensor-parallel-size 2 \
+ --dtype=bfloat16 \
+ --block-size=64 \
+ --no-enable-prefix-caching \
+ --async-scheduling \
+ --gpu-memory-utilization=0.9 \
+ --trust-remote-code \
+ --quantization moe_wna16_gcu
+
+# 启动客户端
+curl "http://127.0.0.1:8000/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  -d '{
+         "max_tokens": 500,
+         "messages": [
+             {
+                 "role": "system",
+                 "content": "You are a helpful assistant."
+             },
+             {
+                 "role":"user",
+                 "content":"李白是谁？"
+             }],
+         "model":"[path of Qwen2.5-32b-Instruct-GPTQ-Int8]",
+         "stop": null,
+         "stream": false
+     }'
+```
+
+#### 性能测试
+
+```shell
+# 启动服务端
+vllm serve "[path of Qwen2.5-32b-Instruct-GPTQ-Int8]" \
+ --tokenizer [path of Qwen2.5-32b-Instruct-GPTQ-Int8] \
+ --dtype=bfloat16 \
+ --max-model-len=32768 \
+ --tensor-parallel-size=2 \
+ --block-size=64 \
+ --gpu-memory-utilization=0.9 \
+ --no-enable-prefix-caching \
+ --trust_remote_code \
+ --quantization moe_wna16_gcu \
+ --async-scheduling
+
+
+# 启动客户端
+vllm bench serve \
+ --backend vllm \
+ --dataset-name random \
+ --model [path of Qwen2.5-32b-Instruct-GPTQ-Int8] \
+ --num-prompts 32 \
+ --random-input-len 1024 \
+ --random-output-len 1024 \
+ --trust-remote-code \
+ --ignore_eos
+注：
+*  本模型支持的`max-model-len`为32768；
+*  `input-len`、`output-len`和`num-prompts`可按需调整；

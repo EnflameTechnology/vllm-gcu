@@ -12,22 +12,21 @@
 将上述 url 路径下的内容全部下载到 `qwen3-reranker-4b` 文件夹中。
 注：需要安装以下依赖：
 ```
-python3 -m pip install transformers==4.51.3 beir==2.2.0
+python3 -m pip install transformers==4.57.1 beir==2.2.0
 ```
 
 #### 环境变量
 ```
-export VLLM_USE_V1=0
+export VLLM_USE_V1=1
 export TORCHGCU_INDUCTOR_ENABLE=0
 export PYTORCH_EFML_BASED_GCU_CHECK=1
 export TORCH_ECCL_AVOID_RECORD_STREAMS=1
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
-export VLLM_ATTENTION_BACKEND=XFORMERS
+export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 ```
 
 
-#### 离线推理
-
+#### 在线测试
 
 ```shell
 # 启动服务端
@@ -41,7 +40,9 @@ vllm serve [path of qwen3-reranker-4b] \
     --tensor-parallel-size 1 \
     --gpu-memory-utilization 0.9 \
     --block-size=64 \
-    --trust-remote-code
+    --trust-remote-code \
+    --no-enable-prefix-caching
+
 
 # 启动客户端
 
@@ -75,7 +76,10 @@ vllm serve [path of qwen3-reranker-4b] \
     --tensor-parallel-size 1 \
     --gpu-memory-utilization 0.9 \
     --block-size=64 \
-    --trust-remote-code
+    --no-enable-prefix-caching \
+    --trust-remote-code \
+    --async-scheduling \
+
 
 # 启动客户端
 python3 -m vllm_utils.benchmark_embedding_rerank \

@@ -14,16 +14,16 @@
 #### 环境变量
 
 ```
-export VLLM_USE_V1=0
+export VLLM_USE_V1=1
 export TORCHGCU_INDUCTOR_ENABLE=0
 export PYTORCH_EFML_BASED_GCU_CHECK=1
 export TORCH_ECCL_AVOID_RECORD_STREAMS=1
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
-export VLLM_ATTENTION_BACKEND=XFORMERS
+export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 ```
 
 
-#### 离线推理
+#### 在线测试
 
 ```shell
 # 启动服务端
@@ -33,7 +33,9 @@ vllm serve "[path of Qwen3-Embedding-8b]" \
  --tensor-parallel-size 1 \
  --gpu-memory-utilization 0.9 \
  --block-size=64 \
- --trust-remote-code
+ --trust-remote-code \
+ --no-enable-prefix-caching \
+ --async-scheduling
 
 # 启动客户端
 curl -X POST \
@@ -61,6 +63,8 @@ vllm serve [path of Qwen3-Embedding-8b] \
  --gpu-memory-utilization 0.9 \
  --block-size=64 \
  --trust-remote-code \
+ --async-scheduling \
+ --no-enable-prefix-caching
 
 # 启动客户端
 python -m vllm_utils.benchmark_embedding_rerank \
