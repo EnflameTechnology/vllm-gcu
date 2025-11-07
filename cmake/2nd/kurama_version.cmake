@@ -1,5 +1,5 @@
-set(KURAMA_COMMITID 5ae9b28)
-set(KURAMA_PACKAGE_VERSION 3.3.1+0.9.20250904)
+set(KURAMA_COMMITID 6f84863)
+set(KURAMA_PACKAGE_VERSION 3.3.1+1.0.20251103)
 set(KURAMA_BRANCH "main")
 
 # ######################################################
