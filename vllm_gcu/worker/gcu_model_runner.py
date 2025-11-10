@@ -15,6 +15,7 @@ from vllm.v1.kv_cache_interface import KVCacheConfig
 from vllm.v1.utils import record_function_or_nullcontext
 from vllm.v1.outputs import ModelRunnerOutput, EMPTY_MODEL_RUNNER_OUTPUT, SamplerOutput, LogprobsLists, LogprobsTensors
 from vllm.v1.spec_decode.eagle import EagleProposer
+from vllm.v1.spec_decode.metadata import SpecDecodeMetadata
 from vllm.v1.structured_output.utils import apply_grammar_bitmask
 from vllm.v1.worker.ubatch_splitting import ubatch_split
 from vllm.v1.worker.utils import is_residual_scattered_for_sp
@@ -68,13 +69,10 @@ class GCUModelRunner(GPUModelRunner):
         self.prev_valid_sampled_tokens_count_pinned_cpu[-1] = 0
         self.prev_next_token_ids: torch.Tensor | None = None
         self.prepare_next_token_ids_padded_event: torch.cuda.Event | None = None
-        self.propose_event: torch.cuda.Event | None = None
         if self.speculative_config and self.use_async_scheduling:
             self.prepare_next_token_ids_padded_event = torch.cuda.Event()
             self.prepare_next_token_ids_padded_event.record(
                 torch.cuda.default_stream())
-            self.propose_event = torch.cuda.Event()
-            self.propose_event.record(torch.cuda.default_stream())
 
         logprobs_mode = self.sampler.topk_topp_sampler.logprobs_mode
         self.sampler = GCUSampler(logprobs_mode)
@@ -874,8 +872,6 @@ class GCUModelRunner(GPUModelRunner):
                     spec_decode_metadata,
                     spec_decode_common_attn_metadata,
                 )
-            if self.propose_event is not None:
-                self.propose_event.record()
 
         use_padded_batch_for_eagle = self.speculative_config and \
             self.speculative_config.use_eagle() and \
@@ -943,12 +939,78 @@ class GCUModelRunner(GPUModelRunner):
             async_output_copy_stream=self.async_output_copy_stream,
         )
 
+    def _calc_spec_decode_metadata(
+        self,
+        num_draft_tokens: np.ndarray,
+        cu_num_scheduled_tokens: np.ndarray,
+    ) -> SpecDecodeMetadata:
+        # Inputs:
+        # cu_num_scheduled_tokens:  [  4, 104, 107, 207, 209]
+        # num_draft_tokens:         [  3,   0,   2,   0,   1]
+        # Outputs:
+        # cu_num_draft_tokens:      [  3,   3,   5,   5,   6]
+        # logits_indices:           [  0,   1,   2,   3, 103, 104, 105, 106,
+        #                            206, 207, 208]
+        # target_logits_indices:    [  0,   1,   2,   5,   6,   9]
+        # bonus_logits_indices:     [  3,   4,   7,   8,  10]
+
+        # Compute the logits indices.
+        # [4, 1, 3, 1, 2]
+        num_sampled_tokens = num_draft_tokens + 1
+
+        # Step 1. cu_num_sampled_tokens: [4, 5, 8, 9, 11]
+        # arange: [0, 1, 2, 3, 0, 0, 1, 2, 0, 0, 1]
+        cu_num_sampled_tokens, arange = self._get_cumsum_and_arange(
+            num_sampled_tokens, cumsum_dtype=np.int32)
+        # Step 2. [0, 0, 0, 0, 103, 104, 104, 104, 206, 207, 207]
+        logits_indices = np.repeat(
+            cu_num_scheduled_tokens - num_sampled_tokens, num_sampled_tokens)
+        # Step 3. [0, 1, 2, 3, 103, 104, 105, 106, 206, 207, 208]
+        logits_indices += arange
+
+        # Compute the bonus logits indices.
+        bonus_logits_indices = cu_num_sampled_tokens - 1
+
+        # Compute the draft logits indices.
+        # cu_num_draft_tokens: [3, 3, 5, 5, 6]
+        # arange: [0, 1, 2, 0, 1, 0]
+        cu_num_draft_tokens, arange = self._get_cumsum_and_arange(
+            num_draft_tokens, cumsum_dtype=np.int32)
+        # [0, 0, 0, 5, 5, 9]
+        target_logits_indices = np.repeat(
+            cu_num_sampled_tokens - num_sampled_tokens, num_draft_tokens)
+        # [0, 1, 2, 5, 6, 9]
+        target_logits_indices += arange
+
+        # TODO: Optimize the CPU -> GPU copy.
+        # [Enflame]: use pin_memory to avoid sync from torch_gcu.transfer_to_gcu
+        cu_num_draft_tokens = torch.from_numpy(cu_num_draft_tokens).pin_memory().to(
+            self.device, non_blocking=True)
+        logits_indices = torch.from_numpy(logits_indices).pin_memory().to(self.device,
+                                                             non_blocking=True)
+        target_logits_indices = torch.from_numpy(target_logits_indices).pin_memory().to(
+            self.device, non_blocking=True)
+        bonus_logits_indices = torch.from_numpy(bonus_logits_indices).pin_memory().to(
+            self.device, non_blocking=True)
+
+        # Compute the draft token ids.
+        # draft_token_indices:      [  1,   2,   3, 105, 106, 208]
+        draft_token_ids = self.input_ids.gpu[logits_indices]
+        draft_token_ids = draft_token_ids[target_logits_indices + 1]
+
+        metadata = SpecDecodeMetadata(
+            draft_token_ids=draft_token_ids,
+            num_draft_tokens=num_draft_tokens.tolist(),
+            cu_num_draft_tokens=cu_num_draft_tokens,
+            target_logits_indices=target_logits_indices,
+            bonus_logits_indices=bonus_logits_indices,
+            logits_indices=logits_indices,
+        )
+        return metadata
+
     def _prepare_input_ids(self, total_num_scheduled_tokens: int,
                            cu_num_tokens: np.ndarray) -> None:
         """add support for spec decoding"""
-        if self.propose_event is not None:
-            self.propose_event.synchronize()
-
         if self._draft_token_ids is not None:
             self.input_batch.prev_sampled_token_ids = torch.cat((
                 self.prev_next_token_ids.unsqueeze(dim=1),
