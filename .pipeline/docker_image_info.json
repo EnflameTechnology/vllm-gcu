@@ -26,13 +26,12 @@
         "TEST": {
             "UBUNTU_2204": {
                 "X86_GCC11": {
-                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2404_gcc13_vllm_0.11:0.0.2",
-                    "TORCH_2_3_0": "artifact.enflame.cn/enflame_docker_images/ubuntu/test_2204:1.0.8"
+                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/test_2404_vllm:1.0.1"
                 }
             },
             "UBUNTU_DEFAULT": {
                 "X86_DEFAULT": {
-                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2404_gcc13_vllm_0.11:0.0.2"
+                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/test_2404_vllm:1.0.1"
                 }
             }
         }
@@ -75,13 +74,12 @@
         "TEST": {
             "UBUNTU_2204": {
                 "X86_GCC11": {
-                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2404_gcc13_vllm_0.11:0.0.2",
-                    "TORCH_2_3_0": "artifact.enflame.cn/enflame_docker_images/ubuntu/test_2204:1.0.8"
+                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/test_2404_vllm:1.0.1"
                 }
             },
             "UBUNTU_DEFAULT": {
                 "X86_DEFAULT": {
-                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2404_gcc13_vllm_0.11:0.0.2",
+                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/test_2404_vllm:1.0.1",
                     "COVERAGE": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2404_gcc13_codecov:0.0.1"
                 }
             }

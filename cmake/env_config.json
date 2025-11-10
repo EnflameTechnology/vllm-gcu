@@ -9,7 +9,7 @@
   {"pre_special_cmd" : [
       {
           "name" : "vllm 0.11.0",
-          "install" : "sudo python -m pip install --break-system-packages vllm==0.11.0",
+          "install" : "sudo python -m pip install {pip_install_prefix} --break-system-packages vllm==0.11.0",
           "uninstall" : "sudo python -m pip uninstall vllm -y || true"
       }
     ],
@@ -24,152 +24,152 @@
     "special_cmd" : [
       {
           "name" : "opencv-python",
-          "install" : "sudo python -m pip install --break-system-packages opencv-python==4.11.0.86",
+          "install" : "sudo python -m pip install {pip_install_prefix} --break-system-packages opencv-python==4.11.0.86",
           "uninstall" : "sudo python -m pip uninstall opencv-python -y || true"
       },
       {
           "name" : "opencv-python-headless",
-          "install" : "sudo python -m pip install --break-system-packages opencv-python-headless==4.11.0.86",
+          "install" : "sudo python -m pip install {pip_install_prefix} --break-system-packages opencv-python-headless==4.11.0.86",
           "uninstall" : "sudo python -m pip uninstall opencv-python-headless -y || true"
       },
       {
-          "name" : "triton 3.3.0",
-          "install" : "sudo python -m pip install --break-system-packages triton==3.3.0",
-          "uninstall" : "sudo python -m pip uninstall triton -y || true"
-      },
-      {
           "name" : "numpy",
-          "install" : "sudo python -m pip install --break-system-packages numpy==1.26.4",
+          "install" : "sudo python -m pip install {pip_install_prefix} --break-system-packages numpy==1.26.4",
           "uninstall" : "sudo python -m pip uninstall numpy -y || true"
       },
       {
         "name" : "pytest",
-        "install" : "sudo python -m pip install --break-system-packages pytest==8.3.3",
+        "install" : "sudo python -m pip install {pip_install_prefix} --break-system-packages pytest==8.3.3",
         "uninstall" : "sudo python -m pip uninstall pytest -y || true"
       },
       {
         "name" : "pytest-asyncio",
-        "install" : "sudo python -m pip install --break-system-packages pytest-asyncio==0.24.0",
+        "install" : "sudo python -m pip install {pip_install_prefix} --break-system-packages pytest-asyncio==0.24.0",
         "uninstall" : "sudo python -m pip uninstall pytest-asyncio -y || true"
       },
       {
           "name" : "protobuf",
-          "install" : "sudo python -m pip install --break-system-packages protobuf==5.28.3",
+          "install" : "sudo python -m pip install {pip_install_prefix} --break-system-packages protobuf==5.28.3",
           "uninstall" : "sudo python -m pip uninstall protobuf -y || true"
       },
       {
           "name" : "tblib",
-          "install" : "sudo python -m pip install --break-system-packages tblib==3.1.0",
+          "install" : "sudo python -m pip install {pip_install_prefix} --break-system-packages tblib==3.1.0",
           "uninstall" : "sudo python -m pip uninstall tblib -y || true"
       },
       {
           "name" : "pytest-timeout",
-          "install" : "sudo python -m pip install --break-system-packages pytest-timeout==2.3.1",
+          "install" : "sudo python -m pip install {pip_install_prefix} --break-system-packages pytest-timeout==2.3.1",
           "uninstall" : "sudo python -m pip uninstall pytest-timeout -y || true"
       },
       {
           "name" : "pytest-cov",
-          "install" : "sudo python -m pip install --break-system-packages pytest-cov==6.3.0",
+          "install" : "sudo python -m pip install {pip_install_prefix} --break-system-packages pytest-cov==6.3.0",
           "uninstall" : "sudo python -m pip uninstall pytest-cov -y || true"
       },
       {
           "name" : "pydantic",
-          "install" : "sudo python -m pip install --break-system-packages pydantic==2.11.7",
+          "install" : "sudo python -m pip install {pip_install_prefix} --break-system-packages pydantic==2.11.7",
           "uninstall" : "sudo python -m pip uninstall pydantic -y || true"
       },
       {
           "name" : "setproctitle",
-          "install" : "sudo python -m pip install --break-system-packages setproctitle==1.3.7",
+          "install" : "sudo python -m pip install {pip_install_prefix} --break-system-packages setproctitle==1.3.7",
           "uninstall" : "sudo python -m pip uninstall setproctitle -y || true"
       },
       {
           "name" : "aiohttp",
-          "install" : "sudo python -m pip install --break-system-packages aiohttp==3.10.11",
+          "install" : "sudo python -m pip install {pip_install_prefix} --break-system-packages aiohttp==3.10.11",
           "uninstall" : "sudo python -m pip uninstall aiohttp -y || true"
       },
       {
           "name" : "fastapi",
-          "install" : "sudo python -m pip install --break-system-packages fastapi==0.116.1",
+          "install" : "sudo python -m pip install {pip_install_prefix} --break-system-packages fastapi==0.116.1",
           "uninstall" : "sudo python -m pip uninstall fastapi -y || true"
       },
       {
           "name" : "openai",
-          "install" : "sudo python -m pip install --break-system-packages openai==1.99.1",
+          "install" : "sudo python -m pip install {pip_install_prefix} --break-system-packages openai==1.99.1",
           "uninstall" : "sudo python -m pip uninstall openai -y || true"
       },
       {
           "name" : "prometheus_client",
-          "install" : "sudo python -m pip install --break-system-packages prometheus_client==0.18.0",
+          "install" : "sudo python -m pip install {pip_install_prefix} --break-system-packages prometheus_client==0.18.0",
           "uninstall" : "sudo python -m pip uninstall prometheus_client -y || true"
       },
       {
           "name" : "diskcache",
-          "install" : "sudo python -m pip install --break-system-packages diskcache==5.6.3",
+          "install" : "sudo python -m pip install {pip_install_prefix} --break-system-packages diskcache==5.6.3",
           "uninstall" : "sudo python -m pip uninstall diskcache -y || true"
       },
       {
           "name" : "uvicorn",
-          "install" : "sudo python -m pip install --break-system-packages uvicorn==0.35.0",
+          "install" : "sudo python -m pip install {pip_install_prefix} --break-system-packages uvicorn==0.35.0",
           "uninstall" : "sudo python -m pip uninstall uvicorn -y || true"
       },
       {
           "name" : "gguf",
-          "install" : "sudo python -m pip install --break-system-packages gguf==0.13.0",
+          "install" : "sudo python -m pip install {pip_install_prefix} --break-system-packages gguf==0.13.0",
           "uninstall" : "sudo python -m pip uninstall gguf -y || true"
       },
       {
           "name" : "cbor2",
-          "install" : "sudo python -m pip install --break-system-packages cbor2==5.7.0",
+          "install" : "sudo python -m pip install {pip_install_prefix} --break-system-packages cbor2==5.7.0",
           "uninstall" : "sudo python -m pip uninstall cbor2 -y || true"
       },
       {
           "name" : "blake3",
-          "install" : "sudo python -m pip install --break-system-packages blake3==1.0.8",
+          "install" : "sudo python -m pip install {pip_install_prefix} --break-system-packages blake3==1.0.8",
           "uninstall" : "sudo python -m pip uninstall blake3 -y || true"
       },
       {
           "name" : "msgspec",
-          "install" : "sudo python -m pip install --break-system-packages msgspec==0.19.0",
+          "install" : "sudo python -m pip install {pip_install_prefix} --break-system-packages msgspec==0.19.0",
           "uninstall" : "sudo python -m pip uninstall msgspec -y || true"
       },
       {
           "name" : "pybase64",
-          "install" : "sudo python -m pip install --break-system-packages pybase64==1.4.2",
+          "install" : "sudo python -m pip install {pip_install_prefix} --break-system-packages pybase64==1.4.2",
           "uninstall" : "sudo python -m pip uninstall pybase64 -y || true"
       },
       {
           "name" : "py-cpuinfo",
-          "install" : "sudo python -m pip install --break-system-packages py-cpuinfo==9.0.0",
+          "install" : "sudo python -m pip install {pip_install_prefix} --break-system-packages py-cpuinfo==9.0.0",
           "uninstall" : "sudo python -m pip uninstall py-cpuinfo -y || true"
       },
       {
           "name" : "uvloop",
-          "install" : "sudo python -m pip install --break-system-packages uvloop==0.22.1",
+          "install" : "sudo python -m pip install {pip_install_prefix} --break-system-packages uvloop==0.22.1",
           "uninstall" : "sudo python -m pip uninstall uvloop -y || true"
       },
       {
           "name" : "watchfiles",
-          "install" : "sudo python -m pip install --break-system-packages watchfiles==1.1.1",
+          "install" : "sudo python -m pip install {pip_install_prefix} --break-system-packages watchfiles==1.1.1",
           "uninstall" : "sudo python -m pip uninstall watchfiles -y || true"
       },
       {
           "name" : "datasets",
-          "install" : "sudo python -m pip install --break-system-packages datasets==3.0.2",
+          "install" : "sudo python -m pip install {pip_install_prefix} --break-system-packages datasets==3.0.2",
           "uninstall" : "sudo python -m pip uninstall datasets -y || true"
       },
       {
           "name" : "lm_eval",
-          "install" : "sudo python -m pip install --break-system-packages lm_eval==0.4.9.1",
+          "install" : "sudo python -m pip install {pip_install_prefix} --break-system-packages lm_eval==0.4.9.1",
           "uninstall" : "sudo python -m pip uninstall lm_eval -y || true"
       },
       {
         "name" : "lm-eval[api]",
-        "install" : "sudo python -m pip install --break-system-packages lm-eval[api]",
+        "install" : "sudo python -m pip install {pip_install_prefix} --break-system-packages lm-eval[api]",
         "uninstall" : "sudo python -m pip uninstall lm-eval[api] -y || true"
       },
       {
+          "name" : "triton 3.3.0",
+          "install" : "sudo python -m pip install {pip_install_prefix} --break-system-packages triton==3.3.0",
+          "uninstall" : "sudo python -m pip uninstall triton -y || true"
+      },
+      {
           "name" : "quart",
-          "install" : "sudo python -m pip install --break-system-packages Quart==0.20.0",
+          "install" : "sudo python -m pip install {pip_install_prefix} --break-system-packages Quart==0.20.0",
           "uninstall" : "sudo python -m pip uninstall Quart -y || true"
       }
     ]
