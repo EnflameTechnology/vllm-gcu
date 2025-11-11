@@ -10,13 +10,13 @@ except ImportError:
     flash_attn_varlen_func = None
     flash_attn_with_kvcache = None
 
-def get_mla_metadata(
-    cache_seqlens,
-    num_heads_per_head_k,
-    num_heads_k,
-):
-    return None, None
+# def get_mla_metadata(
+#     cache_seqlens,
+#     num_heads_per_head_k,
+#     num_heads_k,
+# ):
+#     return None, None
 
 import vllm.v1.attention.backends.mla.common
 setattr(vllm.v1.attention.backends.mla.common, 'flash_attn_varlen_func', flash_attn_varlen_func)
-patch("vllm.v1.attention.backends.mla.flashmla.get_mla_metadata", get_mla_metadata).start()
+# patch("vllm.v1.attention.backends.mla.flashmla.get_mla_metadata", get_mla_metadata).start()

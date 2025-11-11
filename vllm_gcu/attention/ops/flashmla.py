@@ -51,3 +51,18 @@ def flash_mla_with_kvcache(
         descale_k,
     )
     return out, softmax_lse
+
+
+# GCU version of get_mla_metadata. Not exactly the same as the original one.
+def get_mla_metadata(
+    tile_scheduler_metadata: torch.Tensor,
+    cache_seqlens: torch.Tensor,
+) -> Tuple[torch.Tensor, None]:
+    """
+    Arguments:
+    - tile_scheduler_metadata for GCU:
+            (24 * 1024 * 1024), dtype torch.int8.
+    - cache_seqlens: (batch_size), dtype torch.int32.
+    """
+    torch.ops._flashmla_C.get_mla_decoding_metadata(tile_scheduler_metadata,
+                                                    cache_seqlens)

@@ -94,7 +94,8 @@ class GCUPlatform(Platform):
                 return ("vllm.v1.attention.backends.mla.flashmla_sparse."
                         "FlashMLASparseBackend")
             if selected_backend == _Backend.FLASHMLA:
-                return "vllm.v1.attention.backends.mla.flashmla.FlashMLABackend"
+                raise ValueError("FLASHMLA is not supported on GCU yet!")
+                # return "vllm.v1.attention.backends.mla.flashmla.FlashMLABackend"
             if gcu_envs.VLLM_GCU_DEEPSEEK_FUSION:
                 return "vllm_gcu.attention.backends.mla_v1_fusion.GCUMLAFusionBackend"
             else:

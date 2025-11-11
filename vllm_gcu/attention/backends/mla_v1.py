@@ -20,7 +20,10 @@ from typing import Any, Optional, Union
 from functools import partial
 from unittest.mock import patch
 
-from vllm_gcu.attention.ops.flashmla import flash_mla_with_kvcache
+from vllm_gcu.attention.ops.flashmla import flash_mla_with_kvcache, get_mla_metadata
+from vllm.v1.kv_cache_interface import AttentionSpec
+from vllm.config import VllmConfig
+
 
 logger = init_logger(__name__)
 
@@ -47,6 +50,8 @@ class GCUMLABackend(MLACommonBackend):
 @dataclass
 class GCUMLADecodeMetadata(MLACommonDecodeMetadata):
     max_decode_seq_len: int
+    tile_scheduler_metadata: torch.Tensor
+    num_splits: torch.Tensor
 
 
 @dataclass
@@ -67,13 +72,27 @@ def customized_split_decodes_and_prefills(
     return split_decodes_and_prefills(common_attn_metadata = common_attn_metadata,
                                         decode_threshold = decode_threshold,
                                         require_uniform = require_uniform)
-    
-    
+
 
 class GCUMLAMetadataBuilder(MLACommonMetadataBuilder[GCUMLAMetadata]):
     reorder_batch_threshold: int = 8
     # NOTE: uniform decode graphs will only be selected when q=N*(1+k)
     cudagraph_support = AttentionCGSupport.UNIFORM_BATCH
+
+    def __init__(self, kv_cache_spec: AttentionSpec, layer_names: list[str],
+                 vllm_config: VllmConfig, device: torch.device):
+        super().__init__(kv_cache_spec, layer_names, vllm_config, device,
+                         GCUMLAMetadata)
+
+        self.use_tile_scheduler_metadata = True if \
+          current_platform.get_device_capability().to_int() == 140 else False
+
+        self.cg_buf_tile_scheduler_metadata = torch.empty(
+            24 * 1024 * 1024,
+            device=self.device,
+            dtype=torch.int8,
+        ) if self.use_tile_scheduler_metadata else None
+
 
     def build(self,
               common_prefix_len: int,
@@ -128,10 +147,16 @@ class GCUMLAMetadataBuilder(MLACommonMetadataBuilder[GCUMLAMetadata]):
             max_seq_len = seq_lens_cpu.max()
         else:
             max_seq_len = seq_lens_device.max().item()
+
+        if self.use_tile_scheduler_metadata:
+            get_mla_metadata(self.cg_buf_tile_scheduler_metadata, seq_lens_device)
+
         return GCUMLADecodeMetadata(
             block_table=block_table_tensor,
             seq_lens=seq_lens_device,
             max_decode_seq_len=max_seq_len,
+            tile_scheduler_metadata=self.cg_buf_tile_scheduler_metadata,
+            num_splits=None,
         )
 
 
@@ -315,7 +340,7 @@ class GCUMLAImpl(MLACommonImpl[GCUMLAMetadata]):
 
         sum_seq_q = q.shape[0]
         batch = decode_meta.block_table.shape[0]
-        
+
         if sum_seq_q // batch > 1:
             assert sum_seq_q % batch == 0
             q = q.view(batch, sum_seq_q // batch, *q.shape[1:])
@@ -327,8 +352,8 @@ class GCUMLAImpl(MLACommonImpl[GCUMLAMetadata]):
                 block_table=decode_meta.block_table,
                 cache_seqlens=decode_meta.seq_lens,
                 head_dim_v=self.kv_lora_rank,
-                tile_scheduler_metadata=None,
-                num_splits=None,
+                tile_scheduler_metadata=decode_meta.tile_scheduler_metadata,
+                num_splits=decode_meta.num_splits,
                 softmax_scale=self.scale,
                 causal=True,
                 descale_q=q_scale,

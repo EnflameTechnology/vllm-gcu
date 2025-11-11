@@ -94,6 +94,7 @@
 #include "src/top_k_top_p.h"
 #include "src/apply_repetition_penalties.h"
 #include "src/eplb_map_to_physical_and_record.h"
+#include "src/get_mla_decoding_metadata.h"
 
 // Note on op signatures:
 // The X_meta signatures are for the meta functions corresponding to op X.
@@ -1452,6 +1453,17 @@ TORCH_LIBRARY_FRAGMENT(CONCAT(_flashmla, TORCH_EXTENSION_NAME), _flashmla_ops) {
   }
   _flashmla_ops.impl("fwd_kvcache_mla", torch::kPrivateUse1,
                     &mha_fwd_kvcache_mla);
+
+  handle = c10::Dispatcher::singleton().findSchema(
+    {"_C::get_mla_decoding_metadata", ""});
+  if (!handle.has_value()) {
+    _flashmla_ops.def(
+        "get_mla_decoding_metadata("
+        "    Tensor! output, Tensor seqlens_k"
+        "    ) -> ()");
+  }
+  _flashmla_ops.impl("get_mla_decoding_metadata", torch::kPrivateUse1,
+                    &get_mla_decoding_metadata);
 }
 
 REGISTER_EXTENSION(TORCH_EXTENSION_NAME)
