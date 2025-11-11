@@ -111,4 +111,4 @@ class GCUWorker(Worker):
             return super().execute_model(scheduler_output)
 
     def execute_dummy_batch(self) -> None:
-        self.model_runner._dummy_run(0)
+        self.model_runner._dummy_run(0, uniform_decode=True)

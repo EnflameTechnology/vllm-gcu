@@ -1010,13 +1010,6 @@ class GCUModelRunner(GPUModelRunner):
 
     def _prepare_input_ids(self, total_num_scheduled_tokens: int,
                            cu_num_tokens: np.ndarray) -> None:
-        """add support for spec decoding"""
-        if self._draft_token_ids is not None:
-            self.input_batch.prev_sampled_token_ids = torch.cat((
-                self.prev_next_token_ids.unsqueeze(dim=1),
-                self._draft_token_ids.to(torch.int32),
-            ),
-                                                                dim=1)
 
         if self.input_batch.prev_sampled_token_ids is None:
             # Normal scheduling case
@@ -1029,6 +1022,14 @@ class GCUModelRunner(GPUModelRunner):
         # Async scheduling case, where some decode requests from the previous
         # iteration won't have entries in input_ids_cpu and need to be copied
         # on the GPU from prev_sampled_token_ids.
+        """add support for spec decoding"""
+        if self._draft_token_ids is not None:
+            self.input_batch.prev_sampled_token_ids = torch.cat((
+                self.prev_next_token_ids.unsqueeze(dim=1),
+                self._draft_token_ids.to(torch.int32),
+            ),
+                                                                dim=1)
+
         prev_req_id_to_index = self.input_batch.prev_req_id_to_index
         assert prev_req_id_to_index is not None
         flattened_indices = []
