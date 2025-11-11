@@ -5,6 +5,7 @@ import os as _os
 import warnings as _warnings
 import contextlib
 from transformers import AutoConfig
+import vllm_gcu.envs as gcu_envs
 
 def _try_register_config(name, module_name, class_name):
     try:
@@ -24,7 +25,10 @@ def register_custom_models():
     for name, module_name, class_name in custom_configs:
         _try_register_config(name, module_name, class_name)
 
-    ModelRegistry.register_model("DeepseekV3ForCausalLM", "vllm_gcu.models.deepseek_v3.deepseek_v3:DeepseekV3ForCausalLM")
+    if gcu_envs.VLLM_GCU_ENABLE_DEEPSEEK_MTP_FUSION:
+        ModelRegistry.register_model("DeepseekV3ForCausalLM", "vllm_gcu.models.deepseek_v3.deepseek_v3_with_fused_mtp:DeepseekV3ForCausalLM")
+    else:
+        ModelRegistry.register_model("DeepseekV3ForCausalLM", "vllm_gcu.models.deepseek_v3.deepseek_v3:DeepseekV3ForCausalLM")
     ModelRegistry.register_model("DeepSeekMTPModel", "vllm_gcu.models.deepseek_mtp:DeepSeekMTP")
     ModelRegistry.register_model("GotOcr2ForConditionalGeneration", "vllm_gcu.models.got_ocr2:GotOcr2ForConditionalGeneration")
     ModelRegistry.register_model("Qwen2_5_VLForConditionalGeneration", "vllm_gcu.models.qwen2_5_vl:Qwen2_5_VLForConditionalGeneration")

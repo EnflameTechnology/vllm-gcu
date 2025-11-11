@@ -14,6 +14,7 @@ from vllm.v1.attention.backends.utils import AttentionCGSupport, CommonAttention
 import torch
 import vllm_gcu.kernels._custom_ops as gops
 import vllm._custom_ops as ops
+import vllm_gcu.envs as gcu_envs
 from dataclasses import dataclass
 from typing import Any, Optional, Union
 from functools import partial
@@ -50,8 +51,24 @@ class GCUMLADecodeMetadata(MLACommonDecodeMetadata):
 
 @dataclass
 class GCUMLAMetadata(MLACommonMetadata[GCUMLADecodeMetadata]):
-    pass
+    is_for_decode_gcu_graph: bool = False
 
+def customized_split_decodes_and_prefills(
+        common_attn_metadata: CommonAttentionMetadata,
+        decode_threshold: int = 1,
+        require_uniform: bool = False,
+        builder = None) -> tuple[int, int, int, int]:
+    if hasattr(builder, "_num_decodes") and builder._num_decodes is not None and \
+        hasattr(builder, "_num_prefills") and builder._num_prefills is not None and \
+        hasattr(builder, "_num_decode_tokens") and builder._num_decode_tokens is not None and \
+        hasattr(builder, "_num_prefill_tokens") and builder._num_prefill_tokens is not None:
+        return builder._num_decodes, builder._num_prefills, \
+            builder._num_decode_tokens, builder._num_prefill_tokens
+    return split_decodes_and_prefills(common_attn_metadata = common_attn_metadata,
+                                        decode_threshold = decode_threshold,
+                                        require_uniform = require_uniform)
+    
+    
 
 class GCUMLAMetadataBuilder(MLACommonMetadataBuilder[GCUMLAMetadata]):
     reorder_batch_threshold: int = 8
@@ -64,16 +81,38 @@ class GCUMLAMetadataBuilder(MLACommonMetadataBuilder[GCUMLAMetadata]):
               fast_build: bool = False) -> M:
         with patch(
                 'vllm.v1.attention.backends.mla.common.split_decodes_and_prefills',
-                partial(split_decodes_and_prefills, require_uniform=True)):
+                partial(customized_split_decodes_and_prefills, builder = self, \
+                         require_uniform=True)):
             return super().build(common_prefix_len, common_attn_metadata,
                                  fast_build)
 
     def build_for_cudagraph_capture(self, common_attn_metadata):
         m = common_attn_metadata
-
-        metadata = super().build_for_cudagraph_capture(m)
-        # overwrite max_decode_seq_len to max_model_len when capture
-        metadata.decode.max_decode_seq_len = m.max_seq_len
+        if gcu_envs.VLLM_GCU_ENABLE_DEEPSEEK_MTP_FUSION:
+            if m.num_actual_tokens > 0:
+                assert m.num_actual_tokens % m.max_query_len == 0 and \
+                    m.num_reqs == m.num_actual_tokens // m.max_query_len
+            self._num_decodes = m.num_reqs
+            self._num_decode_tokens = m.num_actual_tokens
+            self._num_prefills = 0
+            self._num_prefill_tokens = 0
+            metadata = self.build(0, m)
+            metadata.is_for_decode_gcu_graph = True
+            # for fused_mtp we don't decode attention does not rely on
+            # metadata.decode.max_decode_seq_len
+        elif m.num_actual_tokens == 0:
+            self._num_decodes = m.num_reqs
+            m.max_query_len = 1
+            self._num_decode_tokens = m.num_actual_tokens
+            self._num_prefills = 0
+            self._num_prefill_tokens = 0
+            metadata = super().build_for_cudagraph_capture(m)
+            # overwrite max_decode_seq_len to max_model_len when capture
+            metadata.decode.max_decode_seq_len = m.max_seq_len
+        else:
+            metadata = super().build_for_cudagraph_capture(m)
+            # overwrite max_decode_seq_len to max_model_len when capture
+            metadata.decode.max_decode_seq_len = m.max_seq_len
         return metadata
 
     def _build_decode(self, block_table_tensor: torch.Tensor,
@@ -82,10 +121,17 @@ class GCUMLAMetadataBuilder(MLACommonMetadataBuilder[GCUMLAMetadata]):
                       query_start_loc_cpu: torch.Tensor,
                       query_start_loc_device: torch.Tensor,
                       num_decode_tokens: int):
+        # important if async-scheduling is enable later
+        if hasattr(self, 'max_seq_len'):
+            max_seq_len = self.max_seq_len
+        elif seq_lens_cpu is not None:
+            max_seq_len = seq_lens_cpu.max()
+        else:
+            max_seq_len = seq_lens_device.max().item()
         return GCUMLADecodeMetadata(
             block_table=block_table_tensor,
             seq_lens=seq_lens_device,
-            max_decode_seq_len=seq_lens_cpu.max(),
+            max_decode_seq_len=max_seq_len,
         )
 
 
@@ -269,8 +315,9 @@ class GCUMLAImpl(MLACommonImpl[GCUMLAMetadata]):
 
         sum_seq_q = q.shape[0]
         batch = decode_meta.block_table.shape[0]
-        assert sum_seq_q % batch == 0
+        
         if sum_seq_q // batch > 1:
+            assert sum_seq_q % batch == 0
             q = q.view(batch, sum_seq_q // batch, *q.shape[1:])
             if q_scale is not None:
                 q_scale = q_scale.view(batch, sum_seq_q // batch, *q_scale.shape[1:])

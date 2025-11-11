@@ -224,6 +224,16 @@ class GCUPlatform(Platform):
             ):
                 cache_config.cache_dtype = "int8"
 
+
+        enable_deepseek_fused_mtp = gcu_envs.VLLM_GCU_ENABLE_DEEPSEEK_MTP_FUSION
+        if not enable_deepseek_fused_mtp and \
+            vllm_config.additional_config.get("deepseek_fused_mtp", False):
+            enable_deepseek_fused_mtp = True
+            os.environ["VLLM_GCU_ENABLE_DEEPSEEK_MTP_FUSION"] = "1"
+        if enable_deepseek_fused_mtp:
+            logger.info("Using deepseek fused mtp")
+        vllm_config.additional_config.update({"deepseek_fused_mtp": enable_deepseek_fused_mtp})
+
         if compilation_config:
             if compilation_config.level > 0:
                 compilation_config.backend = "topsgraph"
@@ -241,6 +251,21 @@ class GCUPlatform(Platform):
                 compilation_config.compile_sizes.append(0)
                 compilation_config.cudagraph_capture_sizes.append(0)  # capture 0 graph
 
+            if enable_deepseek_fused_mtp:
+                assert vllm_config.speculative_config is not None
+                spec_k = vllm_config.speculative_config.num_speculative_tokens
+                cudagraph_capture_sizes = compilation_config.cudagraph_capture_sizes.copy()
+                new_cudagraph_capture_sizes = []
+                uniform_batch = True
+                for s in cudagraph_capture_sizes:
+                    if s % (1 + spec_k) != 0:
+                        uniform_batch = False
+                    new_cudagraph_capture_sizes.append(s * (1 + spec_k))
+                if not uniform_batch:
+                    compilation_config.cudagraph_capture_sizes = new_cudagraph_capture_sizes
+                    compilation_config.init_with_cudagraph_sizes(new_cudagraph_capture_sizes)
+                logger.info(f'for mtp_fusion, capture sizes is {compilation_config.cudagraph_capture_sizes}')
+
         if model_config:
             model_config.enable_sleep_mode = False
 
@@ -249,6 +274,8 @@ class GCUPlatform(Platform):
         if async_scheduling is not None:
             scheduler_config.async_scheduling = async_scheduling
             logger.info("override async_scheduling of scheduler_config by additional_config")
+            assert not enable_deepseek_fused_mtp, "async scheduling with deepseek fused mtp not yet supported"
+
 
         if speculative_config is not None and scheduler_config.async_scheduling:
             scheduler_config.scheduler_cls = "vllm_gcu.core.scheduler.AsyncScheduler"
