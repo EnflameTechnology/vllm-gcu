@@ -1302,9 +1302,11 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
                 spec_step_idx=i,
             )
             mtp_logits = self.compute_logits(mtp_hidden_states)
-            sampler_output = self.sampler(logits=mtp_logits,
-                                                      sampling_metadata=sampling_metadata)
-            mtp_token_ids = sampler_output.sampled_token_ids
+
+            # sampler_output = self.sampler(logits=mtp_logits,
+            #                                           sampling_metadata=sampling_metadata)
+            # mtp_token_ids = sampler_output.sampled_token_ids
+            mtp_token_ids = torch.argmax(mtp_logits, dim=-1, keepdim=True)
             accepted_mtp_tokens = mtp_token_ids.reshape(bsz, spec_k + 1).gather(dim=1,index=selected_token_index)
             draft_tokens[:, i] = accepted_mtp_tokens.squeeze(1)
             # we only support mtp1 for now
@@ -1476,9 +1478,10 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
                 # [num_decodes, spec_k], 丢弃prefill
                 #mtp_probs = mtp_probs[:num_decodes * (spec_k + 1), :].reshape(num_decodes, spec_k + 1,
                 #                                                              mtp_logits.shape[-1])
-                sampler_output = self.sampler(logits=mtp_logits,
-                                                      sampling_metadata=sampling_metadata)
-                mtp_token_ids = sampler_output.sampled_token_ids
+                # sampler_output = self.sampler(logits=mtp_logits,
+                #                                       sampling_metadata=sampling_metadata)
+                # mtp_token_ids = sampler_output.sampled_token_ids
+                mtp_token_ids = torch.argmax(mtp_logits, dim=-1, keepdim=True)
                 accepted_mtp_tokens = mtp_token_ids[:num_decodes * (spec_k + 1)].reshape(num_decodes,
                                                                                          spec_k + 1).gather(dim=1,
                                                                                                             index=selected_token_index)
