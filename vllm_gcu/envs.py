@@ -29,6 +29,9 @@ environment_variables: Dict[str, Callable[[], Any]] = {
     "VLLM_GCU_ENABLE_DEEPSEEK_MTP_FUSION": lambda: bool(
         int(os.getenv("VLLM_GCU_ENABLE_DEEPSEEK_MTP_FUSION", "0"))
     ),
+    "VLLM_GCU_SKIP_ACROSS_DP": lambda: bool(
+        int(os.getenv("VLLM_GCU_SKIP_ACROSS_DP", "0"))
+    ),
 }
 
 

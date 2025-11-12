@@ -66,19 +66,23 @@ def is_nixl_equal(target: str):
         return False
 
 
-def _ep_alltoall_threshold(vllm_config: VllmConfig):
+@lru_cache(maxsize=1)
+def _ep_alltoall_threshold(data_parallel_size,
+                           max_num_seqs,
+                           max_capture_size,
+                           num_speculative_tokens=None):
     """
     Use dynamic memory allocation in EP dispatch when num_tokens_across_dp > threshold,
     use static allocation otherwise. Cudagraph only supports staitc shape,
     so we must ensure threshold >= max_capture_size * dp_size. Decode prefers static.
     """
-    threshold = vllm_config.scheduler_config.max_num_seqs
+    threshold = max_num_seqs
 
-    if vllm_config.speculative_config is not None:
-        threshold *= vllm_config.speculative_config.num_speculative_tokens + 1
+    if num_speculative_tokens is not None:
+        threshold *= num_speculative_tokens + 1
 
-    threshold = max(threshold, vllm_config.compilation_config.max_capture_size)
-    threshold *= vllm_config.parallel_config.data_parallel_size
+    threshold = max(threshold, max_capture_size)
+    threshold *= data_parallel_size
 
     return threshold
 
@@ -105,6 +109,17 @@ def set_gcu_forward_context(
     ubatch_slices: Optional[UBatchSlices] = None,
     is_dummy=False,
 ):
+    if gcu_envs.VLLM_GCU_SKIP_ACROSS_DP and num_tokens_across_dp is None and num_tokens is not None:
+        dp_size = vllm_config.parallel_config.data_parallel_size
+        max_num_batched_tokens = vllm_config.scheduler_config.max_num_batched_tokens
+        if max_num_batched_tokens * dp_size <= _ep_alltoall_threshold(
+                dp_size, vllm_config.scheduler_config.max_num_seqs,
+                vllm_config.compilation_config.max_capture_size,
+                vllm_config.speculative_config.num_speculative_tokens
+                if vllm_config.speculative_config else None):
+            num_tokens = max_num_batched_tokens
+            num_tokens_across_dp = torch.full((dp_size, ), num_tokens)
+
     with set_forward_context(
             attn_metadata,
             vllm_config,
@@ -124,7 +139,12 @@ def set_gcu_forward_context(
                      num_tokens_across_dp, is_dummy)
 
         forward_context = get_forward_context()
-        threshold = _ep_alltoall_threshold(vllm_config)
+        threshold = _ep_alltoall_threshold(
+            vllm_config.parallel_config.data_parallel_size,
+            vllm_config.scheduler_config.max_num_seqs,
+            vllm_config.compilation_config.max_capture_size,
+            vllm_config.speculative_config.num_speculative_tokens
+            if vllm_config.speculative_config else None)
         dp_metadata = forward_context.dp_metadata
         if dp_metadata is not None:
             total_tokens = torch.sum(
