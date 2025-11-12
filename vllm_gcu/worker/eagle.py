@@ -8,6 +8,7 @@ from vllm.config import VllmConfig, CUDAGraphMode
 from vllm.utils import cdiv
 from vllm.forward_context import BatchDescriptor, get_forward_context
 from vllm.v1.spec_decode.eagle import EagleProposer, PADDING_SLOT_ID
+from vllm.v1.spec_decode.metadata import SpecDecodeMetadata
 from vllm.v1.cudagraph_dispatcher import CudagraphDispatcher
 from vllm.v1.attention.backends.utils import CommonAttentionMetadata
 from vllm.v1.sample.metadata import SamplingMetadata
@@ -28,9 +29,10 @@ import numpy as np
 def prepare_next_token_ids_kernel(
     sampled_ptr,  # *int32,  [num_reqs, max_gen_len]
     backup_ptr,  # *int32,  [num_reqs]
-    discard_mask_ptr,  # *int32,  [num_reqs]
+    discard_request_indices_ptr, # *int32 [num_reqs]
     vocab_size,  # int32
     max_gen_len,  # int32
+    num_discarded_requests, # int32
     num_reqs,  # int32
     next_ptr,  # *int32, [num_reqs]
     count_ptr,  # *int32, [num_reqs]
@@ -40,7 +42,11 @@ def prepare_next_token_ids_kernel(
     if pid >= num_reqs:
         return
 
-    discard = tl.load(discard_mask_ptr + pid)
+    discard = 0
+    for i in tl.range(num_discarded_requests):
+        discard_request_indices = tl.load(discard_request_indices_ptr + i)
+        discard = 1 if discard_request_indices== pid else 0
+
     row_start = pid * max_gen_len
 
     cols = tl.arange(0, BLOCK_SIZE)
@@ -61,6 +67,42 @@ def prepare_next_token_ids_kernel(
     backup = tl.load(backup_ptr + pid)
     final = tl.where(has_valid, chosen, backup)
     tl.store(next_ptr + pid, final)
+
+@triton.jit
+def prepare_inputs_padded_kernel(
+    cu_num_draft,       # [num_seqs]
+    valid_sampled,      # [num_seqs]
+    query_start_loc,    # [num_seqs+1]
+    out_tok_idx,        # [num_seqs]
+    num_seqs,
+    arange_ptr,
+    token_indices_ptr,
+    total_num_tokens,
+    BLOCK_SIZE: tl.constexpr,
+):
+    pid = tl.program_id(0)
+
+    if pid > 0:
+        return
+    offs = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+    mask = offs < total_num_tokens
+    arange = tl.load(arange_ptr+offs, mask=mask)
+    tl.store(token_indices_ptr+offs, arange, mask=mask)
+
+    mask = (offs < num_seqs) & (offs > 0)
+    d1 = tl.load(cu_num_draft + offs, mask=mask)
+    d0 = tl.load(cu_num_draft + offs - 1, mask=mask)
+    mask = offs == 0
+    d2 = tl.load(cu_num_draft + offs, mask=mask)
+    d = d2 + d1 - d0
+
+    mask2 = offs < num_seqs
+    vs = tl.load(valid_sampled + offs, mask=mask2)
+    rej = tl.where(d > 0, d + 1 - vs, 0)
+
+    q1 = tl.load(query_start_loc + offs + 1, mask=mask2)
+    tok_idx = q1 - 1 - rej
+    tl.store(out_tok_idx + offs, tok_idx, mask=mask2)
 
 
 class EagleProposerWithGraph(EagleProposer):
@@ -517,15 +559,8 @@ class EagleProposerWithGraph(EagleProposer):
         ])
         self.backup_next_token_ids.copy_to_gpu(num_reqs)
 
-        # Mask out the sampled tokens indices that should not be sampled.
-        discard_sampled_tokens_req_indices = \
-            discard_request_indices[:num_discarded_requests]
-
         max_gen_len = sampled_token_ids.shape[-1]
         device = sampled_token_ids.device
-
-        discard_mask = torch.zeros(num_reqs, dtype=torch.int32, device=device)
-        discard_mask[discard_sampled_tokens_req_indices.long()] = 1
 
         next_token_ids = torch.empty(num_reqs, dtype=torch.int32, device=device)
         valid_sampled_tokens_count = torch.empty(num_reqs, dtype=torch.int32, device=device)
@@ -536,9 +571,10 @@ class EagleProposerWithGraph(EagleProposer):
         prepare_next_token_ids_kernel[grid](
             sampled_token_ids,
             self.backup_next_token_ids.gpu,
-            discard_mask,
+            discard_request_indices,
             gpu_input_batch.vocab_size,
             max_gen_len,
+            num_discarded_requests,
             num_reqs,
             next_token_ids,
             valid_sampled_tokens_count,
@@ -553,3 +589,53 @@ class EagleProposerWithGraph(EagleProposer):
             self.runner.prev_next_token_ids = next_token_ids
 
         return next_token_ids, valid_sampled_tokens_count
+
+    def prepare_inputs_padded(
+        self,
+        common_attn_metadata: CommonAttentionMetadata,
+        spec_decode_metadata: SpecDecodeMetadata,
+        valid_sampled_tokens_count: torch.Tensor,
+    ) -> tuple[CommonAttentionMetadata, torch.Tensor, torch.Tensor]:
+        num_seqs = common_attn_metadata.num_reqs
+        device = valid_sampled_tokens_count.device
+
+        query_start_loc_cpu = common_attn_metadata.query_start_loc_cpu
+
+        new_query_len_per_req = (query_start_loc_cpu[1:] -
+                                    query_start_loc_cpu[:-1])
+        total_num_tokens = query_start_loc_cpu[-1].item()
+
+        token_indices_to_sample = torch.empty(num_seqs, dtype=torch.int, device=device)
+        token_indices = torch.empty(total_num_tokens, dtype=torch.int, device=device)
+
+        BLOCK = triton.next_power_of_2(total_num_tokens)
+        grid = lambda meta: (triton.cdiv(num_seqs, meta['BLOCK_SIZE']),)
+        prepare_inputs_padded_kernel[grid](
+            spec_decode_metadata.cu_num_draft_tokens,
+            valid_sampled_tokens_count,
+            common_attn_metadata.query_start_loc,
+            token_indices_to_sample,
+            num_seqs,
+            self.arange,
+            token_indices,
+            total_num_tokens,
+            BLOCK_SIZE=BLOCK,
+        )
+
+        spec_common_attn_metadata = CommonAttentionMetadata(
+            query_start_loc=common_attn_metadata.query_start_loc,
+            seq_lens=common_attn_metadata.seq_lens,
+            query_start_loc_cpu=query_start_loc_cpu,
+            seq_lens_cpu=common_attn_metadata.seq_lens_cpu,
+            num_computed_tokens_cpu=common_attn_metadata.
+            num_computed_tokens_cpu,
+            num_reqs=common_attn_metadata.num_reqs,
+            num_actual_tokens=total_num_tokens,
+            max_query_len=new_query_len_per_req.max().item(),
+            max_seq_len=common_attn_metadata.seq_lens_cpu.max().item(),
+            block_table_tensor=common_attn_metadata.block_table_tensor,
+            slot_mapping=common_attn_metadata.slot_mapping[token_indices],
+            causal=True,
+        )
+
+        return spec_common_attn_metadata, token_indices, token_indices_to_sample
