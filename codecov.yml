@@ -1,0 +1,50 @@
+# Codecov 配置文件
+# 参考: https://docs.codecov.com/docs/codecov-yaml
+
+# 覆盖率设置
+coverage:
+  # 状态检查
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 0%
+        base: auto
+    patch:
+      default:
+        target: auto
+        threshold: 0%
+
+  # 报告设置
+  report:
+    # 显示所有文件，即使没有覆盖率数据
+    # 这会让 codecov 扫描整个仓库并显示所有源文件
+    after_n_builds: 1
+
+# 要包含在覆盖率报告中的路径
+coverage_report:
+  paths:
+    - csrc/**
+    - lmcache/**
+    - vllm_gcu/**
+
+# 文件忽略列表
+ignore:
+  - "tests/**"
+  - "build/**"
+
+# 注释设置
+comment:
+  layout: "header, diff, files, footer"
+  behavior: default
+  require_changes: false
+  require_base: no
+  require_head: yes
+
+# 文件路径修复（关键配置！将覆盖率报告中的路径映射到仓库路径）
+# 格式: "覆盖率报告中的路径前缀::仓库中的路径前缀"
+fixes:
+  - "/usr/local/lib/python3.12/dist-packages/::"
+  - "/usr/local/lib/python3.12/site-packages/::"
+  - "*/site-packages/::"
+  - "*/dist-packages/::"
