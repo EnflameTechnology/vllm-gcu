@@ -456,7 +456,11 @@ class FusedMoEModularKernel(torch.nn.Module):
                 output = a1.fill_(0) if inplace else torch.zeros_like(a1)
             del a1, a1q
         else:
-            output = torch.zeros_like(a1)
+            output = torch.empty_like(a1)
+            if envs.VLLM_ALL2ALL_BACKEND not in [
+                "deepep_high_throughput", "deepep_low_latency"
+            ]:
+                output.fill_(0)
 
         if not self.prepare_finalize.supports_async():
             assert not dbo_enabled()
@@ -480,15 +484,16 @@ class FusedMoEModularKernel(torch.nn.Module):
                 apply_router_weight_on_input,
                 self.fused_experts.finalize_weight_and_reduce_impl(),
             )
-
-            if self.shared_experts is not None and shared_output is None:
-                shared_output = self.shared_experts(a1)
-
             # TODO(lucas): refactor this in the alternative schedules followup
             # currently unpack if we have hook + receiver pair or just
             # receiver (see finalize_async docstring)
             hook, receiver = finalize_ret \
                 if isinstance(finalize_ret, tuple) else (None, finalize_ret)
+
+            enable_parallel_compute = gcu_envs.VLLM_GCU_ENABLE_PARALLEL_COMPUTE
+
+            if enable_parallel_compute and self.shared_experts is not None and shared_output is None:
+                shared_output = self.shared_experts(a1)
 
             if hook is not None:
                 if dbo_enabled():
@@ -501,6 +506,8 @@ class FusedMoEModularKernel(torch.nn.Module):
                     hook()
 
             receiver()
+            if not enable_parallel_compute and self.shared_experts is not None and shared_output is None:
+                shared_output = self.shared_experts(a1)
 
         if not hasattr(self.prepare_finalize, 'set_shared_experts') and self.shared_experts is not None:
             if self.routed_scaling_factor != 1.0:

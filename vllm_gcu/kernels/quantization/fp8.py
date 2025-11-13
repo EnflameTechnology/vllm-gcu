@@ -6,7 +6,7 @@ from vllm.model_executor.layers.fused_moe import FusedMoE
 from vllm.model_executor.layers.quantization.fp8 import Fp8Config, Fp8LinearMethod, Fp8MoEMethod
 from vllm.model_executor.layers.quantization.utils.quant_utils import is_layer_skipped
 from vllm.model_executor.layers.fused_moe.modular_kernel import FusedMoEActivationFormat
-from vllm.model_executor.layers.fused_moe.batched_deep_gemm_moe import BatchedDeepGemmExperts
+from vllm_gcu.kernels.batched_deep_gemm_moe import BatchedDeepGemmExpertsGCU
 from vllm.platforms import current_platform
 
 from vllm.utils import vllm_lib
@@ -83,9 +83,9 @@ class Fp8GCUMoEMethod(Fp8MoEMethod):
             max_num_tokens_per_rank = (
                 prepare_finalize.max_num_tokens_per_rank())
 
-            return BatchedDeepGemmExperts(max_num_tokens_per_rank,
-                                          prepare_finalize.num_dispatchers(),
-                                          self.moe_quant_config)
+            return BatchedDeepGemmExpertsGCU(
+                max_num_tokens_per_rank, prepare_finalize.num_dispatchers(),
+                self.moe_quant_config)
         else:
             return TritonExpertsPad(self.moe_quant_config)
 

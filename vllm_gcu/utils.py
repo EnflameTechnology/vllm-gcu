@@ -161,7 +161,7 @@ def set_gcu_forward_context(
         use_all2all_v = total_tokens <= threshold
 
         if not use_all2all_v and envs.VLLM_ALL2ALL_BACKEND not in [
-                "deepep_high_throughput", "deepep_high_throughput"
+                "deepep_high_throughput", "deepep_low_latency"
         ]:
             forward_context.cudagraph_runtime_mode = CUDAGraphMode.NONE
         setattr(forward_context, "all2allv_threshold",
