@@ -277,9 +277,11 @@ class GCUPlatform(Platform):
             logger.info("override async_scheduling of scheduler_config by additional_config")
             assert not enable_deepseek_fused_mtp, "async scheduling with deepseek fused mtp not yet supported"
 
-
-        if speculative_config is not None and scheduler_config.async_scheduling:
-            scheduler_config.scheduler_cls = "vllm_gcu.core.scheduler.AsyncScheduler"
+        if scheduler_config.async_scheduling:
+            if speculative_config is not None:
+                scheduler_config.scheduler_cls = "vllm_gcu.core.scheduler.AsyncScheduler"
+        else:
+            scheduler_config.scheduler_cls = "vllm_gcu.core.scheduler.GCUScheduler"
 
         if additional_config.get("enable_eplb", False):
             parallel_config.enable_eplb = True

@@ -22,7 +22,43 @@ from vllm.v1.spec_decode.metrics import SpecDecodingStats
 logger = init_logger(__name__)
 
 
-class AsyncScheduler(Scheduler):
+class GCUScheduler(Scheduler):
+    def _update_waiting_for_remote_kv(self, request: Request) -> bool:
+        """
+        KV Connector: check if the request_id is finished_recving.
+
+        The finished_recving_kv_req_ids list is populated
+        on the previous steps()'s update_from_output based
+        on the worker side connector.
+
+        When the kv transfer is ready, we cache the blocks
+        and the request state will be moved back to WAITING from
+        WAITING_FOR_REMOTE_KV.
+        """
+        assert self.connector is not None
+        if request.request_id not in self.finished_recving_kv_req_ids:
+            return False
+
+        # Now that the blocks are ready, actually cache them.
+        (block_ids, ) = self.kv_cache_manager.get_block_ids(request.request_id)
+        num_computed_tokens = len(block_ids) * self.block_size
+        # Handle the case where num request tokens less than one block.
+        num_computed_tokens = min(num_computed_tokens, request.num_tokens)
+        if num_computed_tokens == request.num_tokens:
+            num_computed_tokens -= (1 + self.num_lookahead_tokens)
+            num_computed_tokens = max(num_computed_tokens, 0)
+        # This will cache the blocks iff caching is enabled.
+        self.kv_cache_manager.cache_blocks(request, num_computed_tokens)
+
+        # Update the request state for scheduling.
+        request.num_computed_tokens = num_computed_tokens
+
+        # Return that we are ready.
+        self.finished_recving_kv_req_ids.remove(request.request_id)
+        return True
+
+
+class AsyncScheduler(GCUScheduler):
     def schedule(self) -> SchedulerOutput:
         # NOTE(woosuk) on the scheduling algorithm:
         # There's no "decoding phase" nor "prefill phase" in the scheduler.
@@ -475,40 +511,6 @@ class AsyncScheduler(Scheduler):
 
         self._update_after_schedule(scheduler_output)
         return scheduler_output
-
-    def _update_waiting_for_remote_kv(self, request: Request) -> bool:
-        """
-        KV Connector: check if the request_id is finished_recving.
-
-        The finished_recving_kv_req_ids list is populated
-        on the previous steps()'s update_from_output based
-        on the worker side connector.
-
-        When the kv transfer is ready, we cache the blocks
-        and the request state will be moved back to WAITING from
-        WAITING_FOR_REMOTE_KV.
-        """
-        assert self.connector is not None
-        if request.request_id not in self.finished_recving_kv_req_ids:
-            return False
-
-        # Now that the blocks are ready, actually cache them.
-        (block_ids, ) = self.kv_cache_manager.get_block_ids(request.request_id)
-        num_computed_tokens = len(block_ids) * self.block_size
-        # Handle the case where num request tokens less than one block.
-        num_computed_tokens = min(num_computed_tokens, request.num_tokens)
-        if num_computed_tokens == request.num_tokens:
-            num_computed_tokens -= (1 + self.num_lookahead_tokens)
-            num_computed_tokens = max(num_computed_tokens, 0)
-        # This will cache the blocks iff caching is enabled.
-        self.kv_cache_manager.cache_blocks(request, num_computed_tokens)
-
-        # Update the request state for scheduling.
-        request.num_computed_tokens = num_computed_tokens
-
-        # Return that we are ready.
-        self.finished_recving_kv_req_ids.remove(request.request_id)
-        return True
 
     def _update_after_schedule(
         self,
