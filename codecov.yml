@@ -15,19 +15,6 @@ coverage:
         target: auto
         threshold: 0%
 
-  # 报告设置
-  report:
-    # 显示所有文件，即使没有覆盖率数据
-    # 这会让 codecov 扫描整个仓库并显示所有源文件
-    after_n_builds: 1
-
-# 要包含在覆盖率报告中的路径
-coverage_report:
-  paths:
-    - csrc/**
-    - lmcache/**
-    - vllm_gcu/**
-
 # 文件忽略列表
 ignore:
   - "tests/**"

@@ -1,6 +1,18 @@
 [run]
+source = vllm_gcu
+
 include = 
     /usr/local/lib/python3.12/dist-packages/vllm_gcu/**
     /usr/local/lib/python3.12/site-packages/vllm_gcu/**
+
 concurrency = multiprocessing
-parallel=True
+parallel = True
+
+[report]
+# 在报告中显示所有源文件，包括未被执行的（显示为 0%）
+skip_empty = False
+
+# 排除的文件
+omit =
+    */tests/*
+    */__pycache__/*
