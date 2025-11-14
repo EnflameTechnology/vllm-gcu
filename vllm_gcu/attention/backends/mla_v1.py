@@ -331,23 +331,15 @@ class GCUMLAImpl(MLACommonImpl[GCUMLAMetadata]):
         assert isinstance(q, torch.Tensor)
         q_dtype = q.dtype
 
-        q_scale = None
-        if self.kv_cache_dtype == "fp8":
-            q, q_scale = gops.scaled_fp8_quant(q,
-                                               q_scale,
-                                               scale_ub=None,
-                                               use_per_token_if_dynamic=True)
-
         sum_seq_q = q.shape[0]
         batch = decode_meta.block_table.shape[0]
 
         if sum_seq_q // batch > 1:
             assert sum_seq_q % batch == 0
             q = q.view(batch, sum_seq_q // batch, *q.shape[1:])
-            if q_scale is not None:
-                q_scale = q_scale.view(batch, sum_seq_q // batch, *q_scale.shape[1:])
+
             output, softmax_lse = flash_mla_with_kvcache(
-                q=q,
+                q=q,  # bf16
                 k_cache=kv_c_and_k_pe_cache.unsqueeze(-2),
                 block_table=decode_meta.block_table,
                 cache_seqlens=decode_meta.seq_lens,
@@ -356,13 +348,20 @@ class GCUMLAImpl(MLACommonImpl[GCUMLAMetadata]):
                 num_splits=decode_meta.num_splits,
                 softmax_scale=self.scale,
                 causal=True,
-                descale_q=q_scale,
+                descale_q=None,
                 descale_k=layer._k_scale,
             )
             output = output.view(-1, *output.shape[2:])
             # TODO: for dcp
             # softmax_lse = softmax_lse.transpose(2, 1).reshape(-1, self.num_heads)
         else:
+            q_scale = None
+            if self.kv_cache_dtype == "fp8":
+                q, q_scale = gops.scaled_fp8_quant(q,
+                                                q_scale,
+                                                scale_ub=None,
+                                                use_per_token_if_dynamic=True)
+
             B = q.shape[0]
             output = torch.empty(B,
                                  self.num_heads,
