@@ -29,10 +29,9 @@ import numpy as np
 def prepare_next_token_ids_kernel(
     sampled_ptr,  # *int32,  [num_reqs, max_gen_len]
     backup_ptr,  # *int32,  [num_reqs]
-    discard_request_indices_ptr, # *int32 [num_reqs]
+    discard_mask_ptr,  # *int32,  [num_reqs]
     vocab_size,  # int32
     max_gen_len,  # int32
-    num_discarded_requests, # int32
     num_reqs,  # int32
     next_ptr,  # *int32, [num_reqs]
     count_ptr,  # *int32, [num_reqs]
@@ -42,10 +41,7 @@ def prepare_next_token_ids_kernel(
     if pid >= num_reqs:
         return
 
-    discard = 0
-    for i in tl.range(num_discarded_requests):
-        discard_request_indices = tl.load(discard_request_indices_ptr + i)
-        discard = 1 if discard_request_indices== pid else 0
+    discard = tl.load(discard_mask_ptr + pid)
 
     row_start = pid * max_gen_len
 
@@ -559,8 +555,16 @@ class EagleProposerWithGraph(EagleProposer):
         ])
         self.backup_next_token_ids.copy_to_gpu(num_reqs)
 
+        # Mask out the sampled tokens indices that should not be sampled.
+        discard_sampled_tokens_req_indices = \
+            discard_request_indices[:num_discarded_requests]
+
+
         max_gen_len = sampled_token_ids.shape[-1]
         device = sampled_token_ids.device
+
+        discard_mask = torch.zeros(num_reqs, dtype=torch.int32, device=device)
+        discard_mask[discard_sampled_tokens_req_indices.long()] = 1
 
         next_token_ids = torch.empty(num_reqs, dtype=torch.int32, device=device)
         valid_sampled_tokens_count = torch.empty(num_reqs, dtype=torch.int32, device=device)
@@ -571,10 +575,9 @@ class EagleProposerWithGraph(EagleProposer):
         prepare_next_token_ids_kernel[grid](
             sampled_token_ids,
             self.backup_next_token_ids.gpu,
-            discard_request_indices,
+            discard_mask,
             gpu_input_batch.vocab_size,
             max_gen_len,
-            num_discarded_requests,
             num_reqs,
             next_token_ids,
             valid_sampled_tokens_count,
