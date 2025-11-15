@@ -5,16 +5,10 @@ from typing import Optional, Callable, Union
 from vllm.distributed.parallel_state import get_ep_group
 import vllm.envs as envs
 from vllm.model_executor.layers.fused_moe import (
-    FusedMoEMethodBase, FusedMoEConfig, FusedMoEPrepareAndFinalize,
-    FusedMoEPermuteExpertsUnpermute)
-from vllm.model_executor.layers.fused_moe.fused_batched_moe import BatchedPrepareAndFinalize
+    FusedMoEMethodBase, FusedMoEPrepareAndFinalize)
 from vllm.model_executor.layers.fused_moe.prepare_finalize import MoEPrepareAndFinalizeNoEP
-from vllm.model_executor.layers.fused_moe import FusedMoE as FusedMoEOri
-from vllm.v1.worker.ubatching import dbo_current_ubatch_id
 from vllm.forward_context import get_forward_context
-from vllm.platforms import current_platform
 from vllm.utils import cdiv
-from vllm.v1.worker.ubatching import dbo_enabled
 
 from vllm.logger import init_logger
 
@@ -131,37 +125,11 @@ def forward_impl_chunked(
         hidden_states = full_hidden_states[chunk_start:chunk_end, :]
         router_logits = full_router_logits[chunk_start:chunk_end, :]
 
-        assert self.batched_hidden_states is not None
-        assert self.batched_router_logits is not None
-        # This is only true when DBO has been enabled in the config.
-        # Both tensors will have an outer dimension for the ubatch id
-        if self.batched_hidden_states.dim() == 3:
-            assert self.batched_router_logits.dim() == 3
-            batch_buffer_idx = dbo_current_ubatch_id()
-            batched_hidden_states = self.batched_hidden_states[
-                batch_buffer_idx, :]
-            batched_router_logits = self.batched_router_logits[
-                batch_buffer_idx, :]
-        else:
-            batched_hidden_states = self.batched_hidden_states
-            batched_router_logits = self.batched_router_logits
-
-        assert (batched_hidden_states.size(0)  # type: ignore
-                >= chunk_size)
-        assert (batched_router_logits.size(0)  # type: ignore 
-                >= chunk_size)
-        staged_hidden_states = batched_hidden_states[:
-                                                        chunk_size, :]  # type: ignore
-        staged_router_logits = batched_router_logits[:
-                                                        chunk_size, :]  # type: ignore
-        staged_hidden_states.copy_(hidden_states, non_blocking=True)
-        staged_router_logits.copy_(router_logits, non_blocking=True)
-
         # Matrix multiply.
         final_hidden_states = self.quant_method.apply(
             layer=self,
-            x=staged_hidden_states,
-            router_logits=staged_router_logits,
+            x=hidden_states,
+            router_logits=router_logits,
             top_k=self.top_k,
             renormalize=self.renormalize,
             use_grouped_topk=self.use_grouped_topk,
@@ -202,6 +170,7 @@ def forward_impl_chunked(
                 full_fused_final_hidden_states[
                     chunk_start:chunk_end, :].copy_(final_hidden_states[1],
                                                     non_blocking=True)
+        return final_hidden_states
 
     ctx = get_forward_context()
     # flashinfer_cutlass_kernels can handle: optional DP + TP/EP
@@ -214,6 +183,10 @@ def forward_impl_chunked(
         max_tokens_across_dispatchers = cdiv(max_tokens_across_dispatchers,
                                                 self.sp_size)
 
+    if max_tokens_across_dispatchers <= moe_dp_chunk_size_per_rank:
+        return process_chunk(0,
+                             max_tokens_across_dispatchers,
+                             skip_result_store=True)
     num_tokens = full_hidden_states.size(0)
     for chunk_idx, chunk_start_ in enumerate(
             range(0, max_tokens_across_dispatchers,
