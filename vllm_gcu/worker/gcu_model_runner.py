@@ -818,7 +818,7 @@ class GCUModelRunner(GPUModelRunner):
                 assert self.input_batch.prev_req_id_to_index is not None
                 req_idx = self.input_batch.prev_req_id_to_index.get(
                     req_id, None)
-                if req_idx is not None:
+                if req_idx is not None and len(req_state.output_token_ids) > 1:
                     prev_draft_tokens_len = len(self.input_batch.prev_sampled_token_ids[req_idx])
                     num_accepted = prev_valid_sampled_token_count[req_idx]
                     num_computed_tokens -= (prev_draft_tokens_len -
