@@ -100,7 +100,7 @@ def get_hooks(group: str):
 @contextmanager
 def set_gcu_forward_context(
     attn_metadata,
-    vllm_config,
+    vllm_config: VllmConfig,
     virtual_engine=0,
     num_tokens=None,
     num_tokens_across_dp=None,
@@ -109,16 +109,24 @@ def set_gcu_forward_context(
     ubatch_slices: Optional[UBatchSlices] = None,
     is_dummy=False,
 ):
-    if gcu_envs.VLLM_GCU_SKIP_ACROSS_DP and num_tokens_across_dp is None and num_tokens is not None:
-        dp_size = vllm_config.parallel_config.data_parallel_size
+    dp_size = vllm_config.parallel_config.data_parallel_size
+    if dp_size > 1 and gcu_envs.VLLM_GCU_SKIP_ACROSS_DP and num_tokens_across_dp is None and num_tokens is not None:
         max_num_batched_tokens = vllm_config.scheduler_config.max_num_batched_tokens
-        if max_num_batched_tokens * dp_size <= _ep_alltoall_threshold(
-                dp_size, vllm_config.scheduler_config.max_num_seqs,
-                vllm_config.compilation_config.max_capture_size,
-                vllm_config.speculative_config.num_speculative_tokens
-                if vllm_config.speculative_config else None):
-            num_tokens = max_num_batched_tokens
-            num_tokens_across_dp = torch.full((dp_size, ), num_tokens)
+        if envs.VLLM_ALL2ALL_BACKEND == 'deepep_low_latency':
+            sp_size = vllm_config.parallel_config.tensor_parallel_size \
+                if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL or vllm_config.parallel_config.use_sequence_parallel_moe \
+        else 1
+            if max_num_batched_tokens <= envs.VLLM_MOE_DP_CHUNK_SIZE * sp_size:
+                num_tokens = max_num_batched_tokens
+                num_tokens_across_dp = torch.full((dp_size, ), num_tokens)
+        else:
+            if max_num_batched_tokens * dp_size <= _ep_alltoall_threshold(
+                    dp_size, vllm_config.scheduler_config.max_num_seqs,
+                    vllm_config.compilation_config.max_capture_size,
+                    vllm_config.speculative_config.num_speculative_tokens
+                    if vllm_config.speculative_config else None):
+                num_tokens = max_num_batched_tokens
+                num_tokens_across_dp = torch.full((dp_size, ), num_tokens)
 
     with set_forward_context(
             attn_metadata,
