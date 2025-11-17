@@ -86,7 +86,6 @@ def init_prepare_finalize(self, layer: torch.nn.Module):
             prepare_finalize,
             experts,
             layer.shared_experts,
-            layer.routed_scaling_factor,
         )
 
 

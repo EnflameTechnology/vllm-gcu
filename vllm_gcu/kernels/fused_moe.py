@@ -267,6 +267,7 @@ def grouped_topk(
         topk_group,
         e_score_correction_bias,
         scoring_func,
+        routed_scaling_factor,
     )
 
     return topk_weights, topk_ids

@@ -30,7 +30,6 @@ class AlltoAllPrepareAndFinalize(FusedMoEPrepareAndFinalize):
         super().__init__()
         self.num_dispatchers_ = num_dispatchers
         self.shared_experts = None
-        self.routed_scaling_factor = 1.0
         self.ep_group = get_ep_group().device_group
 
     @property
@@ -43,11 +42,8 @@ class AlltoAllPrepareAndFinalize(FusedMoEPrepareAndFinalize):
     def num_dispatchers(self) -> int:
         return self.num_dispatchers_
 
-    def set_shared_experts(self, shared_experts, routed_scaling_factor):
-        if shared_experts is not None:
-            assert routed_scaling_factor is not None
+    def set_shared_experts(self, shared_experts):
         self.shared_experts = shared_experts
-        self.routed_scaling_factor = routed_scaling_factor
 
     def route(self, num_experts, M, topk_ids, log2phy):
         ep_size = self.ep_group.size()
@@ -317,7 +313,6 @@ class AlltoAllStaticShape(AlltoAllPrepareAndFinalize):
                 0,
                 self.ep_token_indices,
                 sp_hidden_states,
-                alpha=self.routed_scaling_factor,
             )
 
     def max_num_tokens_per_rank(self) -> Optional[int]:
@@ -494,7 +489,6 @@ class AlltoAllDynamicShape(AlltoAllPrepareAndFinalize):
                 0,
                 self.ep_token_indices,
                 sp_hidden_states,
-                alpha=self.routed_scaling_factor,
             )
 
     def max_num_tokens_per_rank(self) -> Optional[int]:

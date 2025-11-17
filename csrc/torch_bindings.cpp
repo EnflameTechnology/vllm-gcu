@@ -1009,10 +1009,9 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
     ops.def(
         "fused_grouped_topk(Tensor! topk_weights, Tensor! topk_ids, Tensor "
         "gating_output, SymInt topk, bool renormalize, SymInt "
-        "num_expert_group, "
-        "SymInt topk_group, Tensor e_score_correction_bias, str scoring_func) "
-        "-> "
-        "()");
+        "num_expert_group, SymInt topk_group, Tensor e_score_correction_bias, "
+        "str scoring_func, float routed_scaling_factor) "
+        "-> ()");
   }
   ops.impl("fused_grouped_topk", c10::kPrivateUse1, &fused_grouped_topk);
 

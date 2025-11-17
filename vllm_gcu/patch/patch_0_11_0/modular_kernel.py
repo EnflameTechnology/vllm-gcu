@@ -50,16 +50,14 @@ class FusedMoEModularKernel(torch.nn.Module):
         prepare_finalize: FusedMoEPrepareAndFinalize,
         fused_experts: FusedMoEPermuteExpertsUnpermute,
         shared_experts: Optional[torch.nn.Module] = None,
-        routed_scaling_factor: float = 1.0,
     ):
         super().__init__()
         self.prepare_finalize = prepare_finalize
         self.fused_experts = fused_experts
         self.shared_experts = shared_experts
-        self.routed_scaling_factor = routed_scaling_factor
         if hasattr(self.prepare_finalize, 'set_shared_experts'):
             self.prepare_finalize.set_shared_experts(
-                self.shared_experts, self.routed_scaling_factor)
+                self.shared_experts)
         assert prepare_finalize.activation_format == \
             fused_experts.activation_formats[0], (
                 f"{prepare_finalize.__class__.__name__}."
@@ -510,8 +508,6 @@ class FusedMoEModularKernel(torch.nn.Module):
                 shared_output = self.shared_experts(a1)
 
         if not hasattr(self.prepare_finalize, 'set_shared_experts') and self.shared_experts is not None:
-            if self.routed_scaling_factor != 1.0:
-                output.mul_(self.routed_scaling_factor)
             output.add_(shared_output)
 
         if self.shared_experts is None:
