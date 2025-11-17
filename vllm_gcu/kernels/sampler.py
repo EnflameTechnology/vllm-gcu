@@ -105,3 +105,61 @@ class GCUSampler(Sampler):
         if not all_random:
             temp_inv = torch.where(temp_inv > _SAMPLING_EPS_INV, 1.0, temp_inv)
         return logits.mul_(temp_inv.unsqueeze(dim=1))
+
+    def sample(
+        self,
+        logits: torch.Tensor,
+        sampling_metadata: SamplingMetadata,
+    ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
+        """Sample logits based on sampling metadata.
+
+        The various logits processing functions called in this method
+        may update the logits tensor in-place.
+        """
+
+        assert not (sampling_metadata.all_greedy
+                    and sampling_metadata.all_random)
+        if sampling_metadata.all_random:
+            greedy_sampled = None
+        else:
+            greedy_sampled = self.greedy_sample(logits)
+            if sampling_metadata.all_greedy:
+                processed_logprobs = None
+                if sampling_metadata.max_num_logprobs is not None:
+                    if self.logprobs_mode == "processed_logits":
+                        processed_logprobs = logits
+                    elif self.logprobs_mode == "processed_logprobs":
+                        processed_logprobs = self.compute_logprobs(logits)
+                return greedy_sampled, processed_logprobs
+
+        assert sampling_metadata.temperature is not None
+
+        # Apply temperature.
+        logits = self.apply_temperature(logits, sampling_metadata.temperature,
+                                        sampling_metadata.all_random)
+
+        # Apply logits processors that only apply to random sampling
+        # (argmax invariant)
+        for processor in sampling_metadata.logitsprocs.argmax_invariant:
+            logits = processor.apply(logits)
+
+        # Apply top_k and/or top_p.
+        random_sampled, processed_logprobs = self.topk_topp_sampler(
+            logits,
+            sampling_metadata.generators,
+            sampling_metadata.top_k,
+            sampling_metadata.top_p,
+        )
+
+        if greedy_sampled is None:
+            return random_sampled, processed_logprobs
+
+        # 以下做了修改，社区版 where 的判断条件是 sampling_metadata.temperature < _SAMPLING_EPS
+        # 但因为GCU版对temperature做了inversion处理，所以这里改成了 > _SAMPLING_EPS_INV
+        sampled = torch.where(
+            sampling_metadata.temperature > _SAMPLING_EPS_INV,
+            greedy_sampled,
+            random_sampled,
+            out=greedy_sampled,  # Reuse tensor
+        )
+        return sampled, processed_logprobs

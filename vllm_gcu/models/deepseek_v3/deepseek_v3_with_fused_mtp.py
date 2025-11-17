@@ -1289,7 +1289,7 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
                                 target_token_ids,
                                 sampling_metadata
                             )
-        mtp_input_ids = selected_tokens.squeeze(-1)  # before [num_decodes x (spec_k + 1) , 1], after [num_decodes x (spec_k + 1)]
+        mtp_input_ids = accepted_tokens.flatten()  # before [num_decodes x (spec_k + 1) , 1], after [num_decodes x (spec_k + 1)]
         mtp_positions = positions
         mtp_hidden_states = ds_hidden_states
         selected_token_index = (accepted_lens - 1).type(torch.long).unsqueeze(-1)
@@ -1301,11 +1301,8 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
                 previous_hidden_states=mtp_hidden_states,
                 spec_step_idx=i,
             )
-            mtp_logits = self.compute_logits(mtp_hidden_states)
+            mtp_logits = self.compute_logits(mtp_hidden_states, is_mtp_layer=True)
 
-            # sampler_output = self.sampler(logits=mtp_logits,
-            #                                           sampling_metadata=sampling_metadata)
-            # mtp_token_ids = sampler_output.sampled_token_ids
             mtp_token_ids = torch.argmax(mtp_logits, dim=-1, keepdim=True)
             accepted_mtp_tokens = mtp_token_ids.reshape(bsz, spec_k + 1).gather(dim=1,index=selected_token_index)
             draft_tokens[:, i] = accepted_mtp_tokens.squeeze(1)
@@ -1382,7 +1379,7 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
 
         # verify
         # (num_decodes + num_prefills, spec_k + 1)
-        accepted_tokens = torch.full((num_decodes + num_prefills, spec_k + 1), -1, dtype=torch.long, device=device)
+        accepted_tokens = torch.full((num_decodes + num_prefills, spec_k + 1), -1, dtype=torch.int32, device=device)
         accepted_lens = torch.empty((num_decodes + num_prefills,), dtype=torch.long, device=device)
         if num_decodes:
             target_token_ids = target_token_ids.reshape(num_decodes, spec_k + 1)
@@ -1413,13 +1410,13 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
         # Update input_ids
         if num_prefills == 0:
             # for requests in decoding stage, sample
-            mtp_input_ids = selected_tokens  # [num_decodes x (spec_k + 1) , 1]
+            mtp_input_ids = accepted_tokens.flatten()  # [num_decodes x (spec_k + 1) , 1]
         else:
             # [num_all_input_tokens, 1]
             mtp_input_ids = torch.cat(
                 (selected_tokens[:prefill_query_start], input_ids[prefill_query_start:].unsqueeze(-1)), dim=0)
-            
-        mtp_input_ids = mtp_input_ids.squeeze(-1)
+            mtp_input_ids = mtp_input_ids.squeeze(-1)
+        
         mtp_positions = positions
         mtp_hidden_states = ds_hidden_states
         if input_ids.shape[0] > prefill_query_start and num_prefills == 0:
@@ -1471,7 +1468,7 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
 
                 # [num_decodes x (spec_k + 1) + num_prefill, vocab_size]
                 # mtp_logits = self.simple_logits(mtp_hidden_states)
-                mtp_logits = self.compute_logits(mtp_hidden_states)
+                mtp_logits = self.compute_logits(mtp_hidden_states, is_mtp_layer=True)
                 # [num_decodes x (spec_k + 1) + num_prefill]
                 #mtp_token_ids, mtp_probs = self.sample_ds(logits=mtp_logits,
                 #                                             sampling_metadata=sampling_metadata)
@@ -1599,8 +1596,14 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
     def compute_logits(
         self,
         hidden_states: torch.Tensor,
+        is_mtp_layer: bool = False
     ) -> Optional[torch.Tensor]:
-        logits = self.logits_processor(self.lm_head, hidden_states)
+
+        if is_mtp_layer and self.vllm_config.additional_config["deepseek_fused_mtp"]:
+            logits = self.logits_processor(self.model.layers[-1].shared_head.head,
+                                           self.model.layers[-1].shared_head(hidden_states))
+        else:
+            logits = self.logits_processor(self.lm_head, hidden_states)
         return logits
 
     def make_empty_intermediate_tensors(
