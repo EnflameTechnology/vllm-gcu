@@ -45,6 +45,7 @@ from vllm_gcu.utils import (
 from vllm_gcu.compilation.pass_manager import PassManager, SingletonPostGradPassManager
 from vllm_gcu.kernels.sampler import GCUSampler
 from vllm_gcu.kernels.rejection_sampler import GCURejectionSampler
+from vllm_gcu.utils import get_tx_ctx, topstx_wrapper
 
 logger = init_logger(__name__)
 
@@ -156,6 +157,7 @@ class GCUModelRunner(GPUModelRunner):
             return 0
         return self.speculative_config.num_speculative_tokens
 
+    @topstx_wrapper
     def prepare_fused_mtp_input(self,
                                 samplingMetadata: SamplingMetadata,
                                 batch_size: int,
@@ -360,7 +362,8 @@ class GCUModelRunner(GPUModelRunner):
                     " the softmax lse for decode, but the impl "
                     f"{layer.impl.__class__.__name__} "
                     "does not return the softmax lse for decode.")
-    
+
+    @topstx_wrapper
     def _prepare_inputs(
         self, scheduler_output: "SchedulerOutput"
     ) -> tuple[PerLayerAttnMetadata, torch.Tensor,
@@ -714,6 +717,8 @@ class GCUModelRunner(GPUModelRunner):
                 max_num_scheduled_tokens, ubatch_slices,
                 num_tokens_after_padding)
             
+
+    @topstx_wrapper
     def _update_states(self, scheduler_output: "SchedulerOutput") -> None:
         """Update the cached states and the persistent batch with the scheduler
         output.
@@ -910,6 +915,7 @@ class GCUModelRunner(GPUModelRunner):
         # Refresh batch metadata with any pending updates.
         self.input_batch.refresh_metadata()
 
+    @topstx_wrapper
     def _bookkeeping_sync(
         self, scheduler_output: "SchedulerOutput",
         sampler_output: SamplerOutput, logits: Optional[torch.Tensor],
@@ -1468,13 +1474,26 @@ class GCUModelRunner(GPUModelRunner):
         return hidden_states, hidden_states[logit_indices]
 
     @torch.inference_mode()
+    @topstx_wrapper
+    def _preprocess(
+        self,
+        scheduler_output: "SchedulerOutput",
+        intermediate_tensors: Optional[IntermediateTensors] = None,
+        ubatch_slices: Optional[UBatchSlices] = None,
+        num_tokens_after_padding: Optional[torch.Tensor] = None,
+    ) -> tuple[int, int, Optional[torch.Tensor], Optional[torch.Tensor],
+               Optional[torch.Tensor], torch.Tensor,
+               Optional[IntermediateTensors], dict[str, Any]]:
+        return super()._preprocess(scheduler_output, intermediate_tensors, ubatch_slices, num_tokens_after_padding)
+
+    @torch.inference_mode()
     @dump_memory_snapshot_when_exception('step')
     def execute_model(
         self,
         scheduler_output: "SchedulerOutput",
         intermediate_tensors: Optional[IntermediateTensors] = None,
     ) -> Union[ModelRunnerOutput, IntermediateTensors]:
-        with record_function_or_nullcontext("Preprocess"):
+        with record_function_or_nullcontext("Preprocess"), get_tx_ctx("Preprocess", "green", "VLLM"):
             with self.synchronize_input_prep():
                 # Update persistent batch states.
                 self._update_states(scheduler_output)
@@ -1541,7 +1560,7 @@ class GCUModelRunner(GPUModelRunner):
                 cudagraph_runtime_mode=cudagraph_runtime_mode,
                 batch_descriptor=batch_descriptor,
                 ubatch_slices=ubatch_slices,
-            ), record_function_or_nullcontext("Forward"),
+            ), record_function_or_nullcontext("Forward"), get_tx_ctx("Forward", "green", "VLLM"),
               self.maybe_get_kv_connector_output(scheduler_output) as
               kv_connector_output):
             if self.vllm_config.additional_config["deepseek_fused_mtp"] \
@@ -1620,7 +1639,7 @@ class GCUModelRunner(GPUModelRunner):
             assert not envs.VLLM_COMPUTE_NANS_IN_LOGITS
             assert not self.input_batch.num_prompt_logprobs
             assert sampler_output.logprobs_tensors is None
-            with record_function_or_nullcontext("Bookkeep"):
+            with record_function_or_nullcontext("Bookkeep"), get_tx_ctx("Bookkeep", "green", "VLLM"):
                 (
                     num_nans_in_logits,
                     logprobs_lists,
@@ -1634,7 +1653,7 @@ class GCUModelRunner(GPUModelRunner):
                                         None, # hidden_states
                                         num_scheduled_tokens)
         else:
-            with record_function_or_nullcontext("Postprocess"):
+            with record_function_or_nullcontext("Postprocess"), get_tx_ctx("Postprocess", "green", "VLLM"):
                 if self.use_aux_hidden_state_outputs:
                     # True when EAGLE 3 is used.
                     hidden_states, aux_hidden_states = model_output
@@ -1694,13 +1713,13 @@ class GCUModelRunner(GPUModelRunner):
                     apply_grammar_bitmask(scheduler_output, self.input_batch,
                                         logits, self.device)
                     
-            with record_function_or_nullcontext("Sample"):
+            with record_function_or_nullcontext("Sample"), get_tx_ctx("Sample", "green", "VLLM"):
                 sampler_output = self._sample(logits, spec_decode_metadata)
 
 
             def propose_draft_token_ids(sampled_token_ids):
                 assert spec_decode_common_attn_metadata is not None
-                with record_function_or_nullcontext("Draft"):
+                with record_function_or_nullcontext("Draft"), get_tx_ctx("Draft", "green", "VLLM"):
                     self._draft_token_ids = self.propose_draft_token_ids(
                         scheduler_output,
                         sampled_token_ids,
@@ -1735,7 +1754,7 @@ class GCUModelRunner(GPUModelRunner):
                 propose_draft_token_ids(sampler_output.sampled_token_ids)
 
 
-            with record_function_or_nullcontext("Bookkeep"):
+            with record_function_or_nullcontext("Bookkeep"), get_tx_ctx("Bookkeep", "green", "VLLM"):
                 (
                     num_nans_in_logits,
                     logprobs_lists,
@@ -1754,7 +1773,7 @@ class GCUModelRunner(GPUModelRunner):
                 # tokens on the CPU, so they are run after bookkeeping.
                 propose_draft_token_ids(valid_sampled_token_ids)
 
-        with record_function_or_nullcontext("EPLB"):
+        with record_function_or_nullcontext("EPLB"), get_tx_ctx("EPLB", "green", "VLLM"):
             self.eplb_step()
 
         output = ModelRunnerOutput(

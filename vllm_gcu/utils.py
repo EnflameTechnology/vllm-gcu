@@ -2,6 +2,8 @@
 # coding=utf-8
 from typing import Optional
 import sys
+import contextlib
+from importlib.util import find_spec
 from functools import wraps, lru_cache
 from contextlib import contextmanager
 
@@ -12,6 +14,7 @@ import vllm.envs as envs
 from vllm.forward_context import set_forward_context, get_forward_context, BatchDescriptor
 from vllm.v1.worker.ubatch_utils import UBatchSlices
 import vllm_gcu.envs as gcu_envs
+
 
 
 def dump_memory_snapshot_when_exception(name):
@@ -201,3 +204,19 @@ def scatter(seqlen, size):
     indices = list(range(size))
     return [(seqlen + indices[i]) // size - indices[i] // size
             for i in range(size)]
+
+
+def get_tx_ctx(name, color, domain):
+    has_tx = find_spec("topstx") is not None
+    if has_tx:
+        import topstx
+        tx_ctx = topstx.annotate(name, color=color, domain=domain)
+    else:
+        tx_ctx = contextlib.nullcontext()
+    return tx_ctx
+
+def topstx_wrapper(f):
+    def inner(*args, **kwargs):
+        with get_tx_ctx(f.__name__, "green", "VLLM"):
+            return f(*args, **kwargs)
+    return inner
