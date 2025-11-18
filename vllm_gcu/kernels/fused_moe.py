@@ -247,8 +247,11 @@ def grouped_topk(
     topk_weights = torch.empty(
         (gating_output.shape[0], topk), device=gating_output.device, dtype=torch.float32
     )
+    indices_type = torch.int64 if envs.VLLM_ALL2ALL_BACKEND in [
+        "deepep_high_throughput", "deepep_low_latency"
+    ] else torch.int32
     topk_ids = torch.empty(
-        (gating_output.shape[0], topk), device=gating_output.device, dtype=torch.int32
+        (gating_output.shape[0], topk), device=gating_output.device, dtype=indices_type
     )
 
     if hidden_states.numel() == 0:
