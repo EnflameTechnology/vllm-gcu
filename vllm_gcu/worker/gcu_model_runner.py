@@ -2327,9 +2327,12 @@ class GCUModelRunner(GPUModelRunner):
                 flattened_index = cu_num_tokens[cur_index].item(
                 ) - self.uniform_decode_query_len
                 flattened_indices.append(flattened_index)
-                indices_match &= (prev_index == flattened_index)
+                indices_match &= (
+                    prev_index *
+                    self.uniform_decode_query_len == flattened_index)
                 max_flattened_index = max(max_flattened_index, flattened_index)
-        num_common_tokens = len(flattened_indices)
+        num_common_tokens = len(
+            flattened_indices) * self.uniform_decode_query_len
         if num_common_tokens < total_num_scheduled_tokens:
             # If not all requests are decodes from the last iteration,
             # We need to copy the input_ids_cpu to the GPU first.
@@ -2341,20 +2344,18 @@ class GCUModelRunner(GPUModelRunner):
             # No requests in common with the previous iteration
             # So input_ids_cpu will have all the input ids.
             return
-        if indices_match and max_flattened_index == (num_common_tokens - 1):
+        if indices_match and max_flattened_index == (
+                num_common_tokens - self.uniform_decode_query_len):
             # Common-case optimization: the batch is unchanged
             # and no reordering happened.
             # The indices are both the same permutation of 0..N-1 so
             # we can copy directly using a single slice.
-            self.input_ids.gpu[:num_common_tokens *
-                               self.uniform_decode_query_len].copy_(
-                                   self.input_batch.
-                                   prev_sampled_token_ids[:
-                                                          num_common_tokens, :
-                                                          self.
-                                                          uniform_decode_query_len]
-                                   .flatten(),
-                                   non_blocking=True)
+            self.input_ids.gpu[:num_common_tokens].copy_(
+                self.input_batch.
+                prev_sampled_token_ids[:num_common_tokens //
+                                       self.uniform_decode_query_len, :self.
+                                       uniform_decode_query_len].flatten(),
+                non_blocking=True)
             if self.enable_prompt_embeds:
                 self.is_token_ids.gpu[:num_common_tokens] = True
             return
