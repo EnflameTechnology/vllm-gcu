@@ -155,7 +155,10 @@ def step_with_batch_queue_patch(
 
 def execute_dummy_batch_patch(self) -> None:
     enable_async_scheduling = self.vllm_config.additional_config.get("async_scheduling", False)
-    self.model_executor.collective_rpc("execute_dummy_batch", non_block=enable_async_scheduling)
+    if enable_async_scheduling:
+        self.model_executor.collective_rpc("execute_dummy_batch", non_block=True)
+    else:
+        self.model_executor.collective_rpc("execute_dummy_batch")
 
 patch.object(core.EngineCore, "__init__", __init__patch).start()
 patch.object(core.EngineCore, "execute_model_with_error_logging", execute_model_with_error_logging, create=True).start()
