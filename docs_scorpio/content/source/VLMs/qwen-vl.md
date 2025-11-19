@@ -136,7 +136,7 @@ curl http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d @- <<EOF
 {
-  "model": "/home/pretrained_models/qwen3-vl-30b-a3b-thinking/",
+  "model": "[path of Qwen3-VL-30B-A3B-Thinking]",
   "messages": [
     {
       "role": "user",

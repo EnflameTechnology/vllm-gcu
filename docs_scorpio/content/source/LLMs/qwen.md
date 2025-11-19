@@ -695,7 +695,7 @@ vllm bench serve \
  --backend vllm \
  --dataset-name random \
  --model [path of Qwen2.5-32b-Instruct-GPTQ-Int8] \
- --num-prompts 32 \
+ --num-prompts 1 \
  --random-input-len 1024 \
  --random-output-len 1024 \
  --trust-remote-code \
