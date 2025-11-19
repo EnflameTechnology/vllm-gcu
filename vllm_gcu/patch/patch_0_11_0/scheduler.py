@@ -202,24 +202,21 @@ def schedule(self) -> SchedulerOutput:
 
             request = self.waiting.peek_request()
 
-            full_kv_transport = False
             if self.connector is not None:
                 if isinstance(self.connector, NixlConnector):
                     kv_transfer_params = request.kv_transfer_params
                     if kv_transfer_params is not None and \
-                        kv_transfer_params.get("do_remote_prefill"):
-                        full_kv_transport = True
-                    if gcu_envs.VLLM_GCU_NIXL_ENABLE_FIRST_TOKEN_REUSE:
-                        full_kv_transport = True
+                        kv_transfer_params.get("do_remote_prefill") and \
+                        gcu_envs.VLLM_GCU_NIXL_ENABLE_FIRST_TOKEN_REUSE:
+                        request.full_kv_transport = True
 
             # KVTransfer: skip request if still waiting for remote kvs.
             if request.status == RequestStatus.WAITING_FOR_REMOTE_KVS:
                 is_ready = self._update_waiting_for_remote_kv(request)
                 if is_ready:
                     request.status = RequestStatus.WAITING
-                    kv_transfer_params = request.kv_transfer_params
                     if gcu_envs.VLLM_GCU_ENABLE_DEEPSEEK_MTP_FUSION and \
-                        full_kv_transport:
+                        hasattr(request, "full_kv_transport") and request.full_kv_transport:
                         first_transfer_request[request.request_id] = True
                         spec_k = self.vllm_config.speculative_config.num_speculative_tokens
                         scheduled_spec_decode_tokens[request.request_id] = [0] * spec_k
@@ -299,13 +296,7 @@ def schedule(self) -> SchedulerOutput:
                 # We use `request.num_tokens` instead of
                 # `request.num_prompt_tokens` to consider the resumed
                 # requests, which have output tokens.
-                if full_kv_transport:
-                    min_num_new_tokens = 1
-                    if gcu_envs.VLLM_GCU_ENABLE_DEEPSEEK_MTP_FUSION:
-                        min_num_new_tokens += self.vllm_config.speculative_config.num_speculative_tokens
-                    num_new_tokens = max(request.num_tokens - num_computed_tokens, min_num_new_tokens)
-                else:
-                    num_new_tokens = request.num_tokens - num_computed_tokens
+                num_new_tokens = request.num_tokens - num_computed_tokens
                 if (0 < self.scheduler_config.long_prefill_token_threshold
                         < num_new_tokens):
                     num_new_tokens = (

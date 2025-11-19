@@ -25,7 +25,8 @@ from vllm.model_executor.layers.attention_layer_base import AttentionLayerBase
 from vllm.v1.attention.backends.gdn_attn import GDNAttentionMetadataBuilder
 from vllm.v1.kv_cache_interface import (KVCacheConfig, EncoderOnlyAttentionSpec)
 from vllm.v1.utils import record_function_or_nullcontext
-from vllm.v1.outputs import (ModelRunnerOutput, EMPTY_MODEL_RUNNER_OUTPUT, LogprobsLists, LogprobsTensors, SamplerOutput)
+from vllm.v1.outputs import (ModelRunnerOutput, EMPTY_MODEL_RUNNER_OUTPUT, DraftTokenIds, 
+                             LogprobsLists, LogprobsTensors, SamplerOutput)
 from vllm.v1.sample.metadata import SamplingMetadata
 from vllm.v1.spec_decode.eagle import EagleProposer
 from vllm.v1.spec_decode.metadata import SpecDecodeMetadata
@@ -51,16 +52,24 @@ logger = init_logger(__name__)
 
 class GCUAsyncGPUModelRunnerOutput(AsyncGPUModelRunnerOutput):
 
-    def __init__(self, vocab_size: int, *args, **kwargs):
+    def __init__(self, vocab_size: int, event_poll_span_ms = -1, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.vocab_size = vocab_size
+        self.event_poll_span_ms = event_poll_span_ms
+
+    def wait_event_ready(self):
+        if self.event_poll_span_ms > 0:
+            while not self._async_copy_ready_event.query():
+                time.sleep(self.event_poll_span_ms / 1000)
+        else:
+            self._async_copy_ready_event.synchronize()
 
     def get_output(self):
         max_gen_len = self._sampled_token_ids_cpu.shape[-1]
         if max_gen_len == 1:
             return super().get_output()
 
-        self._async_copy_ready_event.synchronize()
+        self.wait_event_ready()
         del self._sampled_token_ids
         valid_sampled_token_ids = GCURejectionSampler.parse_output(
             self._sampled_token_ids_cpu,
@@ -85,7 +94,8 @@ class GCUModelRunner(GPUModelRunner):
         self.prev_valid_sampled_tokens_count_pinned_cpu[-1] = 0
         self.prev_next_token_ids: torch.Tensor | None = None
         self.prepare_next_token_ids_padded_event: torch.cuda.Event | None = None
-        if self.speculative_config and self.use_async_scheduling:
+        if self.speculative_config and self.use_async_scheduling and \
+            not self.vllm_config.additional_config["deepseek_fused_mtp"]:
             self.prepare_next_token_ids_padded_event = torch.cuda.Event()
             self.prepare_next_token_ids_padded_event.record(
                 torch.cuda.default_stream())
@@ -142,6 +152,26 @@ class GCUModelRunner(GPUModelRunner):
             if hasattr(self, "drafter") and self.drafter is not None:
                 self.drafter = None
                 delattr(self, "drafter")
+            if self.use_async_scheduling:
+                from vllm_gcu.patch.patch_0_11_0.block_table import (compute_slot_mapping_device, 
+                                                                     multi_compute_slot_mapping_device)
+                from vllm.v1.worker.block_table import BlockTable, MultiGroupBlockTable
+                patch.object(BlockTable, "compute_slot_mapping_device", compute_slot_mapping_device,
+                       create=True).start()
+                patch.object(MultiGroupBlockTable, "compute_slot_mapping_device", multi_compute_slot_mapping_device,
+                              create=True).start()
+                self.tmp_draft_token_ids = torch.zeros((self.max_num_reqs, self.get_spec_k()),
+                                                        dtype = torch.int32,
+                                                        device = self.device)
+                self.num_rejected_tokens_cpu_tensor = torch.zeros((self.max_num_reqs,),
+                                                       dtype=torch.int32,
+                                                       device="cpu",
+                                                       pin_memory=True)
+                self.num_rejected_tokens_cpu = self.num_rejected_tokens_cpu_tensor.numpy()
+                self.num_rejected_tokens = torch.zeros((self.max_num_reqs,),
+                                                        dtype=torch.int32,
+                                                        device=self.device)
+                self.prev_num_rejected_tokens = None
         else:
             if hasattr(self, "drafter") and isinstance(self.drafter,
                                                     EagleProposer):
@@ -186,13 +216,41 @@ class GCUModelRunner(GPUModelRunner):
         self.top_p[:expand_reqs].copy_(self.top_p_cpu_tensor[:expand_reqs], non_blocking=True)
         self.top_k[:expand_reqs].copy_(self.top_k_cpu_tensor[:expand_reqs], non_blocking=True)
 
+        
         for i, req_id in enumerate(self.input_batch.req_ids[:num_decodes]):
             if req_id in first_kv_transfer and req_id not in scheduled_spec_decode_tokens:
                 self.draft_tokens_cpu[i, :] = [0] * spec_k
             else:
-                self.draft_tokens_cpu[i, :] = scheduled_spec_decode_tokens[req_id]
+                self.draft_tokens_cpu[i, :] = [x if x>=0 else 0 for x in scheduled_spec_decode_tokens[req_id]]
 
         self.draft_tokens[:batch_size].copy_(self.draft_tokens_cpu_tensor[:batch_size, :spec_k], non_blocking=True)
+        
+        if self.use_async_scheduling and self._draft_token_ids is not None:
+            prev_req_id_to_index = self.input_batch.prev_req_id_to_index
+            assert prev_req_id_to_index is not None
+            prev_common_req_indices = []
+            update_indices = []
+            for req_id, cur_index in self.input_batch.req_id_to_index.items():
+                if (prev_index := prev_req_id_to_index.get(req_id)) is not None \
+                    and prev_index < self._draft_token_ids.shape[0]:
+                    prev_common_req_indices.append(prev_index)
+                    update_indices.append(cur_index)
+            if len(prev_common_req_indices) > 0:
+                update_indices_tensor = torch.tensor(update_indices,
+                                              dtype=torch.int64,
+                                              pin_memory=self.pin_memory).to(
+                                                  self.device,
+                                                  non_blocking=True)
+                prev_common_req_indices_tensor = \
+                    torch.tensor(prev_common_req_indices,
+                                dtype=torch.int64,
+                                pin_memory=self.pin_memory).to(
+                                    self.device,
+                                    non_blocking=True
+                                )
+                self.draft_tokens[update_indices_tensor, :] = \
+                    self._draft_token_ids[prev_common_req_indices_tensor, :]
+
 
     def reorder_batch_fused_mtp(
         self,
@@ -376,6 +434,14 @@ class GCUModelRunner(GPUModelRunner):
             logits_indices, spec_decode_metadata
         ]
         """
+        if self.use_async_scheduling and self.vllm_config.additional_config["deepseek_fused_mtp"]:
+            req_ids = self.input_batch.req_ids
+            tokens = [scheduler_output.num_scheduled_tokens[i] for i in req_ids]
+            max_query_len = max(tokens)
+            attn_builder = self.attn_groups[0][0].get_metadata_builder()
+            assert attn_builder._num_prefills == 0 or max_query_len == self.uniform_decode_query_len
+            return self._prepare_inputs_fused_mtp_async(scheduler_output)
+        
         total_num_scheduled_tokens = scheduler_output.total_num_scheduled_tokens
         assert total_num_scheduled_tokens > 0
         num_reqs = self.input_batch.num_reqs
@@ -716,6 +782,328 @@ class GCUModelRunner(GPUModelRunner):
                 num_scheduled_tokens, spec_decode_common_attn_metadata,
                 max_num_scheduled_tokens, ubatch_slices,
                 num_tokens_after_padding)
+    
+    def _prepare_inputs_fused_mtp_async(
+        self, scheduler_output: "SchedulerOutput"
+    ) -> tuple[PerLayerAttnMetadata, torch.Tensor,
+               Optional[SpecDecodeMetadata], np.ndarray,
+               Optional[CommonAttentionMetadata], int, Optional[UBatchSlices],
+               Optional[torch.Tensor]]:
+        """
+        :return: tuple[
+            attn_metadata: layer-to-attention_metadata mapping,
+            logits_indices, spec_decode_metadata
+        ]
+        """
+        total_num_scheduled_tokens = scheduler_output.total_num_scheduled_tokens
+        assert total_num_scheduled_tokens > 0
+        num_reqs = self.input_batch.num_reqs
+        assert num_reqs > 0
+
+        # OPTIMIZATION: Start copying the block table first.
+        # This way, we can overlap the copy with the following CPU operations.
+        self.input_batch.block_table.commit_block_table(num_reqs)
+
+        # Get the number of scheduled tokens for each request.
+        req_ids = self.input_batch.req_ids
+        tokens = [scheduler_output.num_scheduled_tokens[i] for i in req_ids]
+        num_scheduled_tokens = np.array(tokens, dtype=np.int32)
+        max_num_scheduled_tokens = max(tokens)
+
+        # Get request indices.
+        # E.g., [2, 5, 3] -> [0, 0, 1, 1, 1, 1, 1, 2, 2, 2]
+        req_indices = np.repeat(self.arange_np[:num_reqs],
+                                num_scheduled_tokens)
+
+        # cu_num_tokens: [2, 5, 3] -> [2, 7, 10]
+        # arange: [0, 1, 0, 1, 2, 3, 4, 0, 1, 2]
+        cu_num_tokens, arange = self._get_cumsum_and_arange(
+            num_scheduled_tokens)
+
+        # Get positions.
+        # But num_computed_tokens_cpu is biased, we will fix this value in following steps.
+        positions_np = self.positions.np[:total_num_scheduled_tokens]
+        np.add(self.input_batch.num_computed_tokens_cpu[req_indices],
+               arange,
+               out=positions_np)
+
+        #for pure decode, we do not need to fill input_ids gpu buffer from input_batch.input_token_ids
+        # Get token indices.
+        # E.g., [0, 1, 0, 1, 2, 3, 4, 0, 1, 2]
+        # -> [0, 1, M, M + 1, M + 2, M + 3, M + 4, 2 * M, 2 * M + 1, 2 * M + 2]
+        # where M is the max_model_len.
+        token_indices = (positions_np +
+                         req_indices * self.input_batch.token_ids_cpu.shape[1])
+        token_indices_tensor = torch.from_numpy(token_indices)
+
+        # NOTE(woosuk): We use torch.index_select instead of np.take here
+        # because torch.index_select is much faster than np.take for large
+        # tensors.
+        torch.index_select(self.input_batch.token_ids_cpu_tensor.flatten(),
+                           0,
+                           token_indices_tensor,
+                           out=self.input_ids.cpu[:total_num_scheduled_tokens])
+        
+        self.input_batch.block_table.compute_slot_mapping(
+            req_indices, positions_np)
+        self.input_batch.block_table.commit_slot_mapping(
+            total_num_scheduled_tokens)
+
+        # Prepare the attention metadata.
+        self.query_start_loc.np[0] = 0
+        self.query_start_loc.np[1:num_reqs + 1] = cu_num_tokens
+        # Note: pad query_start_loc to be non-decreasing, as kernels
+        # like FlashAttention requires that
+        self.query_start_loc.np[num_reqs + 1:].fill(cu_num_tokens[-1])
+        self.query_start_loc.copy_to_gpu()
+        query_start_loc = self.query_start_loc.gpu[:num_reqs + 1]
+
+        num_tokens_unpadded = scheduler_output.total_num_scheduled_tokens
+        num_tokens_padded = num_tokens_unpadded + self.get_local_padding(
+            num_tokens_unpadded)
+        uniform_decode = \
+            (max_num_scheduled_tokens == self.uniform_decode_query_len) and \
+            (total_num_scheduled_tokens == num_reqs * max_num_scheduled_tokens)
+        ubatch_slices, num_tokens_after_padding = \
+            ubatch_split(num_scheduled_tokens,
+                         num_tokens_unpadded,
+                         num_tokens_padded,
+                         uniform_decode=uniform_decode,
+                         vllm_config=self.vllm_config)
+
+        self.seq_lens.np[:num_reqs] = (
+            self.input_batch.num_computed_tokens_cpu[:num_reqs] +
+            num_scheduled_tokens)
+        # Fill unused with 0 for full cuda graph mode.
+        self.seq_lens.np[num_reqs:].fill(0)
+        self.seq_lens.copy_to_gpu()
+        seq_lens = self.seq_lens.gpu[:num_reqs]
+        max_seq_len = self.seq_lens.np[:num_reqs].max().item()
+
+        # Record the index of requests that should not be sampled,
+        # so that we could clear the sampled tokens before returning
+        discard_request_indices = np.array([], dtype = np.int32)
+        self.num_discarded_requests = len(discard_request_indices)
+        self.discard_request_indices.np[:self.num_discarded_requests] = (
+            discard_request_indices)
+        # save this useless copy
+        #self.discard_request_indices.copy_to_gpu(self.num_discarded_requests)
+
+        # Copy the tensors to the GPU.
+        self._prepare_input_ids(total_num_scheduled_tokens, cu_num_tokens)
+
+        # Common case (1D positions)
+        self.positions.copy_to_gpu(total_num_scheduled_tokens)
+        self._adjust_positions(req_indices, total_num_scheduled_tokens, tokens)
+        
+        # Get the number of draft tokens for each request.
+        # Iterate over the dictionary rather than all requests since not all
+        # requests have draft tokens.
+        num_draft_tokens = np.zeros(num_reqs, dtype=np.int32)
+        for req_id, draft_token_ids in (
+                scheduler_output.scheduled_spec_decode_tokens.items()):
+            req_idx = self.input_batch.req_id_to_index[req_id]
+            num_draft_tokens[req_idx] = len(draft_token_ids)
+        
+        #spec_decode_metadata = self._calc_spec_decode_metadata(
+        #    num_draft_tokens, cu_num_tokens)
+        #logits_indices = spec_decode_metadata.logits_indices
+        spec_decode_metadata = None
+        logits_indices = None
+
+
+        logits_indices_padded = None
+        if self.cache_config.kv_sharing_fast_prefill:
+            logits_indices_padded = self._prepare_kv_sharing_fast_prefill(
+                logits_indices)
+
+        attn_metadata: PerLayerAttnMetadata = {}
+        if ubatch_slices is not None:
+            attn_metadata = [dict() for _ in range(len(ubatch_slices))]
+
+        # Used in the below loop.
+        query_start_loc_cpu = self.query_start_loc.cpu[:num_reqs + 1]
+        seq_lens_cpu = self.seq_lens.cpu[:num_reqs]
+        num_computed_tokens_cpu = (
+            self.input_batch.num_computed_tokens_cpu_tensor[:num_reqs])
+        spec_decode_common_attn_metadata = None
+
+        # Prepare the attention metadata for each KV cache group and make layers
+        # in the same group share the same metadata.
+        for kv_cache_group_id, kv_cache_group_spec in enumerate(
+                self.kv_cache_config.kv_cache_groups):
+            encoder_seq_lens = self._get_encoder_seq_lens(
+                scheduler_output, kv_cache_group_spec.kv_cache_spec, num_reqs)
+
+            if isinstance(kv_cache_group_spec.kv_cache_spec,
+                          EncoderOnlyAttentionSpec):
+                # Encoder-only layers do not have KV cache, so we need to
+                # create a dummy block table and slot mapping for them.
+                blk_table_tensor = torch.zeros(
+                    (num_reqs, 1),
+                    dtype=torch.int32,
+                    device=self.device,
+                )
+                slot_mapping = torch.zeros(
+                    (total_num_scheduled_tokens, ),
+                    dtype=torch.int64,
+                    device=self.device,
+                )
+                num_common_prefix_blocks = 0
+            else:
+                blk_table = self.input_batch.block_table[kv_cache_group_id]
+                blk_table_tensor = blk_table.get_device_tensor(num_reqs)
+                slot_mapping = blk_table.slot_mapping.gpu[:
+                                                          total_num_scheduled_tokens]
+
+                # Fill unused with -1. Needed for reshape_and_cache in full cuda
+                # graph mode.
+                blk_table.slot_mapping.gpu[total_num_scheduled_tokens:].fill_(
+                    -1)
+                num_common_prefix_blocks = (
+                    scheduler_output.
+                    num_common_prefix_blocks[kv_cache_group_id])
+
+            common_attn_metadata = CommonAttentionMetadata(
+                query_start_loc=query_start_loc,
+                query_start_loc_cpu=query_start_loc_cpu,
+                seq_lens=seq_lens,
+                seq_lens_cpu=seq_lens_cpu,
+                num_computed_tokens_cpu=num_computed_tokens_cpu,
+                num_reqs=num_reqs,
+                num_actual_tokens=total_num_scheduled_tokens,
+                max_query_len=max_num_scheduled_tokens,
+                max_seq_len=max_seq_len,
+                block_table_tensor=blk_table_tensor,
+                slot_mapping=slot_mapping,
+                logits_indices_padded=logits_indices_padded,
+                num_logits_indices=(self.get_spec_k() + 1) * self.input_batch.num_reqs, #logits_indices.size(0),
+                causal=True,
+                encoder_seq_lens=encoder_seq_lens,
+            )
+
+            if (self.speculative_config
+                    and spec_decode_common_attn_metadata is None):
+                if hasattr(self, "drafter") and isinstance(self.drafter, EagleProposer):
+                    if (self.drafter.attn_layer_names[0]
+                            in kv_cache_group_spec.layer_names):
+                        spec_decode_common_attn_metadata = common_attn_metadata
+                else:
+                    spec_decode_common_attn_metadata = common_attn_metadata
+
+            for attn_group in self.attn_groups[kv_cache_group_id]:
+                # Prepare for cascade attention if enabled & beneficial.
+                common_prefix_len = 0
+                builder = attn_group.get_metadata_builder()
+                if self.cascade_attn_enabled:
+                    common_prefix_len = self._compute_cascade_attn_prefix_len(
+                        num_scheduled_tokens,
+                        num_common_prefix_blocks,
+                        attn_group.kv_cache_spec,
+                        builder,
+                    )
+
+                extra_attn_metadata_args = {}
+
+                if ubatch_slices is not None:
+                    assert not self.vllm_config.additional_config["deepseek_fused_mtp"], \
+                        "deepseek fused mtp is not ready for dbo"
+                    common_attn_metadata_list = split_attn_metadata(
+                        ubatch_slices, common_attn_metadata)
+                    for ubid, common_attn_metadata in enumerate(
+                            common_attn_metadata_list):
+                        attn_metadata_i = (attn_group.get_metadata_builder(
+                            ubatch_id=ubid).build(
+                                common_prefix_len=common_prefix_len,
+                                common_attn_metadata=common_attn_metadata))
+                        for layer_name in kv_cache_group_spec.layer_names:
+                            assert type(attn_metadata) is list
+                            attn_metadata[ubid][layer_name] = attn_metadata_i
+                else:
+                    assert isinstance(attn_metadata, dict)
+                    attn_metadata_i = builder.build(
+                        common_prefix_len=common_prefix_len,
+                        common_attn_metadata=common_attn_metadata,
+                        **extra_attn_metadata_args)
+                    for layer_name in attn_group.layer_names:
+                        attn_metadata[layer_name] = attn_metadata_i
+
+                    if self.vllm_config.additional_config["deepseek_fused_mtp"]:
+                        if "ds_main_with_mtp" not in attn_metadata:
+                            attn_metadata["ds_main_with_mtp"] = attn_metadata_i
+
+        # Hot-Swap lora model
+        if self.lora_config:
+            self.set_active_loras(self.input_batch, num_scheduled_tokens)
+
+        return (attn_metadata, logits_indices, spec_decode_metadata,
+                num_scheduled_tokens, spec_decode_common_attn_metadata,
+                max_num_scheduled_tokens, ubatch_slices,
+                num_tokens_after_padding)
+    
+    def _adjust_positions(
+        self,
+        req_indices: np.ndarray,
+        total_num_scheduled_tokens: int,
+        num_scheduled_token_list: List[int]
+    ):
+        num_reqs = self.input_batch.num_reqs
+        # NOTE(guozelin):
+        # for async-scheduling with spec-decoding, decoding request's computed_tokens is
+        # advanced by rejected but unknown numbers of tokens, so we have to fix positions、
+        # seq_lens and slot_mapping since these tensor is calculated base on 
+        # computed_tokens_cpu.
+        # for attention, computed_tokens_cpu mainly affect the prefill part calculation
+        # which is not a matter for decoding requests.
+        if self.prev_num_rejected_tokens is not None:
+            prev_req_id_to_index = self.input_batch.prev_req_id_to_index
+            assert prev_req_id_to_index is not None
+            prev_common_req_indices = []
+            rejected_indices = []
+            for req_id, cur_index in self.input_batch.req_id_to_index.items():
+                if (prev_index := prev_req_id_to_index.get(req_id)) is not None:
+                    prev_common_req_indices.append(prev_index)
+                    rejected_indices.append(cur_index)
+            if len(prev_common_req_indices) > 0:
+                num_rejected_tokens = torch.zeros(num_reqs, 
+                                              dtype=torch.int32,
+                                              device = self.device)
+                num_scheduled_tokens = torch.tensor(num_scheduled_token_list,
+                                              dtype=torch.int32,
+                                              pin_memory=self.pin_memory).to(
+                                                self.device,
+                                                non_blocking=True
+                                              )
+                rejected_indices_tensor = torch.tensor(rejected_indices,
+                                              dtype=torch.int32,
+                                              pin_memory=self.pin_memory).to(
+                                                  self.device,
+                                                  non_blocking=True)
+                prev_common_req_indices_tensor = \
+                    torch.tensor(prev_common_req_indices,
+                                dtype=torch.int32,
+                                pin_memory=self.pin_memory).to(
+                                    self.device,
+                                    non_blocking=True
+                                )
+                num_rejected_tokens.scatter_(
+                            dim = 0, 
+                            index = rejected_indices_tensor, 
+                            src = 
+                            self.prev_num_rejected_tokens[
+                                prev_common_req_indices_tensor])
+                
+                position_delta = torch.repeat_interleave(
+                            num_rejected_tokens,
+                            num_scheduled_tokens,
+                            dim = 0,
+                            output_size = total_num_scheduled_tokens)
+                self.positions.gpu[:total_num_scheduled_tokens].subtract_(
+                                                        position_delta)
+                self.seq_lens.gpu[:num_reqs].subtract_(num_rejected_tokens)
+                self.input_batch.block_table.compute_slot_mapping_device(
+                            req_indices,
+                            self.positions.gpu[:total_num_scheduled_tokens])
             
 
     @topstx_wrapper
@@ -805,6 +1193,7 @@ class GCUModelRunner(GPUModelRunner):
             reqs_to_add.append(req_state)
 
         if self.prepare_next_token_ids_padded_event is not None:
+            assert not self.vllm_config.additional_config["deepseek_fused_mtp"]
             self.prepare_next_token_ids_padded_event.synchronize()
 
         # Update the states of the running/resumed requests.
@@ -1636,6 +2025,22 @@ class GCUModelRunner(GPUModelRunner):
             sampler_output = SamplerOutput(sampled_token_ids=sampled_token_ids,
                              logprobs_tensors=logprobs_tensor)
             self._draft_token_ids = model_output["next_draft_tokens"][:num_decodes,:]
+            if self.use_async_scheduling:
+                if self._draft_token_ids.data_ptr() == self.draft_tokens.data_ptr():
+                    self.tmp_draft_token_ids[:num_decodes,:].copy_(self._draft_token_ids, non_blocking = True)
+                    self._draft_token_ids = self.tmp_draft_token_ids[:num_decodes,:]
+                valid_sampled_tokens_count = model_output["accepted_lens"]
+                next_token_ids = model_output["next_token_ids"][:num_decodes+num_prefills]
+
+                self.prev_next_token_ids = next_token_ids.squeeze(1)
+                num_draft_tokens = [self.get_spec_k() + 1] * self.input_batch.num_reqs
+                if num_prefills > 0:
+                    num_draft_tokens[num_decodes:] = [1] * num_prefills
+                self.num_rejected_tokens_cpu[:num_decodes+num_prefills] = np.array(num_draft_tokens, dtype = np.int32)
+                self.num_rejected_tokens[:num_decodes+num_prefills].copy_(self.num_rejected_tokens_cpu_tensor[:num_decodes+num_prefills],
+                                                                          non_blocking = True)
+                self.num_rejected_tokens[:num_decodes+num_prefills].subtract_(valid_sampled_tokens_count)
+                self.prev_num_rejected_tokens = self.num_rejected_tokens[:num_decodes+num_prefills]
             assert not envs.VLLM_COMPUTE_NANS_IN_LOGITS
             assert not self.input_batch.num_prompt_logprobs
             assert sampler_output.logprobs_tensors is None
@@ -1792,11 +2197,25 @@ class GCUModelRunner(GPUModelRunner):
 
         return GCUAsyncGPUModelRunnerOutput(
             vocab_size=self.input_batch.vocab_size,
+            event_poll_span_ms= 1 if self.vllm_config.additional_config["deepseek_fused_mtp"] else -1,
             model_runner_output=output,
             sampled_token_ids=sampler_output.sampled_token_ids,
             invalid_req_indices=invalid_req_indices,
             async_output_copy_stream=self.async_output_copy_stream,
         )
+    
+    def take_draft_token_ids(self) -> Optional[DraftTokenIds]:
+        if self._draft_token_ids is None:
+            return None
+        req_ids = self.input_batch.req_ids
+        if isinstance(self._draft_token_ids, torch.Tensor):
+            draft_token_ids = self._draft_token_ids.tolist()
+            req_ids = req_ids[:len(draft_token_ids)]
+        else:
+            draft_token_ids = self._draft_token_ids
+        #logger.error(f'draft_token_ids:{draft_token_ids}')
+        self._draft_token_ids = None
+        return DraftTokenIds(req_ids, draft_token_ids)
 
     def _calc_spec_decode_metadata(
         self,
@@ -1883,9 +2302,14 @@ class GCUModelRunner(GPUModelRunner):
         # on the GPU from prev_sampled_token_ids.
         """add support for spec decoding"""
         if self._draft_token_ids is not None:
+            _draft_token_ids = self._draft_token_ids
+            if _draft_token_ids.shape[0] == 0:
+                # for fused_mtp, prefill requests has no draft_tokens computed
+                _draft_token_ids = torch.zeros((self.prev_next_token_ids.shape[0], self.get_spec_k()),
+                                                dtype = torch.int32, device = self.device)
             self.input_batch.prev_sampled_token_ids = torch.cat((
                 self.prev_next_token_ids.unsqueeze(dim=1),
-                self._draft_token_ids.to(torch.int32),
+                _draft_token_ids.to(torch.int32),
             ),
                                                                 dim=1)
 

@@ -6,6 +6,7 @@ from collections import defaultdict
 from typing import Optional
 
 from vllm.distributed.kv_events import KVEventBatch
+from vllm.distributed.kv_transfer.kv_connector.v1.nixl_connector import NixlConnector
 from vllm.logger import init_logger
 from vllm.v1.core.kv_cache_manager import KVCacheBlocks
 from vllm.v1.core.sched.output import NewRequestData, SchedulerOutput
@@ -18,6 +19,7 @@ from vllm.v1.engine import (EngineCoreEventType, EngineCoreOutput,
 from vllm.v1.outputs import ModelRunnerOutput
 from vllm.v1.request import Request, RequestStatus
 from vllm.v1.spec_decode.metrics import SpecDecodingStats
+import vllm_gcu.envs as gcu_envs
 
 logger = init_logger(__name__)
 
@@ -45,8 +47,11 @@ class GCUScheduler(Scheduler):
         # Handle the case where num request tokens less than one block.
         num_computed_tokens = min(num_computed_tokens, request.num_tokens)
         if num_computed_tokens == request.num_tokens:
-            num_computed_tokens -= (1 + self.num_lookahead_tokens)
-            num_computed_tokens = max(num_computed_tokens, 0)
+            if gcu_envs.VLLM_GCU_ENABLE_DEEPSEEK_MTP_FUSION:
+                num_computed_tokens -= 1
+            else:
+                num_computed_tokens -= (1 + self.num_lookahead_tokens)
+                num_computed_tokens = max(num_computed_tokens, 0)
         # This will cache the blocks iff caching is enabled.
         self.kv_cache_manager.cache_blocks(request, num_computed_tokens)
 
@@ -84,6 +89,9 @@ class AsyncScheduler(GCUScheduler):
         encoder_compute_budget = self.max_num_encoder_input_tokens
         # Spec decode-related.
         scheduled_spec_decode_tokens: dict[str, list[int]] = {}
+        
+        # first request from prefill
+        first_transfer_request: dict[str, bool] = {}
 
         # For logging.
         scheduled_timestamp = time.monotonic()
@@ -91,6 +99,8 @@ class AsyncScheduler(GCUScheduler):
         # First, schedule the RUNNING requests.
         req_index = 0
         while req_index < len(self.running) and token_budget > 0:
+            if gcu_envs.VLLM_GCU_ENABLE_DEEPSEEK_MTP_FUSION and token_budget <= self.num_lookahead_tokens:
+                break
             request = self.running[req_index]
 
             # [MTP Async]
@@ -136,6 +146,13 @@ class AsyncScheduler(GCUScheduler):
                 # allow the lower-priority requests to be scheduled.
                 req_index += 1
                 continue
+
+            if gcu_envs.VLLM_GCU_ENABLE_DEEPSEEK_MTP_FUSION \
+                and num_new_tokens == 1 \
+                and len(request.spec_token_ids) == 0:
+                spec_k = self.vllm_config.speculative_config.num_speculative_tokens
+                scheduled_spec_decode_tokens[request.request_id] = [0] * spec_k
+                num_new_tokens += spec_k
 
             while True:
                 new_blocks = self.kv_cache_manager.allocate_slots(
@@ -220,16 +237,31 @@ class AsyncScheduler(GCUScheduler):
         # Next, schedule the WAITING requests.
         if not preempted_reqs:
             while self.waiting and token_budget > 0:
+                if gcu_envs.VLLM_GCU_ENABLE_DEEPSEEK_MTP_FUSION and token_budget <= self.num_lookahead_tokens:
+                    break
                 if len(self.running) == self.max_num_running_reqs:
                     break
 
                 request = self.waiting.peek_request()
+
+                if self.connector is not None:
+                    if isinstance(self.connector, NixlConnector):
+                        kv_transfer_params = request.kv_transfer_params
+                        if kv_transfer_params is not None and \
+                            kv_transfer_params.get("do_remote_prefill") and \
+                            gcu_envs.VLLM_GCU_NIXL_ENABLE_FIRST_TOKEN_REUSE:
+                            request.full_kv_transport = True
 
                 # KVTransfer: skip request if still waiting for remote kvs.
                 if request.status == RequestStatus.WAITING_FOR_REMOTE_KVS:
                     is_ready = self._update_waiting_for_remote_kv(request)
                     if is_ready:
                         request.status = RequestStatus.WAITING
+                        if gcu_envs.VLLM_GCU_ENABLE_DEEPSEEK_MTP_FUSION and \
+                            hasattr(request, "full_kv_transport") and request.full_kv_transport:
+                            first_transfer_request[request.request_id] = True
+                            spec_k = self.vllm_config.speculative_config.num_speculative_tokens
+                            scheduled_spec_decode_tokens[request.request_id] = [0] * spec_k
                     else:
                         logger.debug(
                             "%s is still in WAITING_FOR_REMOTE_KVS state.",
@@ -311,6 +343,16 @@ class AsyncScheduler(GCUScheduler):
                             < num_new_tokens):
                         num_new_tokens = (
                             self.scheduler_config.long_prefill_token_threshold)
+                        
+                    if gcu_envs.VLLM_GCU_ENABLE_DEEPSEEK_MTP_FUSION \
+                        and num_new_tokens == 1:
+                        spec_k = self.vllm_config.speculative_config.num_speculative_tokens
+                        if len(request.spec_token_ids) != spec_k:
+                            scheduled_spec_decode_tokens[request.request_id] = [0] * spec_k
+                        else:
+                            scheduled_spec_decode_tokens[request.request_id] = request.spec_token_ids
+                        request.spec_token_ids = scheduled_spec_decode_tokens[request.request_id]
+                        num_new_tokens += spec_k
 
                     # chunked prefill has to be enabled explicitly to allow
                     # pooling requests to be chunked
@@ -483,6 +525,7 @@ class AsyncScheduler(GCUScheduler):
             structured_output_request_ids=structured_output_request_ids,
             grammar_bitmask=grammar_bitmask,
         )
+        scheduler_output.first_transfer_request = first_transfer_request
 
         # NOTE(Kuntai): this function is designed for multiple purposes:
         # 1. Plan the KV cache store

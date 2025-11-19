@@ -1215,7 +1215,7 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
             main_model_sampled_tokens = torch.empty_like(input_ids)
 
         if gcu_envs.VLLM_GCU_ENABLE_DEEPSEEK_MTP_FUSION and \
-            gcu_envs.VLLM_GCU_ENABLE_ASYNC_SCHEDULING:
+            self.vllm_config.scheduler_config.async_scheduling:
             batch_size = accepted_lens.numel()
             batch_indices = torch.arange(batch_size,
                                         dtype=torch.int,
