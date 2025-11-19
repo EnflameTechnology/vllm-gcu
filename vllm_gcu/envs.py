@@ -32,6 +32,10 @@ environment_variables: Dict[str, Callable[[], Any]] = {
     "VLLM_GCU_SKIP_ACROSS_DP": lambda: bool(
         int(os.getenv("VLLM_GCU_SKIP_ACROSS_DP", "0"))
     ),
+    # 控制是否开启eagle triton kernel
+    "VLLM_GCU_TRITON_EAGLE": lambda: bool(
+        int(os.getenv("VLLM_GCU_TRITON_EAGLE", "0"))
+    ),
 }
 
 

@@ -7,13 +7,12 @@ from vllm.model_executor.layers.vocab_parallel_embedding import (
     VocabParallelEmbedding
 )
 from vllm.distributed import tensor_model_parallel_all_reduce
-
+import vllm_gcu.envs as gcu_envs
 try:
     import triton_gcu.triton
-    USE_TRITON_GCU = True
+    USE_TRITON_GCU = True & gcu_envs.VLLM_GCU_TRITON_EAGLE
 except:
     USE_TRITON_GCU = False
-
 
 @triton.jit
 def masked_input_kernel(
