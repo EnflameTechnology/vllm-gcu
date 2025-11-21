@@ -13,6 +13,7 @@ from vllm_gcu.compilation.replace_full_with_empty import replace_full_with_empty
 
 
 class SingletonDescriptor:
+
     def __init__(self, cls):
         self.cls = cls
         self._instance = None
@@ -79,3 +80,6 @@ class PassManager(InductorPass):
         from torch._inductor.pattern_matcher import stable_topological_sort
         stable_topological_sort(graph)
         graph.eliminate_dead_code()
+
+    def __str__(self):
+        return 'PassManager()'
