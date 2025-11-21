@@ -311,7 +311,7 @@ def sgmv_expand_slice_impl_fake(
 direct_register_custom_op(
     op_name="sgmv_expand_slice_impl",
     op_func=sgmv_expand_slice_impl,
-    mutates_args=[],
+    mutates_args=["output_tensor"],
     fake_impl=sgmv_expand_slice_impl_fake,
     dispatch_key=current_platform.dispatch_key,
 )
@@ -401,7 +401,7 @@ def sgmv_shrink_impl_fake(
 direct_register_custom_op(
     op_name="sgmv_shrink_impl",
     op_func=sgmv_shrink_impl,
-    mutates_args=[],
+    mutates_args=["output_tensor"],
     fake_impl=sgmv_shrink_impl_fake,
     dispatch_key=current_platform.dispatch_key,
 )
