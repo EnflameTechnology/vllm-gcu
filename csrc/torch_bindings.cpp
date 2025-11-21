@@ -95,6 +95,9 @@
 #include "src/apply_repetition_penalties.h"
 #include "src/eplb_map_to_physical_and_record.h"
 #include "src/get_mla_decoding_metadata.h"
+#include "src/indexer_k_quant_and_cache.h"
+#include "src/dynamic_per_token_group_fp8_quant_with_ue8m0.h"
+#include "src/mha_fwd_kvcache_mla_sparse.h"
 
 // Note on op signatures:
 // The X_meta signatures are for the meta functions corresponding to op X.
@@ -1255,6 +1258,17 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
   }
   ops.impl("silu_mul_fp8_quant_deep_gemm_cuda", torch::kPrivateUse1,
            &silu_mul_fp8_quant_deep_gemm);
+
+  handle = c10::Dispatcher::singleton().findSchema(
+      {"_C::dynamic_per_token_group_fp8_quant_with_ue8m0", ""});
+  if (!handle.has_value()) {
+    ops.def(
+        "dynamic_per_token_group_fp8_quant_with_ue8m0(Tensor! out, "
+        "Tensor! scale, Tensor input, int group_size, bool scale_to_ue8m0) "
+        "-> ()");
+  }
+  ops.impl("dynamic_per_token_group_fp8_quant_with_ue8m0", torch::kPrivateUse1,
+           dynamic_per_token_group_fp8_quant_with_ue8m0);
 }
 
 // TORCH_LIBRARY_FRAGMENT(CONCAT(_cache_ops, TORCH_EXTENSION_NAME), cache_ops) {
@@ -1366,6 +1380,17 @@ TORCH_LIBRARY_FRAGMENT(CONCAT(TORCH_EXTENSION_NAME, _cache_ops),
   }
   cache_ops.impl("gather_and_maybe_dequant_cache", torch::kPrivateUse1,
                  &gather_and_maybe_dequant_cache);
+
+  handle = c10::Dispatcher::singleton().findSchema(
+      {"_C_cache_ops::indexer_k_quant_and_cache", ""});
+  if (!handle.has_value()) {
+    cache_ops.def(
+      "indexer_k_quant_and_cache(Tensor k, Tensor! kv_cache, Tensor "
+      "slot_mapping, "
+      "int quant_block_size, str kv_cache_dtype) -> ()");
+  }
+  cache_ops.impl("indexer_k_quant_and_cache", torch::kPrivateUse1,
+                 &indexer_k_quant_and_cache);
 }
 
 TORCH_LIBRARY_FRAGMENT(CONCAT(_moe, TORCH_EXTENSION_NAME), moe_ops) {
@@ -1463,6 +1488,21 @@ TORCH_LIBRARY_FRAGMENT(CONCAT(_flashmla, TORCH_EXTENSION_NAME), _flashmla_ops) {
   }
   _flashmla_ops.impl("get_mla_decoding_metadata", torch::kPrivateUse1,
                     &get_mla_decoding_metadata);
+
+  handle = c10::Dispatcher::singleton().findSchema(
+      {"_C::fwd_kvcache_mla_sparse", ""});
+  if (!handle.has_value()) {
+    _flashmla_ops.def(
+        "fwd_kvcache_mla_sparse("
+        "    Tensor! q, Tensor kcache, "
+        "    int head_size_v, Tensor seqlens_k, Tensor block_table, "
+        "    float softmax_scale, bool is_causal, "
+        "    Tensor tile_scheduler_metadata, "
+        "    Tensor num_splits, bool is_fp8_kvcache, Tensor indices, "
+        "    Tensor req_id) -> (Tensor, Tensor)");
+  }
+  _flashmla_ops.impl("fwd_kvcache_mla_sparse", torch::kPrivateUse1,
+                 &mha_fwd_kvcache_mla_sparse);
 }
 
 REGISTER_EXTENSION(TORCH_EXTENSION_NAME)

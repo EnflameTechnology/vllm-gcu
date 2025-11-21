@@ -9,7 +9,7 @@ import torch
 from vllm.utils import cdiv
 from vllm.compilation.counter import compilation_counter
 from vllm.compilation.monitor import set_cudagraph_capturing_enabled
-from vllm.distributed.parallel_state import (get_tp_group, get_pp_group, get_ep_group, 
+from vllm.distributed.parallel_state import (get_tp_group, get_pp_group, get_ep_group,
                                              prepare_communication_buffer_for_model, graph_capture)
 from vllm.distributed.kv_transfer import (get_kv_transfer_group,
                                           has_kv_transfer_group)
@@ -25,7 +25,7 @@ from vllm.model_executor.layers.attention_layer_base import AttentionLayerBase
 from vllm.v1.attention.backends.gdn_attn import GDNAttentionMetadataBuilder
 from vllm.v1.kv_cache_interface import (KVCacheConfig, EncoderOnlyAttentionSpec)
 from vllm.v1.utils import record_function_or_nullcontext
-from vllm.v1.outputs import (ModelRunnerOutput, EMPTY_MODEL_RUNNER_OUTPUT, DraftTokenIds, 
+from vllm.v1.outputs import (ModelRunnerOutput, EMPTY_MODEL_RUNNER_OUTPUT, DraftTokenIds,
                              LogprobsLists, LogprobsTensors, SamplerOutput)
 from vllm.v1.sample.metadata import SamplingMetadata
 from vllm.v1.spec_decode.eagle import EagleProposer
@@ -108,7 +108,7 @@ class GCUModelRunner(GPUModelRunner):
             assert self.compilation_config.full_cuda_graph or \
                 self.compilation_config.cudagraph_mode.decode_mode() == CUDAGraphMode.FULL, \
                 "deepseek with fused mtp requires full cuda graph"
-                
+
             self.temperature = torch.full(((self.get_spec_k() + 1) * self.max_num_reqs,),
                                            fill_value=float('inf'),
                                            dtype=torch.float32,
@@ -153,7 +153,7 @@ class GCUModelRunner(GPUModelRunner):
                 self.drafter = None
                 delattr(self, "drafter")
             if self.use_async_scheduling:
-                from vllm_gcu.patch.patch_0_11_0.block_table import (compute_slot_mapping_device, 
+                from vllm_gcu.patch.patch_0_11_0.block_table import (compute_slot_mapping_device,
                                                                      multi_compute_slot_mapping_device)
                 from vllm.v1.worker.block_table import BlockTable, MultiGroupBlockTable
                 patch.object(BlockTable, "compute_slot_mapping_device", compute_slot_mapping_device,
@@ -178,9 +178,9 @@ class GCUModelRunner(GPUModelRunner):
                 from vllm_gcu.worker.eagle import EagleProposerWithGraph
 
                 self.drafter = EagleProposerWithGraph(self.vllm_config,
-                                                    self.device, self, 
+                                                    self.device, self,
                                                     self.prepare_next_token_ids_padded_event)
-            
+
     def get_spec_k(self):
         if not self.vllm_config.additional_config["deepseek_fused_mtp"] \
             or not self.speculative_config:
@@ -216,7 +216,7 @@ class GCUModelRunner(GPUModelRunner):
         self.top_p[:expand_reqs].copy_(self.top_p_cpu_tensor[:expand_reqs], non_blocking=True)
         self.top_k[:expand_reqs].copy_(self.top_k_cpu_tensor[:expand_reqs], non_blocking=True)
 
-        
+
         for i, req_id in enumerate(self.input_batch.req_ids[:num_decodes]):
             if req_id in first_kv_transfer and req_id not in scheduled_spec_decode_tokens:
                 self.draft_tokens_cpu[i, :] = [0] * spec_k
@@ -224,7 +224,7 @@ class GCUModelRunner(GPUModelRunner):
                 self.draft_tokens_cpu[i, :] = [x if x>=0 else 0 for x in scheduled_spec_decode_tokens[req_id]]
 
         self.draft_tokens[:batch_size].copy_(self.draft_tokens_cpu_tensor[:batch_size, :spec_k], non_blocking=True)
-        
+
         if self.use_async_scheduling and self._draft_token_ids is not None:
             prev_req_id_to_index = self.input_batch.prev_req_id_to_index
             assert prev_req_id_to_index is not None
@@ -262,7 +262,7 @@ class GCUModelRunner(GPUModelRunner):
         """
         Reorders the batch to split into prefill and decode requests; places all
         requests with <= decode_threshold tokens at the front of the batch.
-        
+
         Returns:
             True if the batch was modified, False otherwise.
         Notice: one key difference with reorder_batch_to_split_decodes_and_prefills is that
@@ -303,7 +303,7 @@ class GCUModelRunner(GPUModelRunner):
                 else:
                     prefills.append(i)
                     num_prefill_tokens += num_tokens
-        
+
         # We hope that this is fairly minimal since decodes
         # should be around for a number of iterations so hopefully they are
         # relatively stationary (and new request are generally appended to the
@@ -336,7 +336,7 @@ class GCUModelRunner(GPUModelRunner):
         attn_builder._num_prefill_tokens = num_prefill_tokens
         attn_builder.reorder_batch_threshold = 1 + spec_k
         return modified_batch
-    
+
     def calculate_reorder_batch_threshold(self) -> None:
         if self.vllm_config.additional_config["deepseek_fused_mtp"]:
             assert self.vllm_config.speculative_config is not None
@@ -344,7 +344,7 @@ class GCUModelRunner(GPUModelRunner):
             return spec_k + 1
         else:
             return super().calculate_reorder_batch_threshold()
-        
+
     def _may_reorder_batch(self, scheduler_output: "SchedulerOutput") -> None:
         """
         Update the order of requests in the batch based on the attention
@@ -380,7 +380,7 @@ class GCUModelRunner(GPUModelRunner):
                     self.input_batch,
                     scheduler_output,
                     decode_threshold=self.reorder_batch_threshold)
-                
+
     def initialize_kv_cache(self, kv_cache_config: KVCacheConfig) -> None:
         """
         Initialize KV cache based on `kv_cache_config`.
@@ -441,7 +441,7 @@ class GCUModelRunner(GPUModelRunner):
             attn_builder = self.attn_groups[0][0].get_metadata_builder()
             assert attn_builder._num_prefills == 0 or max_query_len == self.uniform_decode_query_len
             return self._prepare_inputs_fused_mtp_async(scheduler_output)
-        
+
         total_num_scheduled_tokens = scheduler_output.total_num_scheduled_tokens
         assert total_num_scheduled_tokens > 0
         num_reqs = self.input_batch.num_reqs
@@ -782,7 +782,7 @@ class GCUModelRunner(GPUModelRunner):
                 num_scheduled_tokens, spec_decode_common_attn_metadata,
                 max_num_scheduled_tokens, ubatch_slices,
                 num_tokens_after_padding)
-    
+
     def _prepare_inputs_fused_mtp_async(
         self, scheduler_output: "SchedulerOutput"
     ) -> tuple[PerLayerAttnMetadata, torch.Tensor,
@@ -843,7 +843,7 @@ class GCUModelRunner(GPUModelRunner):
                            0,
                            token_indices_tensor,
                            out=self.input_ids.cpu[:total_num_scheduled_tokens])
-        
+
         self.input_batch.block_table.compute_slot_mapping(
             req_indices, positions_np)
         self.input_batch.block_table.commit_slot_mapping(
@@ -895,7 +895,7 @@ class GCUModelRunner(GPUModelRunner):
         # Common case (1D positions)
         self.positions.copy_to_gpu(total_num_scheduled_tokens)
         self._adjust_positions(req_indices, total_num_scheduled_tokens, tokens)
-        
+
         # Get the number of draft tokens for each request.
         # Iterate over the dictionary rather than all requests since not all
         # requests have draft tokens.
@@ -904,7 +904,7 @@ class GCUModelRunner(GPUModelRunner):
                 scheduler_output.scheduled_spec_decode_tokens.items()):
             req_idx = self.input_batch.req_id_to_index[req_id]
             num_draft_tokens[req_idx] = len(draft_token_ids)
-        
+
         #spec_decode_metadata = self._calc_spec_decode_metadata(
         #    num_draft_tokens, cu_num_tokens)
         #logits_indices = spec_decode_metadata.logits_indices
@@ -1040,7 +1040,7 @@ class GCUModelRunner(GPUModelRunner):
                 num_scheduled_tokens, spec_decode_common_attn_metadata,
                 max_num_scheduled_tokens, ubatch_slices,
                 num_tokens_after_padding)
-    
+
     def _adjust_positions(
         self,
         req_indices: np.ndarray,
@@ -1051,7 +1051,7 @@ class GCUModelRunner(GPUModelRunner):
         # NOTE(guozelin):
         # for async-scheduling with spec-decoding, decoding request's computed_tokens is
         # advanced by rejected but unknown numbers of tokens, so we have to fix positions、
-        # seq_lens and slot_mapping since these tensor is calculated base on 
+        # seq_lens and slot_mapping since these tensor is calculated base on
         # computed_tokens_cpu.
         # for attention, computed_tokens_cpu mainly affect the prefill part calculation
         # which is not a matter for decoding requests.
@@ -1065,7 +1065,7 @@ class GCUModelRunner(GPUModelRunner):
                     prev_common_req_indices.append(prev_index)
                     rejected_indices.append(cur_index)
             if len(prev_common_req_indices) > 0:
-                num_rejected_tokens = torch.zeros(num_reqs, 
+                num_rejected_tokens = torch.zeros(num_reqs,
                                               dtype=torch.int32,
                                               device = self.device)
                 num_scheduled_tokens = torch.tensor(num_scheduled_token_list,
@@ -1087,12 +1087,12 @@ class GCUModelRunner(GPUModelRunner):
                                     non_blocking=True
                                 )
                 num_rejected_tokens.scatter_(
-                            dim = 0, 
-                            index = rejected_indices_tensor, 
-                            src = 
+                            dim = 0,
+                            index = rejected_indices_tensor,
+                            src =
                             self.prev_num_rejected_tokens[
                                 prev_common_req_indices_tensor])
-                
+
                 position_delta = torch.repeat_interleave(
                             num_rejected_tokens,
                             num_scheduled_tokens,
@@ -1104,7 +1104,7 @@ class GCUModelRunner(GPUModelRunner):
                 self.input_batch.block_table.compute_slot_mapping_device(
                             req_indices,
                             self.positions.gpu[:total_num_scheduled_tokens])
-            
+
 
     @topstx_wrapper
     def _update_states(self, scheduler_output: "SchedulerOutput") -> None:
@@ -1821,7 +1821,7 @@ class GCUModelRunner(GPUModelRunner):
                         top_p=top_p,
                         top_k=top_k,
                     )
-                    hidden_states = torch.zeros((num_tokens, self.hidden_size), dtype = self.dtype, 
+                    hidden_states = torch.zeros((num_tokens, self.hidden_size), dtype = self.dtype,
                                                  device = self.device)
                     last_hidden_states = hidden_states[-1:, :] if num_tokens > 0 else \
                                             torch.empty((1, self.hidden_size), dtype = self.dtype,
@@ -1963,7 +1963,7 @@ class GCUModelRunner(GPUModelRunner):
                                              scheduled_spec_decode_tokens=scheduler_output.scheduled_spec_decode_tokens,
                                              first_kv_transfer = scheduler_output.first_transfer_request
                                              )
-            
+
                 model_output = self.model(
                     input_ids=input_ids,
                     positions=positions,
@@ -2018,7 +2018,7 @@ class GCUModelRunner(GPUModelRunner):
                     inputs_embeds=inputs_embeds,
                     **model_kwargs,
                 )
-    
+
         if self.vllm_config.additional_config["deepseek_fused_mtp"] \
             and get_pp_group().is_last_rank:
             sampled_token_ids = model_output["accepted_tokens"]
@@ -2118,7 +2118,7 @@ class GCUModelRunner(GPUModelRunner):
                 if scheduler_output.grammar_bitmask is not None:
                     apply_grammar_bitmask(scheduler_output, self.input_batch,
                                         logits, self.device)
-                    
+
             with record_function_or_nullcontext("Sample"), get_tx_ctx("Sample", "green", "VLLM"):
                 sampler_output = self._sample(logits, spec_decode_metadata)
 
@@ -2204,7 +2204,7 @@ class GCUModelRunner(GPUModelRunner):
             invalid_req_indices=invalid_req_indices,
             async_output_copy_stream=self.async_output_copy_stream,
         )
-    
+
     def take_draft_token_ids(self) -> Optional[DraftTokenIds]:
         if self._draft_token_ids is None:
             return None

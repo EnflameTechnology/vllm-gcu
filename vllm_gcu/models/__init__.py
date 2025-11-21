@@ -53,3 +53,4 @@ def register_custom_models():
     ModelRegistry.register_model("Qwen2VLForConditionalGeneration", "vllm_gcu.models.qwen2_vl:Qwen2VLForConditionalGeneration")
     ModelRegistry.register_model("DeepseekOCRForCausalLM", "vllm_gcu.models.deepseek_ocr.deepseek_ocr:DeepseekOCRForCausalLM")
     ModelRegistry.register_model("DeepseekForCausalLM", "vllm_gcu.models.deepseek_ocr.deepseek:DeepseekForCausalLMGCU")
+    ModelRegistry.register_model("DeepseekV32ForCausalLM", "vllm_gcu.models.deepseek_v32:DeepseekV3ForCausalLM")

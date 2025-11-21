@@ -91,7 +91,7 @@ class GCUPlatform(Platform):
         if use_mla:
             if use_sparse:
                 logger.info_once("Using Sparse MLA backend on V1 engine.")
-                return ("vllm.v1.attention.backends.mla.flashmla_sparse."
+                return ("vllm_gcu.attention.backends.flashmla_sparse."
                         "FlashMLASparseBackend")
             if selected_backend == _Backend.FLASHMLA:
                 raise ValueError("FLASHMLA is not supported on GCU yet!")

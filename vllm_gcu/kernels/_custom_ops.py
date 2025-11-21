@@ -467,7 +467,6 @@ def dispatch_bgmv_low_level(
         y, x, w, indices, 0, 1.0, h_in, slice_size, slice_offset
     )
 
-
 def per_token_group_quant_fp8(
     x: torch.Tensor,
     group_size: int,
@@ -475,6 +474,7 @@ def per_token_group_quant_fp8(
     dtype: Optional[torch.dtype] = None,
     column_major_scales: bool = False,
     real_token_num: Optional[torch.Tensor] = None,
+    use_ue8m0: bool | None = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     dtype = torch.float8_e4m3fn if dtype is None else dtype
     x_q = torch.empty_like(x, device=x.device, dtype=dtype)
@@ -482,12 +482,17 @@ def per_token_group_quant_fp8(
     shape = x.shape[:-1] + (x.shape[-1] // group_size,)
     x_s = torch.empty(shape, device=x.device, dtype=torch.float32)
 
-    if real_token_num is None:
-        torch.ops._C.dynamic_per_token_group_fp8_quant(x_q, x_s, x, group_size)
-    else:
-        torch.ops._C.dynamic_per_token_group_fp8_quant_with_size(
-            x_q, x_s, x, real_token_num, group_size
+    if use_ue8m0 is not None:
+        torch.ops._C.dynamic_per_token_group_fp8_quant_with_ue8m0(
+            x_q, x_s, x, group_size, use_ue8m0
         )
+    else:
+        if real_token_num is None:
+            torch.ops._C.dynamic_per_token_group_fp8_quant(x_q, x_s, x, group_size)
+        else:
+            torch.ops._C.dynamic_per_token_group_fp8_quant_with_size(
+                x_q, x_s, x, real_token_num, group_size
+            )
 
     return x_q, x_s
 
@@ -635,3 +640,12 @@ def eplb_map_to_physical_and_record(
     )
 
     return out
+
+def indexer_k_quant_and_cache(k: torch.Tensor, kv_cache: torch.Tensor,
+                              slot_mapping: torch.Tensor,
+                              quant_block_size: int,
+                              kv_cache_dtype: str) -> None:
+    torch.ops._C_cache_ops.indexer_k_quant_and_cache(k, kv_cache, slot_mapping,
+                                                     quant_block_size,
+                                                     kv_cache_dtype)
+
