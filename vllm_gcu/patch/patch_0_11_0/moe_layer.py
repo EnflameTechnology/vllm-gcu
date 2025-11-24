@@ -5,7 +5,7 @@ from typing import Optional, Callable, Union
 from vllm.distributed.parallel_state import get_ep_group
 import vllm.envs as envs
 from vllm.model_executor.layers.fused_moe import (
-    FusedMoEMethodBase, FusedMoEPrepareAndFinalize)
+    FusedMoEMethodBase, FusedMoEPrepareAndFinalize, FusedMoE)
 from vllm.model_executor.layers.fused_moe.prepare_finalize import MoEPrepareAndFinalizeNoEP
 from vllm.forward_context import get_forward_context
 from vllm.utils import cdiv
@@ -82,11 +82,18 @@ def init_prepare_finalize(self, layer: torch.nn.Module):
             f"Attempt to override experts for {id(self)}!"
         self.topk_indices_dtype = prepare_finalize.topk_indices_dtype()
         experts = self.select_gemm_impl(prepare_finalize, layer)
-        self.fused_experts = FusedMoEModularKernel(
-            prepare_finalize,
-            experts,
-            layer.shared_experts,
-        )
+        if (self.moe.moe_parallel_config.ep_size == 1
+                and self.moe.moe_parallel_config.dp_size > 1):
+            self.fused_experts = FusedMoEModularKernel(
+                prepare_finalize,
+                experts,
+            )
+        else:
+            self.fused_experts = FusedMoEModularKernel(
+                prepare_finalize,
+                experts,
+                layer.shared_experts,
+            )
 
 
 def select_gemm_impl_unquant(
@@ -95,6 +102,31 @@ def select_gemm_impl_unquant(
     layer,
 ):
     return TritonExpertsPad(self.moe_quant_config)
+
+
+origin_forward_impl = FusedMoE.forward_impl
+
+
+def forward_impl(
+    self,
+    hidden_states: torch.Tensor,
+    router_logits: torch.Tensor,
+) -> Union[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
+    shared_output = None
+    if (self.shared_experts is not None
+            and self.moe_parallel_config.ep_size == 1
+            and self.moe_parallel_config.dp_size > 1):
+        origin_shared_experts = self.shared_experts
+        shared_output = self.shared_experts(hidden_states)
+        self._shared_experts = None
+
+    final_hidden_states = origin_forward_impl(self, hidden_states,
+                                              router_logits)
+
+    if shared_output is not None:
+        self._shared_experts = origin_shared_experts
+        return shared_output, final_hidden_states.add_(shared_output)
+    return final_hidden_states
 
 
 def forward_impl_chunked(
@@ -217,3 +249,5 @@ patch("vllm.model_executor.layers.fused_moe.layer.UnquantizedFusedMoEMethod.sele
 patch("vllm.model_executor.layers.fused_moe.layer.eplb_map_to_physical_and_record", eplb_map_to_physical_and_record).start()
 patch("vllm.model_executor.layers.fused_moe.layer.FusedMoE.forward_impl_chunked", forward_impl_chunked).start()
 patch("vllm.model_executor.layers.fused_moe.FusedMoE.forward_impl_chunked", forward_impl_chunked).start()
+patch("vllm.model_executor.layers.fused_moe.layer.FusedMoE.forward_impl", forward_impl).start()
+patch("vllm.model_executor.layers.fused_moe.FusedMoE.forward_impl", forward_impl).start()

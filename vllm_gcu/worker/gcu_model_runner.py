@@ -1532,7 +1532,7 @@ class GCUModelRunner(GPUModelRunner):
     def _dummy_run(
         self,
         num_tokens: int,
-        cudagraph_runtime_mode: CUDAGraphMode = CUDAGraphMode.NONE,
+        cudagraph_runtime_mode: Optional[CUDAGraphMode] = None,
         force_attention: bool = False,
         uniform_decode: bool = False,
         allow_microbatching: bool = True,
@@ -1647,6 +1647,7 @@ class GCUModelRunner(GPUModelRunner):
         if num_tokens_after_padding is None:
             num_pad, num_tokens_across_dp = self.get_dp_padding(num_tokens)
             num_tokens_after_padding = num_tokens + num_pad
+            num_tokens += num_pad
         else:
             num_tokens_across_dp = num_tokens_after_padding
             num_tokens_after_padding = int(num_tokens_after_padding[0].item())
