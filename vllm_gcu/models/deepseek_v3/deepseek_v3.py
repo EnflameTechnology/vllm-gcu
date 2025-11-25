@@ -308,7 +308,10 @@ class DeepseekV2MoE(nn.Module):
                 is_sequence_parallel=self.is_sequence_parallel,
             )
 
-        self.tp_size = self.experts.tp_size
+        if self.experts.ep_size > 1 and (
+                self.experts.dp_size > 1
+                or gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL):
+            self.tp_size = 1
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         num_tokens, hidden_dim = hidden_states.shape

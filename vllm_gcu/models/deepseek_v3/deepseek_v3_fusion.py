@@ -223,23 +223,24 @@ class DeepseekV2MLAAttentionFusion(nn.Module):
         hidden_states: torch.Tensor,
         actual_seqlen = None,
     ) -> torch.Tensor:
-        
+        need_gather = (gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL
+                       and actual_seqlen is not None)
         if self.q_lora_rank is not None:
             if self.qkv_fuse:
                 q_c_and_latent = self.qkv_a_proj_with_mqa(hidden_states)[0]
-                if actual_seqlen is not None:
+                if need_gather:
                     q_c_and_latent = sp_to_tp(q_c_and_latent, actual_seqlen)
                 q_c, latent_cache = q_c_and_latent.split(
                     self.qkv_a_proj_with_mqa.output_sizes, dim=-1)
             else:
-                if actual_seqlen is not None:
+                if need_gather:
                     hidden_states = sp_to_tp(hidden_states, actual_seqlen)
                 q_c = self.q_a_proj(hidden_states)[0].contiguous()
                 latent_cache = self.kv_a_proj_with_mqa(hidden_states)[0].contiguous()
             q_c = self.q_a_layernorm(q_c)
             q = self.q_b_proj(q_c)[0]
         else:
-            if actual_seqlen is not None:
+            if need_gather:
                 hidden_states = sp_to_tp(hidden_states, actual_seqlen)
             q = self.q_proj(hidden_states)[0].view(
                 -1, self.num_local_heads, self.qk_head_dim
