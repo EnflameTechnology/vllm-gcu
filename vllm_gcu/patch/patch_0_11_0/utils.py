@@ -7,9 +7,12 @@ from unittest.mock import patch
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
+import contextlib
+from contextlib import AbstractContextManager
 
 import torch
-
+from torch.autograd.profiler import record_function
+import vllm.envs as envs
 from vllm.model_executor.models.utils import extract_layer_index
 from vllm.platforms import current_platform
 
@@ -70,4 +73,24 @@ def bind_kv_cache(
         # NOTE: Use list because of v0 PP virtual engine.
         forward_context[layer_name].kv_cache = [kv_cache]
 
+_PROFILER_FUNC = None
+
+def record_function_or_nullcontext(name: str) -> AbstractContextManager:
+    global _PROFILER_FUNC
+
+    # fast path assume it is set
+    if _PROFILER_FUNC is not None:
+        return _PROFILER_FUNC(name)
+
+    func = contextlib.nullcontext
+    if envs.VLLM_CUSTOM_SCOPES_FOR_PROFILING:
+        func = record_function
+    elif envs.VLLM_NVTX_SCOPES_FOR_PROFILING:
+        pass
+
+    _PROFILER_FUNC = func
+    return func(name)
+
 patch("vllm.v1.worker.gpu_model_runner.bind_kv_cache", bind_kv_cache).start()
+patch("vllm.v1.worker.gpu_model_runner.record_function_or_nullcontext", record_function_or_nullcontext).start()
+patch("vllm_gcu.worker.gcu_model_runner.record_function_or_nullcontext", record_function_or_nullcontext).start()

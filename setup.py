@@ -401,6 +401,7 @@ setup(
         "transformers==4.55.2",
         "numpy<2.0",
         "cloudpickle==3.1.1",
+        "orjson"
     ],
     ext_modules=ext_modules,
     cmdclass={

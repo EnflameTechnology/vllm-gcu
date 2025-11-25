@@ -20,8 +20,42 @@ from vllm.v1.outputs import ModelRunnerOutput
 from vllm.v1.request import Request, RequestStatus
 from vllm.v1.spec_decode.metrics import SpecDecodingStats
 import vllm_gcu.envs as gcu_envs
+import vllm.envs as envs
+from vllm_gcu.utils import get_tx_ctx, get_tx_mark_func
+import orjson
 
 logger = init_logger(__name__)
+
+def get_status_before_schedule(kv_cache_manager, kv_cache_config):
+    block_pool = kv_cache_manager.block_pool
+
+    # 获取调度前的状态
+    before_free_blocks = block_pool.get_num_free_blocks()
+    total_blocks = kv_cache_config.num_blocks
+    before_used_blocks = total_blocks - before_free_blocks
+
+    return before_free_blocks, before_used_blocks, total_blocks
+
+
+def get_status_after_schedule_and_trace(
+    kv_cache_manager,
+    dp_rank
+):
+    # 获取调度后的状态
+    after_usage = kv_cache_manager.usage
+
+    message = "schedule"
+    color = "green"
+    domain = "VLLM"
+    category = f"Scheduler-DP{dp_rank}"
+    payload = {
+        "UsagePercent": after_usage,
+    }
+
+    payload_str = orjson.dumps(payload)
+
+    tx_mark_func = get_tx_mark_func()
+    tx_mark_func(message, color, domain, category, payload_str)
 
 
 class GCUScheduler(Scheduler):
@@ -62,6 +96,30 @@ class GCUScheduler(Scheduler):
         self.finished_recving_kv_req_ids.remove(request.request_id)
         return True
 
+    def add_request(self, request: Request) -> None:
+        message = "add_request"
+        color = "blue"
+        domain = "VLLM"
+        category = f"Scheduler-DP{self.vllm_config.parallel_config.data_parallel_rank}"
+        payload = {
+            "req_ids": [request.request_id]
+        }
+        payload_str = orjson.dumps(payload)
+
+        tx_mark_func = get_tx_mark_func()
+        tx_mark_func(message, color, domain, category, payload_str)
+        super().add_request(request)
+
+    def schedule(self) -> SchedulerOutput:
+        scheduler_output = super().schedule()
+
+        if envs.VLLM_NVTX_SCOPES_FOR_PROFILING:
+            get_status_after_schedule_and_trace(
+                self.kv_cache_manager,
+                self.vllm_config.parallel_config.data_parallel_rank
+            )
+        return scheduler_output
+
 
 class AsyncScheduler(GCUScheduler):
     def schedule(self) -> SchedulerOutput:
@@ -89,7 +147,7 @@ class AsyncScheduler(GCUScheduler):
         encoder_compute_budget = self.max_num_encoder_input_tokens
         # Spec decode-related.
         scheduled_spec_decode_tokens: dict[str, list[int]] = {}
-        
+
         # first request from prefill
         first_transfer_request: dict[str, bool] = {}
 
@@ -343,7 +401,7 @@ class AsyncScheduler(GCUScheduler):
                             < num_new_tokens):
                         num_new_tokens = (
                             self.scheduler_config.long_prefill_token_threshold)
-                        
+
                     if gcu_envs.VLLM_GCU_ENABLE_DEEPSEEK_MTP_FUSION \
                         and num_new_tokens == 1:
                         spec_k = self.vllm_config.speculative_config.num_speculative_tokens
@@ -559,6 +617,12 @@ class AsyncScheduler(GCUScheduler):
         self,
         scheduler_output: SchedulerOutput,
     ) -> None:
+        if envs.VLLM_NVTX_SCOPES_FOR_PROFILING:
+            get_status_after_schedule_and_trace(
+                self.kv_cache_manager,
+                self.vllm_config.parallel_config.data_parallel_rank
+            )
+
         super()._update_after_schedule(scheduler_output)
         for req_id in scheduler_output.num_scheduled_tokens:
             request = self.requests[req_id]

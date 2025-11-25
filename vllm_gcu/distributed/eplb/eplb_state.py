@@ -3,6 +3,14 @@ from torch.distributed import ProcessGroup, all_reduce
 from vllm.model_executor.models.interfaces import MixtureOfExperts
 from vllm.distributed.parallel_state import get_ep_group
 from vllm.distributed.eplb.eplb_state import logger
+import vllm_gcu.envs as gcu_envs
+import vllm.envs as envs
+from vllm_gcu.utils import get_tx_ctx, get_tx_mark_func
+import orjson
+
+
+if envs.VLLM_NVTX_SCOPES_FOR_PROFILING:
+    step_idx = 0
 
 def step(self,
         model: MixtureOfExperts,
@@ -37,6 +45,35 @@ def step(self,
     if is_dummy:
         # Do not record load metrics for dummy steps
         self.expert_load_pass.zero_()
+
+    if envs.VLLM_NVTX_SCOPES_FOR_PROFILING:
+        global step_idx
+
+        message = "expert_load_pass"
+        color = "green"
+        domain = "VLLM"
+        category = "Eplb"
+        payload = {
+            "step_idx": step_idx,
+            "ep_size": get_ep_group().world_size,
+            "expert_load_pass": {
+                "shape": list(self.expert_load_pass.shape),
+                "dtype": str(self.expert_load_pass.dtype),
+                "value": self.expert_load_pass.flatten().tolist(),
+            },
+            "physical_to_logical_map": {
+                "shape": list(self.physical_to_logical_map.shape),
+                "dtype": str(self.physical_to_logical_map.dtype),
+                "value": self.physical_to_logical_map.flatten().tolist(),
+            }
+        }
+
+        payload_str = orjson.dumps(payload)
+
+        step_idx += 1
+
+        tx_mark_func = get_tx_mark_func()
+        tx_mark_func(message, color, domain, category, payload_str)
 
     if log_stats:
         # total_expert_load_pass: (num_moe_layers, num_physical_experts)

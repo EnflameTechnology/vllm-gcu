@@ -14,7 +14,7 @@ import vllm.envs as envs
 from vllm.forward_context import set_forward_context, get_forward_context, BatchDescriptor
 from vllm.v1.worker.ubatch_utils import UBatchSlices
 import vllm_gcu.envs as gcu_envs
-
+import vllm.envs as envs
 
 
 def dump_memory_snapshot_when_exception(name):
@@ -206,14 +206,34 @@ def scatter(seqlen, size):
             for i in range(size)]
 
 
-def get_tx_ctx(name, color, domain):
-    has_tx = find_spec("topstx") is not None
-    if has_tx:
-        import topstx
-        tx_ctx = topstx.annotate(name, color=color, domain=domain)
-    else:
-        tx_ctx = contextlib.nullcontext()
+def get_tx_ctx(name, color, domain, category=None, payload=None):
+    enable_profiler = envs.VLLM_NVTX_SCOPES_FOR_PROFILING
+
+    tx_ctx = None
+    if enable_profiler:
+        has_tx = find_spec("topstx") is not None
+        if has_tx:
+            import topstx
+            tx_ctx = topstx.annotate(name, color=color, domain=domain,
+                                    category=category, payload=payload)
+        else:
+            assert False, "topstx is not installed"
+
+    tx_ctx = contextlib.nullcontext() if not tx_ctx else tx_ctx
     return tx_ctx
+
+
+def get_tx_mark_func():
+    enable_profiler = envs.VLLM_NVTX_SCOPES_FOR_PROFILING
+    if enable_profiler:
+        has_tx = find_spec("topstx") is not None
+        if has_tx:
+            import topstx
+            return topstx.mark
+        else:
+            assert False, "topstx is not installed"
+    return lambda *args, **kwargs: None
+
 
 def topstx_wrapper(f):
     def inner(*args, **kwargs):

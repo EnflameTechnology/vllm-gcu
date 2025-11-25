@@ -4,10 +4,13 @@
 from typing import TYPE_CHECKING, Any, Optional
 
 from vllm.logger import init_logger
-from vllm.distributed.kv_transfer.kv_connector.v1.nixl_connector import NixlConnectorScheduler
-
+from vllm.distributed.kv_transfer.kv_connector.v1.nixl_connector import NixlConnectorScheduler, NixlConnectorWorker
+from vllm_gcu.utils import get_tx_ctx, get_tx_mark_func
 import vllm_gcu.envs as gcu_envs
+import vllm.envs as envs
 from unittest.mock import patch
+import orjson
+import time
 
 if TYPE_CHECKING:
     from vllm.v1.request import Request
@@ -60,9 +63,80 @@ def request_finished(
     return async_save, txfer_params
 
 
+origin_read_blocks = NixlConnectorWorker._read_blocks
+
+def _read_blocks(self, local_block_ids: list[int],
+                    remote_block_ids: list[int], dst_engine_id: str,
+                    request_id: str):
+    origin_read_blocks(self, local_block_ids, remote_block_ids, dst_engine_id, request_id)
+
+    message = "_read_blocks"
+    color = "blue"
+    domain = "VLLM"
+    category = "KVConnector"
+    payload = {
+        "req_ids": [request_id]
+    }
+    payload_str = orjson.dumps(payload)
+
+    tx_mark_func = get_tx_mark_func()
+    tx_mark_func(message, color, domain, category, payload_str)
+
+
+def _pop_done_transfers(
+        self, transfers: dict[str, list[tuple[int, float]]]) -> set[str]:
+    """
+    Pop completed xfers by checking for DONE state.
+    Args:
+        transfers: dict of req_id -> list[running_xfer]
+    Returns:
+        set of req_ids that have all done xfers
+    """
+    done_req_ids: set[str] = set()
+    for req_id, handles in list(transfers.items()):
+        in_progress = False
+        for handle, _xfer_stime in handles:
+            xfer_state = self.nixl_wrapper.check_xfer_state(handle)
+            if xfer_state == "DONE":
+                self.nixl_wrapper.release_xfer_handle(handle)
+                # TODO (NickLucche) Get from NIXL telemetry once integrated
+                self.xfer_stats.record_transfer()
+            elif xfer_state == "PROC":
+                in_progress = True
+                continue
+            else:
+                raise RuntimeError("Transfer failed with state %s",
+                                    xfer_state)
+        if not in_progress:
+            if envs.VLLM_NVTX_SCOPES_FOR_PROFILING:
+                message = "_pop_done_transfers"
+                color = "blue"
+                domain = "VLLM"
+                category = "KVConnector"
+                payload = {
+                    "req_ids": [req_id]
+                }
+                payload_str = orjson.dumps(payload)
+
+                tx_mark_func = get_tx_mark_func()
+                tx_mark_func(message, color, domain, category, payload_str)
+
+            done_req_ids.add(req_id)
+            del transfers[req_id]
+    return done_req_ids
+
+
 patch(
     "vllm.distributed.kv_transfer.kv_connector.v1.nixl_connector.NixlConnectorScheduler.get_num_new_matched_tokens",
     get_num_new_matched_tokens).start()
 patch(
     "vllm.distributed.kv_transfer.kv_connector.v1.nixl_connector.NixlConnectorScheduler.request_finished",
     request_finished).start()
+patch(
+    "vllm.distributed.kv_transfer.kv_connector.v1.nixl_connector.NixlConnectorWorker._pop_done_transfers",
+    _pop_done_transfers).start()
+
+if envs.VLLM_NVTX_SCOPES_FOR_PROFILING:
+    patch(
+        "vllm.distributed.kv_transfer.kv_connector.v1.nixl_connector.NixlConnectorWorker._read_blocks",
+        _read_blocks).start()

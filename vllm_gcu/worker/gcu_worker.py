@@ -12,6 +12,11 @@ from vllm.platforms import current_platform
 from vllm.v1.utils import report_usage_stats
 from vllm.v1.worker.gpu_worker import Worker, init_worker_distributed_environment
 from vllm_gcu.worker.gcu_model_runner import GCUModelRunner
+import vllm_gcu.envs as gcu_envs
+import vllm.envs as envs
+from vllm_gcu.utils import get_tx_ctx
+from vllm.utils import cdiv
+import orjson
 
 
 class GCUWorker(Worker):
@@ -99,16 +104,42 @@ class GCUWorker(Worker):
     ):
         num_scheduled_tokens = scheduler_output.num_scheduled_tokens
 
-        has_tx = find_spec("topstx") is not None
-        if has_tx:
-            import topstx
-            tx_ctx = topstx.annotate(f"execute_{num_scheduled_tokens}",
-                                     color="green",
-                                     domain="VLLM")
-        else:
-            tx_ctx = contextlib.nullcontext()
+        message = f"execute_{num_scheduled_tokens}"
+        color = "green"
+        domain = "VLLM"
+        category = "execute_model"
+        payload_str = None
 
-        if self.use_async_scheduling and has_tx and \
+        if envs.VLLM_NVTX_SCOPES_FOR_PROFILING:
+            block_size = self.vllm_config.cache_config.block_size
+
+            num_blocks = {}
+            for i, req_id in enumerate(scheduler_output.scheduled_cached_reqs.req_ids):
+                seq_len = scheduler_output.scheduled_cached_reqs.num_computed_tokens[i] + num_scheduled_tokens[req_id]
+                num_blocks[req_id] = cdiv(seq_len, block_size)
+
+            for new_req_data in scheduler_output.scheduled_new_reqs:
+                req_id = new_req_data.req_id
+                seq_len = new_req_data.num_computed_tokens + num_scheduled_tokens[req_id]
+                num_blocks[req_id] = cdiv(seq_len, block_size)
+
+
+            payload = {"request_info": []}
+            for req_id, num_token in num_scheduled_tokens.items():
+                num_block = -1
+                if req_id in num_blocks:
+                    num_block = num_blocks[req_id]
+
+                payload["request_info"].append({
+                    "req_id": req_id,
+                    "num_token": num_token,
+                    "num_block": num_block
+                })
+
+            payload_str = orjson.dumps(payload)
+
+        tx_ctx = get_tx_ctx(message, color, domain, category, payload_str)
+        if self.use_async_scheduling and \
                 not isinstance(tx_ctx, contextlib.nullcontext):
             self.tx_ctx_start(tx_ctx)
             model_output = super().execute_model(scheduler_output)
