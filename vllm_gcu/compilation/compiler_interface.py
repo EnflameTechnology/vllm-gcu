@@ -41,12 +41,15 @@ def version():
 def lowering():
     import torch._inductor.lowering as til
 
-    BLACK_LIST = ["name"]
+    BLACK_LIST = [
+        "name", "__doc__", "__loader__", "__name__", "__package__", "__spec__",
+        "_dir", "__file__", "__all__"
+    ]
     origin_lowerings = {}
     skip_lowerings = []
 
     for name in dir(torch.ops.aten):
-        if not name.startswith("_") and name not in BLACK_LIST:
+        if name not in BLACK_LIST:
             op = getattr(torch.ops.aten, name)
 
             if isinstance(op, torch._ops.OpOverloadPacket):
@@ -54,25 +57,25 @@ def lowering():
                     op_overload = til.get_overloads(getattr(op, ol))
                     if op_overload[0] in til.lowerings:
                         origin_lowerings.update(
-                            dict.fromkeys(op_overload, til.lowerings[op_overload[0]])
-                        )
+                            dict.fromkeys(op_overload,
+                                          til.lowerings[op_overload[0]]))
                     else:
                         skip_lowerings.append(op_overload[0])
             elif isinstance(
-                op, (torch._ops.OpOverload, torch._ops.HigherOrderOperator)
-            ):
+                    op,
+                (torch._ops.OpOverload, torch._ops.HigherOrderOperator)):
                 op_overload = til.get_overloads(op)
                 if op_overload[0] in til.lowerings:
                     origin_lowerings.update(
-                        dict.fromkeys(op_overload, til.lowerings[op_overload[0]])
-                    )
+                        dict.fromkeys(op_overload,
+                                      til.lowerings[op_overload[0]]))
                 else:
                     skip_lowerings.append(op_overload[0])
 
             til.make_fallback(op, warn=False, override_decomp=True)
 
     for name in dir(torch.ops.prims):
-        if not name.startswith("_") and name not in BLACK_LIST:
+        if name not in BLACK_LIST:
             op = getattr(torch.ops.prims, name)
             til.make_fallback(op, warn=False, override_decomp=True)
 
@@ -80,13 +83,13 @@ def lowering():
 
     for op_overload, _ in origin_lowerings.items():
         til.register_lowering(op_overload, type_promotion_kind=None)(
-            origin_lowerings[op_overload]
-        )
+            origin_lowerings[op_overload])
     for op_overload in skip_lowerings:
         til.lowerings.pop(op_overload)
 
 
 class CustomInductorAdaptor(InductorAdaptor):
+
     def compute_hash(self, vllm_config) -> str:
         with version():
             return super().compute_hash(vllm_config)
@@ -149,8 +152,7 @@ class CustomInductorAdaptor(InductorAdaptor):
                         if not callable(cell.cell_contents):
                             continue
                         if cell.cell_contents.__code__.co_filename.startswith(
-                            self.cache_dir
-                        ):
+                                self.cache_dir):
                             # this is the real file path compiled from Inductor
                             file_path = cell.cell_contents.__code__.co_filename
                             break
@@ -159,8 +161,7 @@ class CustomInductorAdaptor(InductorAdaptor):
             def hijacked_compile_fx_inner(*args, **kwargs):
                 with lowering():
                     output = torch._inductor.compile_fx.compile_fx_inner(
-                        *args, **kwargs
-                    )
+                        *args, **kwargs)
                 return output
 
         elif is_torch_equal_or_newer("2.6"):
@@ -171,15 +172,13 @@ class CustomInductorAdaptor(InductorAdaptor):
             def hijacked_compile_fx_inner(*args, **kwargs):
                 with version(), lowering():
                     output = torch._inductor.compile_fx.compile_fx_inner(
-                        *args, **kwargs
-                    )
+                        *args, **kwargs)
                     nonlocal hash_str
                     inductor_compiled_graph = output
                     if inductor_compiled_graph is not None:
                         nonlocal file_path
-                        file_path = (
-                            inductor_compiled_graph.current_callable.__code__.co_filename
-                        )  # noqa
+                        file_path = (inductor_compiled_graph.current_callable.
+                                     __code__.co_filename)  # noqa
                         compiled_fn = inductor_compiled_graph.current_callable
                         file_path = compiled_fn.__code__.co_filename  # noqa
                         if not file_path.startswith(self.cache_dir):
@@ -190,7 +189,8 @@ class CustomInductorAdaptor(InductorAdaptor):
                                     if not callable(cell.cell_contents):
                                         continue
                                     code = cell.cell_contents.__code__
-                                    if code.co_filename.startswith(self.cache_dir):
+                                    if code.co_filename.startswith(
+                                            self.cache_dir):
                                         # this is the real file path
                                         # compiled from Inductor
                                         file_path = code.co_filename
@@ -230,31 +230,26 @@ class CustomInductorAdaptor(InductorAdaptor):
                 patch(
                     "torch._inductor.codecache.compiled_fx_graph_hash",
                     hijack_compiled_fx_graph_hash,
-                )
-            )
+                ))
 
             # for providing a dummy shape environment
             stack.enter_context(
                 patch(
                     "torch._inductor.codecache.FxGraphCache._get_shape_env",
                     _get_shape_env,
-                )
-            )
+                ))
 
             # for forcing the graph to be cached
             stack.enter_context(
                 patch(
                     "torch._inductor.codecache.FxGraphCache._check_can_cache",
                     _check_can_cache,
-                )
-            )
+                ))
 
             stack.enter_context(
                 patch(
                     "torch._inductor.fx_passes.reinplace.should_reinplace_scatter",
-                    _should_reinplace_scatter
-                )
-            )
+                    _should_reinplace_scatter))
 
             stack.enter_context(self.metrics_context())
 
@@ -269,8 +264,19 @@ class CustomInductorAdaptor(InductorAdaptor):
                 stack.enter_context(
                     torch._functorch.config.patch(enable_autograd_cache=False))
                 stack.enter_context(
-                    torch._functorch.config.patch(enable_remote_autograd_cache=False)
-                )
+                    torch._functorch.config.patch(
+                        enable_remote_autograd_cache=False))
+
+            from torch._inductor.decomposition import select_decomp_table
+            from torch._decomp import remove_decompositions
+            decompositions = select_decomp_table()
+            remove_decompositions(
+                decompositions,
+                [
+                    torch.ops.aten.native_layer_norm,
+                    torch.ops.aten.gelu,
+                ]
+            )
 
             with pass_context(runtime_shape):
                 compiled_graph = compile_fx(
@@ -278,13 +284,13 @@ class CustomInductorAdaptor(InductorAdaptor):
                     example_inputs,
                     inner_compile=hijacked_compile_fx_inner,
                     config_patches=current_config,
+                    decompositions=decompositions,
                 )
 
         if not envs.VLLM_DISABLE_COMPILE_CACHE:
             assert hash_str is not None, "failed to get the hash of the compiled graph"
-            assert (
-                file_path is not None
-            ), "failed to get the file path of the compiled graph"
+            assert (file_path is not None
+                    ), "failed to get the file path of the compiled graph"
         return compiled_graph, (hash_str, file_path)
 
 
