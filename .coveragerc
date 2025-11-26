@@ -16,3 +16,7 @@ skip_empty = False
 omit =
     */tests/*
     */__pycache__/*
+    */patch/patch_0_8_0/*
+    */patch/patch_0_9_2/*
+    */patch/patch_0_10_2/*
+    */patch/torch_2_6_0/*
