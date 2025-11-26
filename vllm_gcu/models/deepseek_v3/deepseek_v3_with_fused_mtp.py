@@ -1636,12 +1636,19 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
 
         # Params for weights, fp8 weight scales, fp8 activation scales
         # (param_name, weight_name, expert_id, shard_id)
-        expert_params_mapping = FusedMoE.make_expert_params_mapping(
+        expert_params_mapping_main = FusedMoE.make_expert_params_mapping(
             ckpt_gate_proj_name="gate_proj",
             ckpt_down_proj_name="down_proj",
             ckpt_up_proj_name="up_proj",
             num_experts=self.config.n_routed_experts,
             num_redundant_experts=self.num_redundant_experts,
+        )
+
+        expert_params_mapping_mtp = FusedMoE.make_expert_params_mapping(
+            ckpt_gate_proj_name="gate_proj",
+            ckpt_down_proj_name="down_proj",
+            ckpt_up_proj_name="up_proj",
+            num_experts=self.config.n_routed_experts,
         )
 
         params_dict = dict(self.named_parameters())
@@ -1661,6 +1668,8 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
                 if not gcu_envs.VLLM_GCU_ENABLE_DEEPSEEK_MTP_FUSION:
                     continue # skip spec decode layers for main model
                 name = _rewrite_spec_layer_name(spec_layer, name)
+
+            expert_params_mapping = expert_params_mapping_mtp if spec_layer is not None else expert_params_mapping_main
 
             for param_name, weight_name, shard_id in stacked_params_mapping:
                 # Skip non-stacked layers and experts (experts handled below).
