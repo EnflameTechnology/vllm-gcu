@@ -50,11 +50,13 @@ class FusedMoEModularKernel(torch.nn.Module):
         prepare_finalize: FusedMoEPrepareAndFinalize,
         fused_experts: FusedMoEPermuteExpertsUnpermute,
         shared_experts: Optional[torch.nn.Module] = None,
+        add_shared = False,
     ):
         super().__init__()
         self.prepare_finalize = prepare_finalize
         self.fused_experts = fused_experts
         self.shared_experts = shared_experts
+        self.add_shared = add_shared
         if hasattr(self.prepare_finalize, 'set_shared_experts'):
             self.prepare_finalize.set_shared_experts(
                 self.shared_experts)
@@ -448,7 +450,7 @@ class FusedMoEModularKernel(torch.nn.Module):
 
         # NOTE: a1 and a1q might be same buffer with output if inplace
         if hasattr(self.prepare_finalize, 'set_shared_experts'):
-            if shared_output is not None:
+            if shared_output is not None and self.add_shared:
                 output = a1.copy_(shared_output) if inplace else shared_output
             else:
                 output = a1.fill_(0) if inplace else torch.zeros_like(a1)
@@ -507,7 +509,8 @@ class FusedMoEModularKernel(torch.nn.Module):
             if not enable_parallel_compute and self.shared_experts is not None and shared_output is None:
                 shared_output = self.shared_experts(a1)
 
-        if not hasattr(self.prepare_finalize, 'set_shared_experts') and self.shared_experts is not None:
+        if (not hasattr(self.prepare_finalize, 'set_shared_experts')
+                and self.shared_experts is not None and self.add_shared):
             output.add_(shared_output)
 
         if self.shared_experts is None:

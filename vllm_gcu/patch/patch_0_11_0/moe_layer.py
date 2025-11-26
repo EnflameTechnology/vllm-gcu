@@ -89,10 +89,12 @@ def init_prepare_finalize(self, layer: torch.nn.Module):
                 experts,
             )
         else:
+            add_shared = getattr(layer, 'add_shared', False)
             self.fused_experts = FusedMoEModularKernel(
                 prepare_finalize,
                 experts,
                 layer.shared_experts,
+                add_shared,
             )
 
 
@@ -125,7 +127,9 @@ def forward_impl(
 
     if shared_output is not None:
         self._shared_experts = origin_shared_experts
-        return shared_output, final_hidden_states.add_(shared_output)
+        if getattr(self, 'add_shared', False):
+            final_hidden_states.add_(shared_output)
+        return shared_output, final_hidden_states
     return final_hidden_states
 
 
