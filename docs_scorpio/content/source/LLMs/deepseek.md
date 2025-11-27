@@ -202,7 +202,7 @@ vllm serve "[path of DeepSeek-R1-Distill-Llama-70B]" \
  --max-model-len=32768 \
  --tensor-parallel-size=8 \
  --block-size=64 \
- --gpu-memory-utilization=0.945 \
+ --gpu-memory-utilization=0.9 \
  --no-enable-prefix-caching \
  --trust_remote_code
 
@@ -222,7 +222,7 @@ vllm serve "[path of DeepSeek-R1-Distill-Llama-70B]" \
  --max-model-len=32768 \
  --tensor-parallel-size=8 \
  --block-size=64 \
- --gpu-memory-utilization=0.945 \
+ --gpu-memory-utilization=0.9 \
  --no-enable-prefix-caching \
  --async-scheduling \
  --trust-remote-code
