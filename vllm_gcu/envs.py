@@ -14,6 +14,7 @@ environment_variables: Dict[str, Callable[[], Any]] = {
     # may change in GCUPlatform
     "VLLM_GCU_DEEPSEEK_FUSION":
     lambda: bool(int(os.getenv("VLLM_GCU_DEEPSEEK_FUSION", "0"))),
+    # [TODO] tianyu: remove and use simulator after 0.11.1
     "VLLM_GCU_FORCE_EP_BALANCE":
     lambda: bool(int(os.getenv("VLLM_GCU_FORCE_EP_BALANCE", "0"))),
     "VLLM_GCU_HOOKS":
