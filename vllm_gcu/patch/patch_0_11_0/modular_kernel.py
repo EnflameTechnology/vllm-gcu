@@ -93,14 +93,18 @@ class FusedMoEModularKernel(torch.nn.Module):
              a1, a1q, M, N, K, top_k, global_num_experts, local_num_experts,
              expert_tokens_meta)
 
+        # select per-ubatch buffers to avoid cross-ubatch reuse under DBO
+        ubatch_idx = dbo_current_ubatch_id()
+        buffers = self.shared_buffers[ubatch_idx]
+
         # We can reuse the memory between cache1 and cache3 because by the
         # time we need cache3, we're done with cache1.
-        workspace13 = torch.empty(prod(workspace13_shape),
-                                  device=a1.device,
-                                  dtype=workspace_dtype)
-        workspace2 = torch.empty(prod(workspace2_shape),
-                                 device=a1.device,
-                                 dtype=workspace_dtype)
+        workspace13 = buffers.workspace13.get(workspace13_shape,
+                                              device=a1.device,
+                                              dtype=workspace_dtype)
+        workspace2 = buffers.workspace2.get(workspace2_shape,
+                                            device=a1.device,
+                                            dtype=workspace_dtype)
 
         assert fused_out is None or fused_out.shape == fused_out_shape, (
             f"fused_out {fused_out.shape} but expected {fused_out_shape}")
@@ -196,7 +200,7 @@ class FusedMoEModularKernel(torch.nn.Module):
                 _chunk_scales(a1q_scale, s, e),
                 _chunk_scales(self.fused_experts.a2_scale, s, e),
                 topk_ids[s:e],
-                topk_weights[s:e]
+                topk_weights[s:e],
             )
 
         def slice_output_tensor(chunk_idx: int) -> torch.Tensor:
@@ -297,28 +301,20 @@ class FusedMoEModularKernel(torch.nn.Module):
         - w1 (torch.Tensor): The first set of expert weights.
         - w2 (torch.Tensor): The second set of expert weights.
         - topk_weights (torch.Tensor): The topk weights applied at the end of
-            the layer.
+          the layer.
         - topk_ids (torch.Tensor): A map of row to expert id.
         - inplace (bool): If True, perform the operation in-place.
-            Defaults to False.
+          Defaults to False.
         - activation (str): The activation function to apply after the first
-            MoE layer.
+          MoE layer.
         - global_num_experts (int): The total number of experts in the global
-            expert space.
+          expert space.
         - expert_map (Optional[torch.Tensor]):  A tensor mapping expert indices
-            from the global expert space to the local expert space of the expert
-            parallel shard.
-        - w1_scale (Optional[torch.Tensor]): Optional scale to be used for w1.
-        - w2_scale (Optional[torch.Tensor]): Optional scale to be used for w2.
-        - w1_zp (Optional[torch.Tensor]): Optional zero points to be used for
-            w1.
-        - w2_zp (Optional[torch.Tensor]): Optional zero points to be used for
-            w2.
-        - a1_scale (Optional[torch.Tensor]): Optional scale to be used for a1.
-        - a2_scale (Optional[torch.Tensor]): Optional scale to be used for a2.
+          from the global expert space to the local expert space of the expert
+          parallel shard.
         - apply_router_weight_on_input (bool): When true, the topk weights are
-            applied directly on the inputs. This is only applicable when topk is
-            1.
+          applied directly on the inputs. This is only applicable when topk is
+          1.
 
         Returns:
         - torch.Tensor: The output tensor after applying the MoE layer.
