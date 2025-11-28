@@ -4,6 +4,7 @@ import os
 import gc
 import contextlib
 import torch
+import torch_gcu
 from vllm.utils import MemorySnapshot, GiB_bytes
 from vllm.model_executor import set_random_seed
 from vllm.config import VllmConfig
@@ -41,7 +42,7 @@ class GCUWorker(Worker):
                 os.dup2(f.fileno(), 2)
         if vllm_config.additional_config.get('set_cpu_affinity', False):
             current_platform.set_cpu_affinity(local_rank)
-
+        self.use_async_scheduling = vllm_config.additional_config.get('async_scheduling', None)
         super().__init__(vllm_config=vllm_config,
                          local_rank=local_rank,
                          rank=rank,
@@ -107,8 +108,21 @@ class GCUWorker(Worker):
         else:
             tx_ctx = contextlib.nullcontext()
 
-        with tx_ctx:
-            return super().execute_model(scheduler_output)
+        if self.use_async_scheduling and has_tx and \
+                not isinstance(tx_ctx, contextlib.nullcontext):
+            self.tx_ctx_start(tx_ctx)
+            model_output = super().execute_model(scheduler_output)
+            self.tx_ctx_stop(tx_ctx)
+            return model_output
+        else:
+            with tx_ctx:
+                return super().execute_model(scheduler_output)
+
+    def tx_ctx_start(self, tx_ctx):
+        torch_gcu.launch_host_func(tx_ctx.__enter__)
+
+    def tx_ctx_stop(self, tx_ctx):
+        torch_gcu.launch_host_func(tx_ctx.__exit__, args=(None, None, None))
 
     def execute_dummy_batch(self) -> None:
         self.model_runner._dummy_run(0, uniform_decode = True)
