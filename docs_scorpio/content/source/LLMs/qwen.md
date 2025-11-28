@@ -780,3 +780,202 @@ export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 注：
 *  本模型支持的`max-model-len`为131072；
 *  `input-len`、`output-len`、`max-concurrency`和`num-prompts`可按需调整；
+
+### Qwen3-30B-A3B-AWQ
+#### 模型下载
+*  url: [Qwen3-30B-A3B-AWQ](https://modelscope.cn/models/swift/Qwen3-30B-A3B-AWQ/files)
+
+*  branch: `master`
+
+*  commit id: `3441b6ac9596e224f77a319be3b4c6149029d0b3`
+
+将上述url设定的路径下的内容全部下载到`Qwen3-30B-A3B-AWQ`文件夹中。
+
+#### 环境变量
+
+```
+# v1 engine
+export VLLM_USE_V1=1
+export TORCH_COMPILE_DISABLE=1
+export TORCHGCU_INDUCTOR_ENABLE=0
+export PYTORCH_EFML_BASED_GCU_CHECK=1
+export TORCH_ECCL_AVOID_RECORD_STREAMS=1
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export VLLM_ATTENTION_BACKEND=FLASH_ATTN
+```
+
+#### 在线推理
+
+```shell
+# 启动服务端
+  vllm serve [path of Qwen3-30B-A3B-AWQ] \
+    --tensor-parallel-size 1 \
+    --max-model-len 32768 \
+    --disable-log-requests \
+    --gpu-memory-utilization 0.9 \
+    --block-size=64 \
+    --dtype=bfloat16 \
+    --quantization=moe_wna16_gcu \
+    --trust-remote-code \
+    --port 8989
+
+
+# 启动客户端
+  curl "http://127.0.0.1:8989/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "max_tokens": 500,
+        "messages": [
+                        {
+                            "role": "system",
+                             "content": "You are a helpful assistant."
+                         },
+                         {
+                             "role":"user",
+                             "content":"李白是谁？"
+                         }
+                     ],
+        "model":"[path of Qwen3-30B-A3B-AWQ]",
+        "stop": null,
+        "stream": false
+      }'
+```
+
+#### 性能测试
+
+```shell
+# 启动服务端
+  vllm serve [path of Qwen3-30B-A3B-AWQ] \
+    --tensor-parallel-size 1 \
+    --max-model-len 131072 \
+    --disable-log-requests \
+    --gpu-memory-utilization 0.9 \
+    --block-size=64 \
+    --dtype=bfloat16 \
+    --quantization=moe_wna16_gcu \
+    --trust-remote-code \
+    --async-scheduling \
+    --compilation_config '{"cudagraph_mode":"FULL"}' \
+    --no-enable-prefix-caching \
+    --port 8989 \
+    --rope-scaling '{"rope_type":"yarn","factor":4.0,"original_max_position_embeddings":32768}' \
+    --percentile-metrics ttft,tpot,itl   \
+    --metric-percentiles 25,50,75,90,99,100
+
+
+# 启动客户端
+  vllm bench serve \
+  --backend vllm \
+  --dataset-name random \
+  --model [path of Qwen3-30B-A3B-AWQ] \
+  --num-prompt 40 \
+  --max-concurrency 4 \
+  --random-input-len 1024 \
+  --random-output-len 1024 \
+  --trust-remote-code \
+  --ignore_eos \
+  --port 8989
+```
+注：
+*  本模型支持的`max-model-len`为131072；
+*  `input-len`、`output-len`、`max-concurrency`和`num-prompts`可按需调整；
+
+### Qwen3-235B-A22B-AWQ
+#### 模型下载
+*  url: [Qwen3-235B-A22B-AWQ](https://huggingface.co/QuixiAI/Qwen3-235B-A22B-AWQ/tree/main)
+
+*  branch: `master`
+
+*  commit id: `1df91c166baa937f2d571a9cece7a1037c1cc772`
+
+将上述url设定的路径下的内容全部下载到`Qwen3-235B-A22B-AWQ`文件夹中。
+
+
+#### 环境变量
+
+```
+# v1 engine
+export VLLM_USE_V1=1
+export TORCH_COMPILE_DISABLE=1
+export TORCHGCU_INDUCTOR_ENABLE=0
+export PYTORCH_EFML_BASED_GCU_CHECK=1
+export TORCH_ECCL_AVOID_RECORD_STREAMS=1
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export VLLM_ATTENTION_BACKEND=FLASH_ATTN
+```
+
+#### 在线推理
+
+```shell
+# 启动服务端
+  vllm serve [path of Qwen3-235B-A22B-AWQ] \
+    --tensor-parallel-size 4 \
+    --max-model-len 32768 \
+    --disable-log-requests \
+    --gpu-memory-utilization 0.9 \
+    --block-size=64 \
+    --dtype=bfloat16 \
+    --quantization=moe_wna16_gcu \
+    --trust-remote-code \
+    --port 8989
+
+
+# 启动客户端
+  curl "http://127.0.0.1:8989/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "max_tokens": 500,
+        "messages": [
+                        {
+                            "role": "system",
+                             "content": "You are a helpful assistant."
+                         },
+                         {
+                             "role":"user",
+                             "content":"李白是谁？"
+                         }
+                     ],
+        "model":"[path of Qwen3-235B-A22B-AWQ]",
+        "stop": null,
+        "stream": false
+      }'
+```
+
+#### 性能测试
+
+```shell
+# 启动服务端
+  vllm serve [path of Qwen3-235B-A22B-AWQ] \
+    --tensor-parallel-size 4 \
+    --max-model-len 131072 \
+    --disable-log-requests \
+    --gpu-memory-utilization 0.9 \
+    --block-size=64 \
+    --dtype=bfloat16 \
+    --quantization=moe_wna16_gcu \
+    --trust-remote-code \
+    --async-scheduling \
+    --compilation_config '{"cudagraph_mode":"FULL"}' \
+    --no-enable-prefix-caching \
+    --port 8989 \
+    --rope-scaling '{"rope_type":"yarn","factor":4.0,"original_max_position_embeddings":32768}' \
+    --percentile-metrics ttft,tpot,itl   \
+    --metric-percentiles 25,50,75,90,99,100
+
+
+# 启动客户端
+  vllm bench serve \
+  --backend vllm \
+  --dataset-name random \
+  --model [path of Qwen3-235B-A22B-AWQ] \
+  --num-prompt 40 \
+  --max-concurrency 4 \
+  --random-input-len 1024 \
+  --random-output-len 1024 \
+  --trust-remote-code \
+  --ignore_eos \
+  --port 8989
+```
+注：
+*  本模型支持的`max-model-len`为131072；
+*  `input-len`、`output-len`、`max-concurrency`和`num-prompts`可按需调整；
