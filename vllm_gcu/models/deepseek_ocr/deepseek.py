@@ -55,6 +55,7 @@ from vllm.model_executor.models.deepseek import (
 )
 from vllm.model_executor.models.utils import is_pp_missing_parameter
 from unittest.mock import patch
+import vllm_gcu.envs as gcu_envs
 from vllm_gcu.models.deepseek_v3.deepseek_v3 import custom_backend
 
 
@@ -182,8 +183,14 @@ class DeepseekMoEGCU(nn.Module):
                 num_redundant_experts=self.n_redundant_experts,
                 is_sequence_parallel=self.is_sequence_parallel,
             )
+            # NOTE: just for alltoall, fuse add into index_add,
+            # if we only use deepep, adding it externally makes no difference
+            self.experts.add_shared = True
 
-        self.tp_size = self.experts.tp_size
+        if self.experts.ep_size > 1 and (
+                self.experts.dp_size > 1
+                or gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL):
+            self.tp_size = 1
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         num_tokens, hidden_dim = hidden_states.shape
