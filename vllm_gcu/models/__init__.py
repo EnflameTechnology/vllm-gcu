@@ -34,6 +34,7 @@ def register_custom_models():
 
     chat_templates = [
         ['deepseek_ocr', 'deepseek_ocr/template_deepseek_ocr.jinja'],
+        ['got_ocr2', 'template_got_ocr2.jinja'],
     ]
     for model_type, chat_template in chat_templates:
         _try_register_chat_template(model_type, chat_template)
