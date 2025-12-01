@@ -12,7 +12,14 @@
 ## Requirements
 
 ```shell
+# python-3.10
 python3 -m pip install sentence-transformers==2.2.2
+python3 -m pip install huggingface-hub==0.25.2
+
+# python-3.12
+python3 -m pip install aiohttp==3.13.1
+python3 -m pip install nltk==3.9.2
+python3 -m pip install sentence_transformers==5.1.0
 python3 -m pip install huggingface-hub==0.25.2
 ```
 

@@ -11,6 +11,7 @@ from vllm.model_executor.layers.fused_moe.layer import (
     FusedMoeWeightScaleSupported,
 )
 from vllm.model_executor.layers.linear import LinearBase, UnquantizedLinearMethod
+from vllm.model_executor.layers.quantization.kv_cache import BaseKVCacheMethod
 from vllm.model_executor.layers.quantization.base_config import QuantizationConfig
 from vllm.model_executor.layers.quantization.moe_wna16 import (
     is_layer_skipped_quant,
@@ -19,6 +20,7 @@ from vllm.model_executor.layers.quantization.moe_wna16 import (
 from vllm.model_executor.utils import set_weight_attrs
 
 from vllm_gcu.kernels.quantization.utils import register_gcu_quantization_config
+from vllm_gcu.kernels.modular_experts import TritonExpertsPad
 
 
 @register_gcu_quantization_config("moe_wna16")
@@ -92,6 +94,8 @@ class MoeWNA16GCUConfig(QuantizationConfig):
         )
 
     def get_quant_method(self, layer: torch.nn.Module, prefix: str):
+        from vllm.attention.layer import Attention
+
         if is_layer_skipped_quant(prefix, self.modules_to_not_convert):
             return UnquantizedLinearMethod()
         elif isinstance(layer, LinearBase):
@@ -111,12 +115,42 @@ class MoeWNA16GCUConfig(QuantizationConfig):
                 raise ValueError("moe_wna16_gcu only support gptq and awq.")
         elif isinstance(layer, FusedMoE):
             return MoeWNA16GCUMethod(self)
+        elif isinstance(layer, Attention):
+            return BaseKVCacheMethod(self)
         return None
+
+    @classmethod
+    def is_moe_wna16_gcu_compatible(cls, quant_config: dict[str, Any]):
+        from vllm.platforms import current_platform
+        # Extract data from quant config.
+        quant_method = quant_config.get("quant_method", "").lower()
+        num_bits = quant_config.get("bits")
+        desc_act = quant_config.get("desc_act")
+        static_groups = quant_config.get("static_groups", False)
+
+        capability_tuple = current_platform.get_device_capability()
+        device_capability = (-1 if capability_tuple is None else
+                             capability_tuple.to_int())
+        # Avoid circular import
+        from vllm.model_executor.layers.quantization.awq import AWQConfig
+        awq_min_capability = AWQConfig.get_min_capability()
+
+        #gptq_compatible = quant_method == "gptq" and \
+        #        not desc_act and num_bits in [4, 8]
+        if quant_method == "gptq" and num_bits in [4, 8]:
+            if desc_act and not static_groups:
+                return False
+            return True
+
+        awq_compatible = quant_method == "awq" and num_bits == 4 and \
+            device_capability >= awq_min_capability
+
+        return awq_compatible
 
     @classmethod
     def override_quantization_method(cls, hf_quant_cfg, user_quant) -> Optional[str]:
         if (
-            MoeWNA16Config.is_moe_wna16_compatible(hf_quant_cfg)
+            MoeWNA16GCUConfig.is_moe_wna16_gcu_compatible(hf_quant_cfg)
             and user_quant == "moe_wna16_gcu"
         ):
             return cls.get_name()
@@ -127,6 +161,10 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
 
     def __init__(self, quant_config: MoeWNA16GCUConfig):
         self.quant_config = quant_config
+
+        from vllm.config import get_current_vllm_config
+        self.model_config = get_current_vllm_config().model_config
+        self.parallel_config = get_current_vllm_config().parallel_config
 
     def create_weights(
         self,
@@ -446,15 +484,10 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
             w13 = []
             w2 = []
 
-            from vllm.config import get_current_vllm_config
-
-            model_config = get_current_vllm_config().model_config
-            parallel_config = get_current_vllm_config().parallel_config
-
             if (
-                model_config.hf_text_config.model_type
+                self.model_config.hf_text_config.model_type
                 in ("deepseek_v2", "deepseek_v3", "deepseek_mtp")
-                and parallel_config.enable_expert_parallel
+                and self.parallel_config.enable_expert_parallel
             ):
                 weight_in_KN = True
                 zeros_in_int8 = True
@@ -538,6 +571,18 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
                     layer.w2_qweight.data.permute(0, 2, 1).contiguous().permute(0, 2, 1)
                 )
 
+    def select_gemm_impl(
+        self,
+        prepare_finalize,
+        moe,
+    ):
+        weight_bits = self.quant_config.weight_bits
+        return TritonExpertsPad(
+            use_int4_w4a16=weight_bits == 4,
+            use_int8_w8a16=weight_bits == 8,
+            block_shape=[0, self.quant_config.group_size],
+        )
+
     def apply(
         self,
         layer: torch.nn.Module,
@@ -553,9 +598,16 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
         custom_routing_function: Optional[Callable] = None,
         scoring_func: str = "softmax",
         e_score_correction_bias: Optional[torch.Tensor] = None,
+        apply_router_weight_on_input: bool = False,
         activation: str = "silu",
+        enable_eplb: bool = False,
+        expert_load_view: Optional[torch.Tensor] = None,
+        logical_to_physical_map: Optional[torch.Tensor] = None,
+        logical_replica_count: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        from vllm.model_executor.layers.fused_moe import fused_experts
+        if enable_eplb:
+            raise NotImplementedError(
+                "EPLB not supported for `MoeWNA16GCUMethod` yet.")
 
         topk_weights, topk_ids = FusedMoE.select_experts(
             hidden_states=x,
@@ -570,25 +622,22 @@ class MoeWNA16GCUMethod(FusedMoEMethodBase):
             e_score_correction_bias=e_score_correction_bias,
         )
 
-        weight_bits = self.quant_config.weight_bits
         has_zp = self.quant_config.has_zp
 
-        fused_experts(
+        self.fused_experts(
             x,
             layer.w13_qweight,
             layer.w2_qweight,
             topk_weights=topk_weights,
             topk_ids=topk_ids,
             inplace=True,
-            use_int4_w4a16=weight_bits == 4,
-            use_int8_w8a16=weight_bits == 8,
-            global_num_experts=global_num_experts,
+            activation=activation,
             expert_map=expert_map,
+            global_num_experts=global_num_experts,
             w1_scale=layer.w13_scales,
             w2_scale=layer.w2_scales,
             w1_zp=layer.w13_qzeros if has_zp else None,
             w2_zp=layer.w2_qzeros if has_zp else None,
-            block_shape=[0, layer.group_size],
-            activation=activation,
+            apply_router_weight_on_input=apply_router_weight_on_input,
         )
         return x

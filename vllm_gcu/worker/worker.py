@@ -2,8 +2,10 @@
 
 import os
 import gc
+import contextlib
 from typing import Optional, Tuple, Type
 from datetime import timedelta
+from importlib.util import find_spec
 
 import torch
 import torch.distributed
@@ -11,20 +13,18 @@ import torch_gcu  # noqa: F401
 
 from vllm.config import VllmConfig, set_current_vllm_config
 from vllm.distributed import (
-    ensure_kv_transfer_initialized,
     ensure_model_parallel_initialized,
     get_dp_group,
-    get_pp_group,
-    get_tp_group,
-    get_world_group,
     init_distributed_environment,
     set_custom_all_reduce,
 )
+from vllm.distributed.kv_transfer import ensure_kv_transfer_initialized
 from vllm.logger import init_logger
 from vllm.model_executor import set_random_seed
 from vllm.utils import GiB_bytes, memory_profiling, MemorySnapshot
 from vllm.worker.model_runner import GPUModelRunnerBase
 from vllm.worker.worker import Worker
+from vllm.sequence import ExecuteModelRequest
 
 from vllm_gcu.worker.model_runner import GCUModelRunner
 import vllm_gcu.envs as gcu_envs
@@ -45,7 +45,8 @@ class GCUWorker(Worker):
     ) -> None:
         import vllm_gcu.kernels  # noqa: F401
         import vllm_gcu.patch  # noqa: F401
-        import vllm_gcu.compilation  # noqa: F40
+        import vllm_gcu.compilation  # noqa: F401
+        import vllm_gcu.distributed  # noqa
 
         if gcu_envs.VLLM_GCU_RANK_LOG_PATH:
             # before init dist, since we want to split eccl init logs
@@ -190,6 +191,34 @@ class GCUWorker(Worker):
         return num_gpu_blocks, num_cpu_blocks
 
 
+
+    def execute_model(
+        self,
+        execute_model_req: Optional[ExecuteModelRequest] = None,
+    ):
+        pre_fix = ""
+        if execute_model_req is not None:
+            pre_fix_parts = []
+            for idx, seq_group_metadata in enumerate(execute_model_req.seq_group_metadata_list):
+                req_id = seq_group_metadata.request_id
+                seq_data = seq_group_metadata.seq_data
+                stages = [value.stage.name for value in seq_data.values()]
+                stages_str = "_".join(stages) if stages else "<unk_stage>"
+                pre_fix_parts.append(f"{stages_str}_{req_id}")
+
+            pre_fix = "_".join(pre_fix_parts)
+
+        has_tx = find_spec("topstx") is not None
+        if has_tx:
+            import topstx
+            tx_ctx = topstx.annotate(f"execute_{pre_fix}", color="green", domain="VLLM")
+        else:
+            tx_ctx = contextlib.nullcontext()
+
+        with tx_ctx:
+            return super().execute_model(execute_model_req)
+
+
 def init_worker_distributed_environment(
     vllm_config: VllmConfig,
     rank: int,
@@ -221,14 +250,7 @@ def init_worker_distributed_environment(
 
     ensure_kv_transfer_initialized(vllm_config)
 
-    group = get_tp_group()
-    group.use_custom_op_call = False
-
-    group = get_pp_group()
-    group.use_custom_op_call = False
-
     group = get_dp_group()
-    group.use_custom_op_call = False
 
     all_ranks = torch.arange(parallel_config.world_size_across_dp).reshape(parallel_config.data_parallel_size, -1)
     group_ranks = all_ranks.transpose(0, 1).unbind(0)
@@ -242,6 +264,3 @@ def init_worker_distributed_environment(
         if group.rank in ranks:
             rank_cpu_group = cpu_group
     group.cpu_group = rank_cpu_group
-
-    group = get_world_group()
-    group.use_custom_op_call = False

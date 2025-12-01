@@ -1,16 +1,16 @@
 #!/usr/bin/env python
 # coding=utf-8
-import hashlib
 import os
 import random
 import types
-from functools import lru_cache
-from typing import List, Optional, Tuple, Union
+from functools import lru_cache, wraps
+from typing import List, Optional, Tuple, Union, Callable, TypeVar
+from typing_extensions import ParamSpec
+
 
 import numpy as np
 import torch
 import vllm.envs as envs
-from vllm.config import SupportsHash
 from vllm.platforms.interface import (
     _Backend,
     CpuArchEnum,
@@ -22,14 +22,24 @@ from vllm.logger import init_logger
 
 import vllm_gcu.envs as gcu_envs
 
-global_vllm_config = None
 
 logger = init_logger(__name__)
 
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
 
-class AdditionalConfig(dict, SupportsHash):
-    def compute_hash(self) -> str:
-        return str(hash(frozenset(self.items())))
+def with_efml_context(fn: Callable[_P, _R]) -> Callable[_P, _R]:
+
+    @wraps(fn)
+    def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        import pyefml
+        pyefml.efmlInit()
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            pyefml.efmlShutdown()
+
+    return wrapper
 
 
 class GCUPlatform(Platform):
@@ -46,6 +56,8 @@ class GCUPlatform(Platform):
         "moe_wna16",
         "moe_wna16_gcu",
         "w8a8_gcu",
+        "w4a8",
+        "w4a8_gcu",
         "fp8",
         "fp8_gcu",
         "compressed-tensors",
@@ -67,21 +79,24 @@ class GCUPlatform(Platform):
     ) -> str:
         if use_mla:
             if use_v1:
-                return "vllm_gcu.v1.attention.mla.GCUMLABackend"
+                if selected_backend == _Backend.FLASHMLA:
+                    return "vllm.v1.attention.backends.mla.flashmla.FlashMLABackend"
+                if gcu_envs.VLLM_GCU_DEEPSEEK_FUSION:
+                    return "vllm_gcu.attention.backends.mla_v1_fusion.GCUMLAFusionBackend"
+                else:
+                    return "vllm_gcu.attention.backends.mla_v1.GCUMLABackend"
             else:
                 if gcu_envs.VLLM_GCU_DEEPSEEK_FUSION:
                     return "vllm_gcu.attention.backends.mla_fusion.GCUMLAFusionBackend"
                 else:
                     return "vllm_gcu.attention.backends.mla.GCUMLABackend"
         if use_v1:
-            return "vllm_gcu.v1.attention.flash_attn.GCUFlashAttentionBackend"
+            return "vllm.v1.attention.backends.flash_attn.FlashAttentionBackend"
         if selected_backend == _Backend.FLASHINFER:
             raise NotImplementedError
         elif selected_backend == _Backend.XFORMERS:
             return "vllm_gcu.attention.backends.xformers.GCUXFormersBackend"
         elif selected_backend == _Backend.FLASH_ATTN:
-            if cls.get_device_capability().to_int() == 130:
-                return "vllm_gcu.attention.backends.flash_attn.FlashAttentionBackend"
             return "vllm.attention.backends.flash_attn.FlashAttentionBackend"
             # return "vllm_gcu.attention.backends.flash_attn.FlashAttentionBackend"
         elif selected_backend:
@@ -89,13 +104,11 @@ class GCUPlatform(Platform):
         return "vllm_gcu.attention.backends.xformers.GCUXFormersBackend"
 
     @classmethod
-    @lru_cache(maxsize=8)
     def get_device_capability(cls, device_id: int = 0) -> DeviceCapability:
         major, minor = torch.gcu.get_device_capability(device_id)
         return DeviceCapability(major=major + 10, minor=minor)
 
     @classmethod
-    @lru_cache(maxsize=8)
     def has_device_capability(
         cls, capability: Union[Tuple[int, int], int], device_id: int = 0
     ) -> bool:
@@ -139,6 +152,10 @@ class GCUPlatform(Platform):
             torch.manual_seed(seed)
 
     @classmethod
+    def set_device(cls, device: torch.device) -> None:
+        torch.gcu.set_device(device)
+
+    @classmethod
     def pre_register_and_update(cls, parser=None) -> None:
         import tops_extension.torch  # noqa: F401
         import torch_gcu  # noqa: F401
@@ -147,7 +164,10 @@ class GCUPlatform(Platform):
         import vllm_gcu.compilation  # noqa: F401
         import vllm_gcu.distributed  # noqa: F401
         import vllm_gcu.kernels  # noqa: F401
-        import vllm_gcu.patch
+        import vllm_gcu.patch  # noqa: F401
+
+        if envs.VLLM_USE_V1:
+            os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
 
         if parser:
             key = "--device"
@@ -156,21 +176,13 @@ class GCUPlatform(Platform):
                 parser._option_string_actions[key].choices += ["gcu"]
                 parser._option_string_actions[key].default = "gcu"
 
-            key = "--disable-async-output-proc"
-            if key in parser._option_string_actions:
-                # set disable_async_output_proc default True
-                parser._option_string_actions[key].default = True
+            # key = "--disable-async-output-proc"
+            # if key in parser._option_string_actions:
+            #     # set disable_async_output_proc default True
+            #     parser._option_string_actions[key].default = True
 
     @classmethod
     def check_and_update_config(cls, vllm_config) -> None:
-        global global_vllm_config
-        if vllm_config != None and global_vllm_config == None:
-            global_vllm_config = vllm_config
-            import vllm
-            from vllm.engine.arg_utils import EngineArgs
-            from vllm.config import get_current_vllm_config, set_current_vllm_config
-            vllm.config._current_vllm_config = vllm_config
-
         parallel_config = vllm_config.parallel_config
         scheduler_config = vllm_config.scheduler_config
         cache_config = vllm_config.cache_config
@@ -183,15 +195,29 @@ class GCUPlatform(Platform):
                     "vllm_gcu.worker.multi_step_worker.GCUMultiStepWorker"
                 )
             elif vllm_config.speculative_config:
-                parallel_config.worker_cls = (
-                    "vllm_gcu.worker.spec_decode.spec_decode_worker.create_spec_worker"
-                )
-                parallel_config.sd_worker_cls = "vllm_gcu.worker.worker.GCUWorker"
+                if envs.VLLM_USE_V1:
+                    parallel_config.worker_cls = "vllm_gcu.worker.worker_v1.GCUWorker"
+                else:
+                    parallel_config.worker_cls = (
+                        "vllm_gcu.worker.spec_decode.spec_decode_worker.create_spec_worker"
+                    )
+                    parallel_config.sd_worker_cls = "vllm_gcu.worker.worker.GCUWorker"
             else:
                 if envs.VLLM_USE_V1:
-                    parallel_config.worker_cls = "vllm_gcu.v1.worker.gcu_worker.Worker"
+                    parallel_config.worker_cls = "vllm_gcu.worker.worker_v1.GCUWorker"
                 else:
                     parallel_config.worker_cls = "vllm_gcu.worker.worker.GCUWorker"
+
+        # make sure patch work
+        if envs.VLLM_USE_V1:
+            distributed_executor_backend = parallel_config.distributed_executor_backend
+            if isinstance(distributed_executor_backend, str):
+                if distributed_executor_backend == "mp":
+                    from vllm_gcu.executor import GCUMultiprocExecutor
+
+                    parallel_config.distributed_executor_backend = GCUMultiprocExecutor
+                elif distributed_executor_backend == "ray":
+                    pass
 
         if envs.VLLM_USE_V1 and torch.__version__.startswith("2.5.1"):
 
@@ -219,7 +245,6 @@ class GCUPlatform(Platform):
         parallel_config.disable_custom_all_reduce = True
         if (
             parallel_config.distributed_executor_backend == "mp"
-            and parallel_config.world_size > 1
         ):
             # force spawn multiprocessing method as others not support
             os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
@@ -246,47 +271,13 @@ class GCUPlatform(Platform):
                 "vllm_gcu.scheduler.PriorityScheduler"  # priority to preempt
             )
 
-        if vllm_config.additional_config is None:
-            # make sure additional_config is not None
-            vllm_config.additional_config = AdditionalConfig({})
-        else:
-            vllm_config.additional_config = AdditionalConfig(vllm_config.additional_config)
-
         if compilation_config:
             if compilation_config.level > 0:
                 compilation_config.backend = "topsgraph"
 
             if compilation_config.level == 3:
-                # os.environ["VLLM_DISABLE_COMPILE_CACHE"] = "1"
-                # envs.VLLM_DISABLE_COMPILE_CACHE = True
-                # TODO: WA for bug in vllm, to be removed after 0.8.2
-                if not compilation_config.cache_dir:
-                    factors = []
-                    config_hash = vllm_config.compute_hash()
-                    factors.append(config_hash)
-
-                    hash_key = hashlib.md5(str(factors).encode()).hexdigest()[:10]
-
-                    cache_dir = os.path.join(
-                        envs.VLLM_CACHE_ROOT,
-                        "torch_compile_cache",
-                        hash_key,
-                    )
-                    compilation_config.cache_dir = cache_dir
-
-                os.makedirs(compilation_config.cache_dir, exist_ok=True)
-
-                world_size = vllm_config.parallel_config.world_size
-                dp_size = vllm_config.parallel_config.data_parallel_size
-                for rank in range(world_size):
-                    for dp_rank in range(dp_size):
-                        local_cache_dir = os.path.join(
-                            compilation_config.cache_dir, f"rank_{rank}_{dp_rank}"
-                        )
-                        os.makedirs(local_cache_dir, exist_ok=True)
-
                 # TODO: remove after rmsnorm pattern fix in official.
-                compilation_config.pass_config.enable_fusion = False
+                compilation_config.pass_config.enable_fusion = True
                 compilation_config.custom_ops = ["all"]
 
                 if gcu_envs.VLLM_GCU_ENABLE_COMPILE_DUMP:
@@ -298,7 +289,9 @@ class GCUPlatform(Platform):
                             "after_dump",
                         ]
                     )
+
             if vllm_config.parallel_config.data_parallel_size > 1:
+                compilation_config.compile_sizes.append(0)
                 compilation_config.cudagraph_capture_sizes.append(0)  # capture 0 graph
 
         if model_config:
@@ -307,35 +300,59 @@ class GCUPlatform(Platform):
                 model_config.use_async_output_proc = True
 
         additional_config = vllm_config.additional_config
-        enable_chunked_prefill = additional_config.get("enable_chunked_prefill", False)
-        enable_prefix_caching = additional_config.get("enable_prefix_caching", False)
+        if additional_config.get("enable_eplb", False):
+            parallel_config.enable_eplb = True
+        num_redundant_experts = additional_config.get("num_redundant_experts", 0)
+        if num_redundant_experts > 0:
+            assert parallel_config.enable_eplb, "EPLB must be enabled"
+            parallel_config.num_redundant_experts = num_redundant_experts
 
-        if enable_chunked_prefill:
-            logger.info("Force enable chunked prefill on GCU Platform.")
-            scheduler_config.enable_chunked_prefill = True
-            scheduler_config.chunked_prefill_enabled = True
-
-            max_num_batched_tokens = additional_config.get("max_num_batched_tokens", 0)
-            if max_num_batched_tokens > 0:
-                assert max_num_batched_tokens > scheduler_config.max_num_seqs
-                scheduler_config.max_num_batched_tokens = max_num_batched_tokens
-
-        if enable_prefix_caching:
-            logger.info("Force enable prefix caching on GCU Platform.")
-            cache_config.enable_prefix_caching = True
-
-        vllm_config.additional_config.update({"all_dp_in_decode": False})
-
-        if "VLLM_GCU_DEEPSEEK_FUSION" not in os.environ and \
-                cls.get_device_capability().to_int() == 140:
-            os.environ["VLLM_GCU_DEEPSEEK_FUSION"] = "0"
+        # TODO: v1
+        if not envs.VLLM_USE_V1 and \
+                "VLLM_GCU_DEEPSEEK_FUSION" not in os.environ and \
+                cls.get_device_capability().to_int() == 130 and \
+                model_config and model_config.hf_text_config.model_type in \
+                    ('deepseek_v3', 'deepseek_mtp'):
+            os.environ["VLLM_GCU_DEEPSEEK_FUSION"] = "1"
 
         # Disable usage status for security
         envs.VLLM_NO_USAGE_STATS = "1"
         if gcu_envs.VLLM_GCU_DEEPSEEK_FUSION:
-            logger.info('Deepseek fusion ops enabled.')
+            logger.info("Deepseek fusion ops enabled.")
         if gcu_envs.VLLM_GCU_ENABLE_PARALLEL_COMPUTE:
-            logger.info('Overlap shared experts with dispatch enabled.')
+            logger.info("Overlap shared experts with dispatch enabled.")
+
+        enable_async_executing = additional_config.get("async_executing", False)
+        enable_async_scheduling = additional_config.get("async_scheduling", False)
+
+        # 开启异步执行，异步调度也必须得打开
+        assert  not enable_async_executing or \
+            (enable_async_scheduling and enable_async_executing), "Async scheduling must be enabled to allow async executing!"
+
+
+        # 如果开启异步调度，则必须更换scheduler_cls和distributed_executor_backend
+        if enable_async_scheduling:
+            from vllm_gcu.v1.executor.async_multiproc_executor import AsyncMultiprocExecutor
+            scheduler_config.scheduler_cls = "vllm_gcu.v1.core.sched.async_scheduler.AsyncScheduler"
+            # Async scheduling does not work with the uniprocess backend.
+            parallel_config.distributed_executor_backend = AsyncMultiprocExecutor
+            
+            # 该版本目前不支持流水线并行
+            if parallel_config.pipeline_parallel_size > 1:
+                raise ValueError("Async scheduling is not supported with "
+                                "pipeline-parallel-size > 1.")
+
+            # 该版本目前不支持推测解码
+            if vllm_config.speculative_config is not None:
+                raise ValueError(
+                    "Currently, speculative decoding is not supported with "
+                    "async scheduling.")
+
+            logger.info("async_scheduling enabled.")
+        
+        if enable_async_executing:
+            logger.info("enable_sync_executing enabled.")
+
 
     @classmethod
     def verify_model_arch(cls, model_arch: str) -> None:
@@ -365,7 +382,7 @@ class GCUPlatform(Platform):
 
     @classmethod
     def get_punica_wrapper(cls) -> str:
-        raise NotImplementedError
+        return "vllm_gcu.lora.punica_gcu.PunicaWrapperGCU"
 
     @classmethod
     def get_device_communicator_cls(cls) -> str:
@@ -386,3 +403,107 @@ class GCUPlatform(Platform):
     @classmethod
     def fp8_dtype(cls) -> torch.dtype:
         return torch.float8_e4m3fn
+
+    @classmethod
+    def supports_v1(cls, model_config) -> bool:
+        return True
+
+    def is_sleep_mode_available(self) -> bool:
+        return False
+
+    @classmethod
+    def default_v1(cls, model_config) -> bool:
+        return cls.supports_v1(model_config)
+
+    @classmethod
+    @with_efml_context
+    def set_cpu_affinity(cls, device_id: int) -> None:
+        """
+        Set CPU affinity for the current process based on GPU device ID.
+        """
+        import pyefml
+        try:
+            import psutil
+        except ImportError:
+            logger.warning(
+                "psutil is not available. Cannot set CPU affinity. "
+                "Install psutil to enable NUMA affinity optimization.")
+            return
+
+        try:
+            physical_device_id = cls.device_id_to_physical_device_id(device_id)
+            handle = pyefml.efmlDeviceGetHandleByIndex(physical_device_id)
+
+            pci_info = pyefml.efmlDeviceGetPciInfo(handle)
+            pci_busid = pci_info.busId
+
+            net_config = gcu_envs.VLLM_GCU_NET_CONFIG
+            if net_config and os.path.exists(net_config):
+                import json
+                with open(net_config, "r") as f:
+                    net_cfgs = json.load(f)
+
+                net_devices = net_cfgs.get(f"{pci_busid[5:].decode()}", None)
+                if net_devices:
+                    os.environ["UCX_NET_DEVICES"] = ",".join(net_devices)
+
+            device_count = pyefml.efmlDeviceGetCount()
+
+            # Get CPU affinity for this GPU
+            # We need to determine the CPU set size first
+            cpu_count = os.cpu_count()
+            if cpu_count is None:
+                logger.warning(
+                    "Cannot determine CPU count. Skipping CPU affinity setting."
+                )
+                return
+
+            cpu_set_size = (cpu_count + 63) // 64
+            from vllm.config import get_current_vllm_config
+            parallel_config = get_current_vllm_config().parallel_config
+            tp_size = parallel_config.tensor_parallel_size
+            dp_size = parallel_config.data_parallel_size
+            dp_rank = parallel_config.data_parallel_rank
+            dp_size_local = parallel_config.data_parallel_size_local
+            logger.debug("logical device_id={}, physical_device_id={},cpu_set_size={}, cpu_count={},device_count={}".format(device_id, physical_device_id,cpu_set_size,cpu_count, device_count))
+            logger.debug("tp_size={},dp_rank={},dp_size={},dp_size_local={}".format(tp_size, dp_rank, dp_size, dp_size_local))
+
+            # Get CPU affinity from EFML
+            cpu_affinity_mask = pyefml.efmlDeviceGetCpuAffinity(
+                handle, cpu_set_size)
+
+            # Convert the bitmask to a list of CPU IDs
+            cpu_ids = []
+            for i, mask in enumerate(cpu_affinity_mask):
+                for bit in range(64):
+                    cpu_id = i * 64 + bit
+                    if cpu_id >= cpu_count:
+                        break
+                    if mask & (1 << bit):
+                        cpu_ids.append(cpu_id)
+
+            if cpu_ids:
+                # Set CPU affinity using psutil
+                current_process = psutil.Process()
+                #bind a half of total cpu core for worker process
+                slice_step = round( len(cpu_ids) / tp_size / min(dp_size, dp_size_local))
+                affinity_cpu_ids_per_device = cpu_ids[device_id*slice_step:(device_id+1)*slice_step:1]
+                #current_process.cpu_affinity(cpu_ids)
+                current_process.cpu_affinity(affinity_cpu_ids_per_device)
+                logger.debug("cpu_ids={},slice_step={},affinity_cpu_ids_per_device={}".format(cpu_ids, slice_step,affinity_cpu_ids_per_device))
+                logger.info(
+                    "Set CPU affinity for process %d to " \
+                    "CPUs %s for logical GCU devices %s, physical_device_id %s pci busid %s",
+                    current_process.pid, affinity_cpu_ids_per_device, device_id, physical_device_id, pci_busid)
+            else:
+                logger.warning(
+                    "No CPU affinity information available for GCU devices %s",
+                    device_id)
+
+        except Exception as e:
+            logger.warning("Failed to set CPU affinity for GCU devices %s: %s",
+                           device_id, str(e))
+
+    @classmethod
+    def get_piecewise_backend_cls(cls) -> str:
+        return "vllm_gcu.compilation.double_cuda_piecewise_backend.DoubleCUDAPiecewiseBackend"  # noqa

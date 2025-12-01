@@ -445,15 +445,15 @@ def run_vllm(
 
         if not engine_args.disable_log_stats:
             timings = dict(sorted(timings.items(), key=lambda item: item[1]["decode"]))
+            if timings:
+                min_req_index = list(timings)[0]
+                min_sum_decode_latency = timings[min_req_index]["decode"]
+                min_req_outputs = list(filter(lambda x: int(x.request_id) == min_req_index, outputs))[0]
+                real_decode_num = len(min_req_outputs.outputs[0].token_ids) - 1
 
-            min_req_index = list(timings)[0]
-            min_sum_decode_latency = timings[min_req_index]["decode"]
-            min_req_outputs = list(filter(lambda x: int(x.request_id) == min_req_index, outputs))[0]
-            real_decode_num = len(min_req_outputs.outputs[0].token_ids) - 1
-
-            if real_decode_num > 0:
-                mean_decode_latency = min_sum_decode_latency / real_decode_num
-                avg_decode_latency += mean_decode_latency
+                if real_decode_num > 0:
+                    mean_decode_latency = min_sum_decode_latency / real_decode_num
+                    avg_decode_latency += mean_decode_latency
         else:
             # disable_log_stats
             mean_decode_latency = None
@@ -933,15 +933,6 @@ if __name__ == "__main__":
     if args.backend == "vllm":
         if args.hf_max_batch_size is not None:
             raise ValueError("HF max batch size is only for HF backend.")
-
-        additional_config = args.additional_config if args.additional_config else {}
-        if args.enable_chunked_prefill:
-            additional_config.update({"enable_chunked_prefill": True})
-        if args.enable_prefix_caching:
-            additional_config.update({"enable_prefix_caching": True})
-        if args.max_num_batched_tokens:
-            additional_config.update({"max_num_batched_tokens": args.max_num_batched_tokens})
-        args.additional_config = additional_config
     elif args.backend == "hf":
         if args.hf_max_batch_size is None:
             raise ValueError("HF max batch size is required for HF backend.")

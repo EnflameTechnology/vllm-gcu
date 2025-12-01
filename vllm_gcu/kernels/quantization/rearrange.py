@@ -50,7 +50,7 @@ def rearrange_uint4_int32_uint8_gptq(
         shifts = torch.arange(0, weight.shape[0], device=qweight.device).reshape(
             int(weight.shape[0] / half_group), -1
         )
-        rweight |= torch.bitwise_left_shift(weight[shifts[::2].reshape(-1)], 0)
+        rweight |= torch.bitwise_left_shift(weight[shifts[::2].reshape(-1)], 0) & 0x0f
         rweight |= torch.bitwise_left_shift(weight[shifts[1::2].reshape(-1)], 4)
     except Exception as e:
         raise RuntimeError(f"weight rearrange error: {e}")
@@ -59,7 +59,7 @@ def rearrange_uint4_int32_uint8_gptq(
 
 
 def rearrange_uint4_int32_uint8_awq(
-    method, qweight, qzeros, scales, rearrange_group=128, zeros_in_int8=False
+    method, qweight, qzeros, scales, rearrange_group=128, zeros_in_int8=False, use_w4a8=False
 ):
     assert rearrange_group % 2 == 0, "rearrange group must be multiple of 2."
     qweight_shape = qweight.shape
@@ -74,14 +74,16 @@ def rearrange_uint4_int32_uint8_awq(
     assert (
         qweight_shape[1] * method.quant_config.pack_factor == iweights.shape[1]
     ), f"unpacked qweight shape error: {qweight_shape} and {iweights.shape}"
+    
     # unpacking columnwise
-    izeros = torch.bitwise_right_shift(qzeros[:, :, None], shifts[None, None, :]).to(
-        torch.int8  # smallest dtype available
-    )
-    izeros = izeros.view(izeros.shape[0], -1)
-    assert (
-        qweight_shape[1] * method.quant_config.pack_factor == izeros.shape[1]
-    ), f"unpacked qzeros shape error: {qweight_shape} and {izeros.shape}"
+    if qzeros is not None:
+        izeros = torch.bitwise_right_shift(qzeros[:, :, None], shifts[None, None, :]).to(
+            torch.int8  # smallest dtype available
+        )
+        izeros = izeros.view(izeros.shape[0], -1)
+        assert (
+            qweight_shape[1] * method.quant_config.pack_factor == izeros.shape[1]
+        ), f"unpacked qzeros shape error: {qweight_shape} and {izeros.shape}"
     reverse_order_tensor = torch.arange(
         iweights.shape[-1], dtype=torch.int32, device=qweight.device
     )
@@ -91,14 +93,19 @@ def rearrange_uint4_int32_uint8_awq(
     reverse_order_tensor = reverse_order_tensor[:, AWQ_REVERSE_ORDER]
     reverse_order_tensor = reverse_order_tensor.view(-1)
     iweights = iweights[:, reverse_order_tensor]
-    izeros = izeros[:, reverse_order_tensor]
+    if qzeros is not None:
+        izeros = izeros[:, reverse_order_tensor]
+        izeros = torch.bitwise_and(izeros, (2**method.quant_config.weight_bits) - 1)
+        # optimize: set zeros to int8
+        if not zeros_in_int8:
+            izeros = izeros * scales
+
     # overflow checks
     iweights = torch.bitwise_and(iweights, (2**method.quant_config.weight_bits) - 1)
-    izeros = torch.bitwise_and(izeros, (2**method.quant_config.weight_bits) - 1)
 
-    # optimize: set zeros to int8
-    if not zeros_in_int8:
-        izeros = izeros * scales
+    if use_w4a8:
+        iweights = iweights - 8
+        izeros = None
 
     # weight rearrange
     if iweights.shape[0] % rearrange_group != 0:
@@ -115,7 +122,7 @@ def rearrange_uint4_int32_uint8_awq(
         shifts = torch.arange(0, iweights.shape[0], device=qweight.device).reshape(
             int(iweights.shape[0] / half_group), -1
         )
-        rweight |= torch.bitwise_left_shift(iweights[shifts[::2].reshape(-1)], 0)
+        rweight |= torch.bitwise_left_shift(iweights[shifts[::2].reshape(-1)], 0) & 0x0f
         rweight |= torch.bitwise_left_shift(iweights[shifts[1::2].reshape(-1)], 4)
     except Exception as e:
         raise RuntimeError(f"weight rearrange error: {e}")

@@ -19,6 +19,7 @@
 #include "src/dynamic_scaled_fp8_quant.h"
 #include "src/dynamic_scaled_int8_quant.h"
 #include "src/dynamic_split.h"
+#include "src/expand_batch_to_tokens.h"
 #include "src/exts_moe_align_block_size.h"
 #include "src/fatrelu_and_mul.h"
 #include "src/fused_add_rms_norm.h"
@@ -29,6 +30,7 @@
 #include "src/fused_grouped_topk.h"
 #include "src/fused_moe_kernel.h"
 #include "src/fused_moe_quant_kernel.h"
+#include "src/fused_moe_quant_kernel_ex.h"
 #include "src/fused_qkv_gemm_quant.h"
 #include "src/fused_qkv_proj.h"
 #include "src/gather_cache.h"
@@ -54,12 +56,16 @@
 #include "src/linear_quant.h"
 #include "src/memory_efficient_attention_alibi.h"
 #include "src/merge_attn_states.h"
+#include "src/mha_fwd_kvcache_mla.h"
 #include "src/moe_align_block_size.h"
 #include "src/moe_align_block_size_pad.h"
 #include "src/moe_sum.h"
 #include "src/mul_and_silu.h"
+#include "src/mul_static_fp8_quant.h"
 #include "src/paged_attention_v1.h"
 #include "src/paged_attention_v2.h"
+#include "src/rejection_greedy_sample.h"
+#include "src/rejection_random_sample.h"
 #include "src/reshape_and_cache_flash.h"
 #include "src/rms_norm.h"
 #include "src/rms_norm_per_token_group_quant_fp8.h"
@@ -67,12 +73,14 @@
 #include "src/rms_norm_static_int8_quant.h"
 #include "src/rotary_embedding.h"
 #include "src/rotary_embedding_with_kv_cache.h"
+#include "src/sample_recovered_tokens.h"
 #include "src/sgl_moe_align_block_size.h"
 #include "src/silu_and_mul.h"
 #include "src/silu_and_mul_pad.h"
 #include "src/silu_asym_quant.h"
 #include "src/silu_mul_per_token_group_quant.h"
 #include "src/silu_mul_per_token_group_quant_with_size.h"
+#include "src/silu_mul_static_fp8_quant.h"
 #include "src/silu_mul_static_int8_quant.h"
 #include "src/silu_static_int8_quant.h"
 #include "src/static_scaled_fp8_quant.h"
@@ -83,6 +91,10 @@
 #include "src/topk_softmax.h"
 #include "src/weak_ref_tensor.h"
 #include "src/weight_only_quant.h"
+#include "src/mha_fwd_kvcache_mla.h"
+#include "src/topk_topp_random_sampler_from_logits.h"
+#include "src/top_k_top_p.h"
+#include "src/eplb_map_to_physical_and_record.h"
 
 // Note on op signatures:
 // The X_meta signatures are for the meta functions corresponding to op X.
@@ -122,7 +134,7 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
         "    int tp_rank, int blocksparse_local_blocks,"
         "    int blocksparse_vert_stride, int blocksparse_block_size,"
         "    int blocksparse_head_sliding_step, float k_zero,"
-        "    float v_zero, Tensor? out_scales) -> ()");
+        "    float v_zero, Tensor? out_scales, Tensor? query_scales) -> ()");
   }
   ops.impl("paged_attention_v1", torch::kPrivateUse1, &paged_attention_v1);
 
@@ -150,7 +162,7 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
   // Activation function used in SwiGLU.
   handle = c10::Dispatcher::singleton().findSchema({"_C::silu_and_mul", ""});
   if (!handle.has_value()) {
-    ops.def("silu_and_mul(Tensor! out, Tensor input) -> ()");
+    ops.def("silu_and_mul(Tensor! result, Tensor input) -> ()");
   }
   ops.impl("silu_and_mul", torch::kPrivateUse1, &silu_and_mul);
 
@@ -254,7 +266,8 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
   if (!handle.has_value()) {
     ops.def(
         "fused_add_rms_norm(Tensor! input, Tensor! residual, Tensor weight, "
-        "float epsilon) -> ()");
+        "float epsilon) -> ()",
+        {at::Tag::needs_fixed_stride_order});
   }
   ops.impl("fused_add_rms_norm", torch::kPrivateUse1, &fused_add_rms_norm);
 
@@ -271,6 +284,25 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
   }
   ops.impl("rms_norm_static_fp8_quant", torch::kPrivateUse1,
            &rms_norm_static_fp8_quant);
+
+  handle = c10::Dispatcher::singleton().findSchema(
+      {"_C::silu_mul_static_fp8_quant", ""});
+  if (!handle.has_value()) {
+    ops.def(
+        "silu_mul_static_fp8_quant(Tensor(a!) out, Tensor input, Tensor scale, "
+        "Tensor real_num_tokens) -> ()");
+  }
+  ops.impl("silu_mul_static_fp8_quant", torch::kPrivateUse1,
+           &silu_mul_static_fp8_quant);
+
+  handle =
+      c10::Dispatcher::singleton().findSchema({"_C::mul_static_fp8_quant", ""});
+  if (!handle.has_value()) {
+    ops.def(
+        "mul_static_fp8_quant(Tensor(a!) out, Tensor input, Tensor scale, "
+        "Tensor real_num_tokens) -> ()");
+  }
+  ops.impl("mul_static_fp8_quant", torch::kPrivateUse1, &mul_static_fp8_quant);
 
   // In-place fused Add and RMS Normalization.
   handle = c10::Dispatcher::singleton().findSchema(
@@ -480,39 +512,41 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
   // conditionally compiled so impl registrations are in source file
 
   // Dequantization for GGML.
-  handle = c10::Dispatcher::singleton().findSchema({"_C::ggml_dequantize", ""});
-  if (!handle.has_value()) {
-    ops.def(
-        "ggml_dequantize(Tensor W, int type, SymInt m, SymInt n) -> Tensor");
-  }
+  // handle = c10::Dispatcher::singleton().findSchema({"_C::ggml_dequantize",
+  // ""}); if (!handle.has_value()) {
+  //   ops.def(
+  //       "ggml_dequantize(Tensor W, int type, SymInt m, SymInt n) -> Tensor");
+  // }
   // ops.impl("ggml_dequantize", torch::kPrivateUse1, &ggml_dequantize);
 
   // mmvq kernel for GGML.
-  handle =
-      c10::Dispatcher::singleton().findSchema({"_C::ggml_mul_mat_vec_a8", ""});
-  if (!handle.has_value()) {
-    ops.def(
-        "ggml_mul_mat_vec_a8(Tensor W, Tensor X, int type, SymInt row) "
-        "-> Tensor");
-  }
+  // handle =
+  //     c10::Dispatcher::singleton().findSchema({"_C::ggml_mul_mat_vec_a8",
+  //     ""});
+  // if (!handle.has_value()) {
+  //   ops.def(
+  //       "ggml_mul_mat_vec_a8(Tensor W, Tensor X, int type, SymInt row) "
+  //       "-> Tensor");
+  // }
   // ops.impl("ggml_mul_mat_vec_a8", torch::kPrivateUse1, &ggml_mul_mat_vec_a8);
 
   // mmq kernel for GGML.
-  handle = c10::Dispatcher::singleton().findSchema({"_C::ggml_mul_mat_a8", ""});
-  if (!handle.has_value()) {
-    ops.def(
-        "ggml_mul_mat_a8(Tensor W, Tensor X, int type, SymInt row) -> Tensor");
-  }
+  // handle = c10::Dispatcher::singleton().findSchema({"_C::ggml_mul_mat_a8",
+  // ""}); if (!handle.has_value()) {
+  //   ops.def(
+  //       "ggml_mul_mat_a8(Tensor W, Tensor X, int type, SymInt row) ->
+  //       Tensor");
+  // }
   // ops.impl("ggml_mul_mat_a8", torch::kPrivateUse1, &ggml_mul_mat_a8);
 
   // fp8_marlin Optimized Quantized GEMM for FP8 weight-only.
-  handle = c10::Dispatcher::singleton().findSchema({"_C::fp8_marlin_gemm", ""});
-  if (!handle.has_value()) {
-    ops.def(
-        "fp8_marlin_gemm(Tensor a, Tensor b_q_weight, Tensor b_scales, "
-        "Tensor! workspace, int num_bits, SymInt size_m, SymInt size_n, "
-        "SymInt size_k) -> Tensor");
-  }
+  // handle = c10::Dispatcher::singleton().findSchema({"_C::fp8_marlin_gemm",
+  // ""}); if (!handle.has_value()) {
+  //   ops.def(
+  //       "fp8_marlin_gemm(Tensor a, Tensor b_q_weight, Tensor b_scales, "
+  //       "Tensor! workspace, int num_bits, SymInt size_m, SymInt size_n, "
+  //       "SymInt size_k) -> Tensor");
+  // }
   // conditionally compiled so impl registration is in source file
 
   // marlin_qqq_gemm for QQQ.
@@ -528,11 +562,11 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
 
   // CUTLASS w8a8 GEMM, supporting symmetric per-tensor or per-row/column
   // quantization, as well as bias
-  //ops.def(
+  // ops.def(
   //    "cutlass_scaled_mm(Tensor! out, "
   //    "Tensor x, Tensor weight, Tensor x_scale, "
   //    "Tensor w_scale, Tensor? bias) -> ()", {at::Tag::flexible_layout});
-  //ops.impl("cutlass_scaled_mm", torch::kPrivateUse1, &cutlass_scaled_mm);
+  // ops.impl("cutlass_scaled_mm", torch::kPrivateUse1, &cutlass_scaled_mm);
 
   // CUTLASS w8a8 GEMM, supporting asymmetric per-tensor or per-row/column
   // quantization.
@@ -783,6 +817,21 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
            &fused_moe_quant_kernel);
 
   handle = c10::Dispatcher::singleton().findSchema(
+      {"_C::fused_moe_quant_kernel_ex", ""});
+  if (!handle.has_value()) {
+    ops.def(
+        "fused_moe_quant_kernel_ex(Tensor(a!) C, Tensor A, "
+        "Tensor B, Tensor A_scale, Tensor B_scale, Tensor B_zero, "
+        "Tensor? bias, Tensor topk_weights, Tensor topk_ids, "
+        "Tensor sorted_token_ids, Tensor experts_ids, "
+        "Tensor num_tokens_post_pad, "
+        "Tensor? real_token_num, bool mul_routed_weight, int topk, "
+        "int block_size, int group_k, int group_n) -> ()");
+  }
+  ops.impl("fused_moe_quant_kernel_ex", c10::kPrivateUse1,
+           &fused_moe_quant_kernel_ex);
+
+  handle = c10::Dispatcher::singleton().findSchema(
       {"_C::context_attention_forward", ""});
   if (!handle.has_value()) {
     ops.def("context_attention_forward", &context_attention_forward);
@@ -791,10 +840,12 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
            &context_attention_forward);
 
   handle =
-      c10::Dispatcher::singleton().findSchema({"_C::weight_only_quant", ""});
-  if (!handle.has_value()) {
-    ops.def("weight_only_quant", &weight_only_quant);
-  }
+        c10::Dispatcher::singleton().findSchema({"_C::weight_only_quant", ""});
+    if (!handle.has_value()) {
+      ops.def(
+          "weight_only_quant(Tensor! output, Tensor input, Tensor qweight, "
+          "Tensor? bias, Tensor scale, int group_size) -> ()");
+    }
   ops.impl("weight_only_quant", c10::kPrivateUse1, &weight_only_quant);
 
   handle = c10::Dispatcher::singleton().findSchema(
@@ -950,17 +1001,20 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
 
   handle = c10::Dispatcher::singleton().findSchema({"_C::dot_bias_quant", ""});
   if (!handle.has_value()) {
-    ops.def("dot_bias_quant", &dot_bias_quant);
+    ops.def(
+    "dot_bias_quant(Tensor! out, Tensor lhs, Tensor rhs, "
+    "Tensor scale, Tensor? bias) -> ()");
   }
   ops.impl("dot_bias_quant", c10::kPrivateUse1, &dot_bias_quant);
 
-  handle = c10::Dispatcher::singleton().findSchema(
-      {"_C::cutlass_scaled_mm", ""});
+  handle =
+      c10::Dispatcher::singleton().findSchema({"_C::cutlass_scaled_mm", ""});
   if (!handle.has_value()) {
     ops.def(
         "cutlass_scaled_mm(Tensor! out, "
         "Tensor x, Tensor weight, Tensor x_scale, "
-        "Tensor w_scale, Tensor? bias) -> ()", {at::Tag::flexible_layout});
+        "Tensor w_scale, Tensor? bias) -> ()",
+        {at::Tag::flexible_layout});
   }
   ops.impl("cutlass_scaled_mm", torch::kPrivateUse1, &cutlass_scaled_mm);
 
@@ -1014,6 +1068,18 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
   }
   ops.impl("dynamic_split", c10::kPrivateUse1, &dynamic_split);
 
+  // Expand batch dimension to tokens dimension.
+  handle = c10::Dispatcher::singleton().findSchema(
+      {"_C::expand_batch_to_tokens", ""});
+  if (!handle.has_value()) {
+    ops.def(
+        "expand_batch_to_tokens(Tensor! output, Tensor input, "
+        "Tensor cu_num_tokens, int num_tokens, float replace_from, "
+        "float replace_to) -> ()");
+  }
+  ops.impl("expand_batch_to_tokens", c10::kPrivateUse1,
+           &expand_batch_to_tokens);
+
   handle = c10::Dispatcher::singleton().findSchema(
       {"_C::dynamic_per_token_group_fp8_quant", ""});
   if (!handle.has_value()) {
@@ -1034,6 +1100,14 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
   }
   ops.impl("dynamic_per_token_group_fp8_quant_with_size", torch::kPrivateUse1,
            dynamic_per_token_group_fp8_quant_with_size);
+
+  handle =
+      c10::Dispatcher::singleton().findSchema({"_C::silu_and_mul_quant", ""});
+  if (!handle.has_value()) {
+    ops.def(
+        "silu_and_mul_quant(Tensor! result, Tensor input, Tensor scale) -> ()");
+  }
+  // ops.impl("silu_and_mul_quant", torch::kPrivateUse1, &silu_and_mul_quant);
 
   handle = c10::Dispatcher::singleton().findSchema(
       {"_C::silu_mul_per_token_group_quant", ""});
@@ -1083,6 +1157,7 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
   if (!handle.has_value()) {
     ops.def(
         "rotary_embedding_with_kv_cache(Tensor! q_out, Tensor! kv_cache, "
+        "Tensor? k_pe_out, Tensor? k_c_normed, "
         "Tensor q, Tensor kv, Tensor positions, Tensor cos_sin_cache, "
         "Tensor weight, Tensor slot_mapping, Tensor scale, "
         "float eps, int[] split_size, str kv_cache_dtype) -> ()");
@@ -1140,11 +1215,78 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
         "weight, Tensor scale, Tensor zeros, int group_size) -> ()");
   }
   ops.impl("fused_qkv_gemm_quant", torch::kPrivateUse1, &fused_qkv_gemm_quant);
+
+  // Rejection greedy sampling for speculative decoding.
+  handle = c10::Dispatcher::singleton().findSchema(
+      {"_C::rejection_greedy_sample", ""});
+  if (!handle.has_value()) {
+    ops.def(
+        "rejection_greedy_sample(Tensor! output_token_ids, "
+        "Tensor cu_num_draft_tokens, Tensor draft_token_ids, "
+        "Tensor target_argmax, Tensor bonus_token_ids, Tensor is_greedy) -> "
+        "()");
+  }
+  ops.impl("rejection_greedy_sample", torch::kPrivateUse1,
+           &rejection_greedy_sample);
+
+  // Rejection random sampling for speculative decoding.
+  handle = c10::Dispatcher::singleton().findSchema(
+      {"_C::rejection_random_sample", ""});
+  if (!handle.has_value()) {
+    ops.def(
+        "rejection_random_sample(Tensor! output_token_ids, "
+        "Tensor cu_num_draft_tokens, Tensor draft_token_ids, "
+        "Tensor draft_probs, Tensor target_probs, Tensor bonus_token_ids, "
+        "Tensor recovered_token_ids, Tensor uniform_probs,"
+        "Tensor is_greedy) -> ()");
+  }
+  ops.impl("rejection_random_sample", torch::kPrivateUse1,
+           &rejection_random_sample);
+
+  // Sample recovered tokens for speculative decoding.
+  handle = c10::Dispatcher::singleton().findSchema(
+      {"_C::sample_recovered_tokens", ""});
+  if (!handle.has_value()) {
+    ops.def(
+        "sample_recovered_tokens(Tensor! output_token_ids, "
+        "Tensor cu_num_draft_tokens, Tensor draft_token_ids, "
+        "Tensor target_probs, Tensor q, Tensor? draft_probs) -> ()");
+  }
+  ops.impl("sample_recovered_tokens", torch::kPrivateUse1,
+        &sample_recovered_tokens);
+
+  // topk_topp_random_sampler_from_logits func
+  handle = c10::Dispatcher::singleton().findSchema(
+    {"_C::topk_topp_random_sampler_from_logits", ""});
+  if (!handle.has_value()) {
+    ops.def("topk_topp_random_sampler_from_logits(Tensor! output_token_ids, "
+      "Tensor logits,Tensor? k, Tensor? p, Tensor exponential, int dim) -> ()");
+  }
+  ops.impl("topk_topp_random_sampler_from_logits",
+    torch::kPrivateUse1, &topk_topp_random_sampler_from_logits);
+
+  // topk_topp func
+  handle = c10::Dispatcher::singleton().findSchema({"_C::top_k_top_p", ""});
+  if (!handle.has_value()) {
+    ops.def("top_k_top_p(Tensor! logits, Tensor k, Tensor p, int dim=-1, bool "
+            "descending=False) -> ()");
+  }
+  ops.impl("top_k_top_p", torch::kPrivateUse1, &top_k_top_p);
+
+  handle = c10::Dispatcher::singleton().findSchema(
+    {"_C::eplb_map_to_physical_and_record", ""});
+  if (!handle.has_value()) {
+    ops.def(
+        "eplb_map_to_physical_and_record(Tensor! out, Tensor topk_ids, "
+        "Tensor! expert_load_view, Tensor logical_to_physical_map, "
+        "Tensor logical_replica_count) -> ()");
+  }
+  ops.impl("eplb_map_to_physical_and_record", torch::kPrivateUse1,
+        &eplb_map_to_physical_and_record);
 }
 
 // TORCH_LIBRARY_FRAGMENT(CONCAT(_cache_ops, TORCH_EXTENSION_NAME), cache_ops) {
-TORCH_LIBRARY_FRAGMENT(CONCAT(TORCH_EXTENSION_NAME, _cache_ops),
-                      cache_ops) {
+TORCH_LIBRARY_FRAGMENT(CONCAT(TORCH_EXTENSION_NAME, _cache_ops), cache_ops) {
   // Cache ops
   std::optional<c10::OperatorHandle> handle;
 
@@ -1305,6 +1447,25 @@ TORCH_LIBRARY_FRAGMENT(CONCAT(_moe, TORCH_EXTENSION_NAME), moe_ops) {
   //     "int moe_block_size, bool replicate_input, bool apply_weights)"
   //     " -> Tensor");
   // conditionally compiled so impl registration is in source file
+}
+
+TORCH_LIBRARY_FRAGMENT(CONCAT(_flashmla, TORCH_EXTENSION_NAME), _flashmla_ops) {
+  std::optional<c10::OperatorHandle> handle;
+
+  // MHA forward with KV cache for MLA
+  handle = c10::Dispatcher::singleton().findSchema({"_C::fwd_kvcache_mla", ""});
+  if (!handle.has_value()) {
+    _flashmla_ops.def(
+        "fwd_kvcache_mla("
+        "    Tensor! q, Tensor kcache, "
+        "    int head_size_v, Tensor seqlens_k, Tensor block_table, "
+        "    float softmax_scale, bool is_causal, "
+        "    Tensor tile_scheduler_metadata, "
+        "    Tensor num_splits, Tensor? descale_q, Tensor? descale_k"
+        "    ) -> (Tensor, Tensor)");
+  }
+  _flashmla_ops.impl("fwd_kvcache_mla", torch::kPrivateUse1,
+                     &mha_fwd_kvcache_mla);
 }
 
 REGISTER_EXTENSION(TORCH_EXTENSION_NAME)

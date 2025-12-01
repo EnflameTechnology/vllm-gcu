@@ -13,29 +13,49 @@
 namespace vllm_gcu::llm_ops {
 
 void rotary_embedding_with_kv_cache_gcu(
-    at::Tensor &q_out, at::Tensor &kv_cache, const at::Tensor &q,
+    at::Tensor &q_out, at::Tensor &kv_cache,
+    const c10::optional<at::Tensor> &k_pe_out,
+    const c10::optional<at::Tensor> &k_c_normed, const at::Tensor &q,
     const at::Tensor &kv, const at::Tensor &positions,
     const at::Tensor &cos_sin_cache, const at::Tensor &weight,
     const at::Tensor &slot_mapping, const at::Tensor &scale_tensor, double eps,
     at::IntArrayRef split_size, const char *kv_dtype) {
   const torch_gcu::OptionalGCUGuard device_guard(device_of(q_out));
   const topsStream_t stream = torch_gcu::getCurrentGCUStream();
-
   topsatenSize_t topsaten_split_sizes(split_size.data(),
                                       static_cast<int64_t>(split_size.size()));
 
   auto view_q = q.view({-1, q.size(-1)});
   auto view_q_out = q_out.view({-1, q_out.size(-1)});
   auto view_positions = positions.view({-1});
-  ATEN_ATENOP_CHECK(
-      ATEN_ATENOP_CALL(topsexts::topsextsRotaryEmbeddingWithKVCache)(
-          view_q_out, kv_cache, view_q, kv, view_positions, cos_sin_cache,
-          weight, slot_mapping, scale_tensor, static_cast<double>(eps),
-          topsaten_split_sizes, kv_dtype, stream));
+
+  if (k_pe_out.has_value()) {
+    assert(k_c_normed.has_value());
+    at::Tensor k_pe_out_tensor;
+    at::Tensor k_c_normed_tensor;
+    k_pe_out_tensor = k_pe_out.value();
+    k_pe_out_tensor = k_pe_out_tensor.view({-1, k_pe_out_tensor.size(-1)});
+    k_c_normed_tensor = k_c_normed.value();
+    k_c_normed_tensor =
+        k_c_normed_tensor.view({-1, k_c_normed_tensor.size(-1)});
+    ATEN_ATENOP_CHECK(ATEN_ATENOP_CALL(
+        topsexts::topsextsRotaryEmbeddingWithKVCache)(
+        view_q_out, kv_cache, k_pe_out_tensor, k_c_normed_tensor, view_q, kv,
+        view_positions, cos_sin_cache, weight, slot_mapping, scale_tensor,
+        static_cast<double>(eps), topsaten_split_sizes, kv_dtype, stream));
+  } else {
+    ATEN_ATENOP_CHECK(
+        ATEN_ATENOP_CALL(topsexts::topsextsRotaryEmbeddingWithKVCache)(
+            view_q_out, kv_cache, view_q, kv, view_positions, cos_sin_cache,
+            weight, slot_mapping, scale_tensor, static_cast<double>(eps),
+            topsaten_split_sizes, kv_dtype, stream));
+  }
 }
 
 void rotary_embedding_with_kv_cache(
-    at::Tensor &q_out, at::Tensor &kv_cache, const at::Tensor &q,
+    at::Tensor &q_out, at::Tensor &kv_cache,
+    const c10::optional<at::Tensor> &k_pe_out,
+    const c10::optional<at::Tensor> &k_c_normed, const at::Tensor &q,
     const at::Tensor &kv, const at::Tensor &positions,
     const at::Tensor &cos_sin_cache, const at::Tensor &weight,
     const at::Tensor &slot_mapping, const at::Tensor &scale, double eps,
@@ -88,9 +108,9 @@ void rotary_embedding_with_kv_cache(
   }
 #endif
 
-  rotary_embedding_with_kv_cache_gcu(q_out, kv_cache, q, kv, positions,
-                                     cos_sin_cache, weight, slot_mapping,
-                                     scale_tensor, eps, split_size, kv_dtype);
+  rotary_embedding_with_kv_cache_gcu(
+      q_out, kv_cache, k_pe_out, k_c_normed, q, kv, positions, cos_sin_cache,
+      weight, slot_mapping, scale_tensor, eps, split_size, kv_dtype);
 
 #ifndef NDEBUG
   if (is_fallback) {
@@ -101,8 +121,8 @@ void rotary_embedding_with_kv_cache(
                           "Starting result verification");
 
     auto cpu_output = std::make_tuple(q_out_cpu, kv_cache_cpu);
-    auto device_outputs = std::make_tuple(q_out.to(at::kCPU),
-                                          kv_cache.to(at::kCPU));
+    auto device_outputs =
+        std::make_tuple(q_out.to(at::kCPU), kv_cache.to(at::kCPU));
     EXPECT_TRUE(extsRotaryEmbeddingWithKVCacheCheck(cpu_output, device_outputs),
                 "rotary_embedding_with_kv_cache");
     q_out.copy_(q_out_cpu);

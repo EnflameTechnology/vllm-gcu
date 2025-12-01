@@ -1,7 +1,10 @@
-- func: paged_attention_v1(Tensor(a!) out, Tensor query, Tensor key_cache, Tensor value_cache, int num_kv_heads, float scale, Tensor block_tables, Tensor context_lens, int block_size, int max_context_len, Tensor? alibi_slopes, str kv_cache_dtype, float k_scale, float v_scale, int tp_rank, int blocksparse_local_blocks, int blocksparse_vert_stride, int blocksparse_block_size, int blocksparse_head_sliding_step, float k_zero, float v_zero, Tensor? out_scales) -> ()
+- func: paged_attention_v1(Tensor(a!) out, Tensor query, Tensor key_cache, Tensor value_cache, int num_kv_heads, float scale, Tensor block_tables, Tensor context_lens, int block_size, int max_context_len, Tensor? alibi_slopes, str kv_cache_dtype, float k_scale, float v_scale, int tp_rank, int blocksparse_local_blocks, int blocksparse_vert_stride, int blocksparse_block_size, int blocksparse_head_sliding_step, float k_zero, float v_zero, Tensor? out_scales, Tensor? query_scales) -> ()
   variants: function
 
 - func: paged_attention_v2(Tensor(a!) out, Tensor exp_sums, Tensor max_logits, Tensor tmp_output, Tensor query, Tensor key_cache, Tensor value_cache, int num_kv_heads, float scale, Tensor block_tables, Tensor context_lens, int block_size, int max_context_len, Tensor? alibi_slopes, str kv_cache_dtype, float k_scale, float v_scale, int tp_rank, int blocksparse_local_blocks, int blocksparse_vert_stride, int blocksparse_block_size, int blocksparse_head_sliding_step, float k_zero, float v_zero, Tensor? out_scales) -> ()
+  variants: function
+
+- func: mha_fwd_kvcache_mla(Tensor(a!) q, Tensor kcache, int head_size_v, Tensor seqlens_k, Tensor block_table, float softmax_scale, bool is_causal, Tensor tile_scheduler_metadata, Tensor num_splits, Tensor? descale_q, Tensor? descale_k) -> (Tensor, Tensor)
   variants: function
 
 - func: silu_and_mul(Tensor(a!) out, Tensor input) -> ()
@@ -50,6 +53,9 @@
   variants: function
 
 - func: fused_moe_quant_kernel(Tensor(a!) C, Tensor A, Tensor B, Tensor? A_scale, Tensor B_scale, int gs, Tensor? B_zp, Tensor topk_weights, Tensor topk_ids, Tensor sorted_token_ids, Tensor experts_ids, Tensor num_tokens_post_pad, bool mul_routed_weight, int topk, int block_size, Tensor? bias, Tensor? real_token_num) -> ()
+  variants: function
+
+- func: fused_moe_quant_kernel_ex(Tensor(a!) C, Tensor A, Tensor B, Tensor A_scale, Tensor B_scale, Tensor B_zero, Tensor? bias, Tensor topk_weights, Tensor topk_ids, Tensor sorted_token_ids, Tensor experts_ids, Tensor num_tokens_post_pad, Tensor? real_token_num, bool mul_routed_weight, int topk, int block_size, int group_k, int group_n) -> ()
   variants: function
 
 - func: topk_softmax(Tensor(a!) topk_weights, Tensor(a!) topk_indices, Tensor(a!) token_expert_indices, Tensor(a!) gating_output) -> ()
@@ -181,6 +187,9 @@
 - func: dynamic_split(Tensor[] out, Tensor input, Tensor size, int[] split_sizes, int dim) -> ()
   variants: function
 
+- func: expand_batch_to_tokens(Tensor(a!) output, Tensor input, Tensor cu_num_tokens, int num_tokens, float replace_from, float replace_to) -> ()
+  variants: function
+
 - func: dynamic_per_token_group_fp8_quant(Tensor(a!) out, Tensor(a!) scale, Tensor input, int group_size) -> ()
   variants: function
 
@@ -196,7 +205,7 @@
 - func: silu_mul_per_token_group_quant_with_size(Tensor(a!) out, Tensor(a!) scale, Tensor input, Tensor size, int group_size) -> ()
   variants: function
 
-- func: rotary_embedding_with_kv_cache(Tensor(a!) q_out, Tensor(a!) kv_cache, Tensor q, Tensor kv, Tensor positions, Tensor cos_sin_cache, Tensor weight, Tensor slot_mapping, Tensor scale, float eps, int[] split_size, str kv_cache_dtype) -> ()
+- func: rotary_embedding_with_kv_cache(Tensor(a!) q_out, Tensor(a!) kv_cache, Tensor? k_pe_out, Tensor? k_c_normed, Tensor q, Tensor kv, Tensor positions, Tensor cos_sin_cache, Tensor weight, Tensor slot_mapping, Tensor scale, float eps, int[] split_size, str kv_cache_dtype) -> ()
   variants: function
 
 - func: fused_dispatch_decode(Tensor(a!)[] outputs, Tensor recv_packed, Tensor sp_split_size, int[] split_sizes) -> ()
@@ -233,4 +242,30 @@
   variants: function
 
 - func: dynamic_per_token_group_fp8_quant_with_size(Tensor(a!) output, Tensor(a!) scale, Tensor input, Tensor real_size, int group_size) -> ()
+  variants: function
+
+- func: silu_mul_static_fp8_quant(Tensor(a!) out, Tensor input, Tensor scale, Tensor real_num_tokens) -> ()
+  variants: function
+
+- func: mul_static_fp8_quant(Tensor(a!) out, Tensor input, Tensor scale, Tensor real_num_tokens) -> ()
+  variants: function
+
+- func: rejection_greedy_sample(Tensor(a!) output_token_ids, Tensor cu_num_draft_tokens, Tensor draft_token_ids, Tensor target_argmax, Tensor bonus_token_ids, Tensor is_greedy) -> ()
+  variants: function
+
+- func: rejection_random_sample(Tensor(a!) output_token_ids, Tensor cu_num_draft_tokens, Tensor draft_token_ids, Tensor draft_probs, Tensor target_probs, Tensor bonus_token_ids, Tensor recovered_token_ids, Tensor uniform_probs, Tensor is_greedy) -> ()
+  variants: function
+  tags: nondeterministic_seeded
+
+- func: sample_recovered_tokens(Tensor(a!) output_token_ids, Tensor cu_num_draft_tokens, Tensor draft_token_ids, Tensor target_probs, Tensor q, Tensor? draft_probs) -> ()
+  variants: function
+
+- func: topk_topp_random_sampler_from_logits(Tensor(a!) output_token_ids, Tensor logits, Tensor? k, Tensor? p, Tensor exponential, int dim) -> ()
+  variants: function
+  tags: nondeterministic_seeded
+
+- func: top_k_top_p(Tensor(a!) logits, Tensor k, Tensor p, int dim, bool descending) -> ()
+  variants: function
+
+- func: eplb_map_to_physical_and_record(Tensor(a!) out, Tensor topk_ids, Tensor(a!) expert_load_view, Tensor logical_to_physical_map, Tensor logical_replica_count) -> ()
   variants: function

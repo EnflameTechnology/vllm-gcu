@@ -3,9 +3,10 @@ from typing import Optional
 import torch
 import torch_gcu
 from torch.distributed import ProcessGroup
-from vllm.distributed.parallel_state import GroupCoordinator
+from vllm.distributed.parallel_state import _groups
+from vllm.platforms import current_platform
+from vllm.utils import direct_register_custom_op
 
-from vllm_gcu.distributed.pyeccl import PyEcclCommunicator
 
 
 def all_to_all_v2(
@@ -15,16 +16,22 @@ def all_to_all_v2(
     input_split_sizes: Optional[torch.Tensor] = None,
     group: Optional["ProcessGroup"] = None,
     flag: Optional[int] = None,
-    async_op = False,
+    async_op=False,
 ) -> None:
-    return torch_gcu.distributed.all_to_all_vd(
-        output, input, output_split_sizes, input_split_sizes, group=group, flag=flag, async_op=async_op
-    )
+    return torch_gcu.distributed.all_to_all_vd(output,
+                                               input,
+                                               output_split_sizes,
+                                               input_split_sizes,
+                                               group=group,
+                                               flag=flag,
+                                               async_op=async_op)
 
 
-def all_to_all_cpu(
-    output, input, output_split_size=None, input_split_size=None, group=None
-) -> None:
+def all_to_all_cpu(output,
+                   input,
+                   output_split_size=None,
+                   input_split_size=None,
+                   group=None) -> None:
     output_ori = output
     output = output.cpu()
     input = input.cpu()
@@ -47,13 +54,11 @@ def all_to_all_cpu(
     for send_rank in range(world_size):
         for recv_rank in range(world_size):
             send_buffer = input[
-                input_offsets[recv_rank] : input_offsets[recv_rank]
-                + input_split_size[recv_rank]
-            ]
+                input_offsets[recv_rank]:input_offsets[recv_rank] +
+                input_split_size[recv_rank]]
             recv_buffer = output[
-                output_offsets[send_rank] : output_offsets[send_rank]
-                + output_split_size[send_rank]
-            ]
+                output_offsets[send_rank]:output_offsets[send_rank] +
+                output_split_size[send_rank]]
             if send_rank == recv_rank:
                 if rank == send_rank:
                     recv_buffer.copy_(send_buffer)
@@ -68,23 +73,30 @@ def all_to_all_cpu(
 def all_to_all_v2_ref(
     output,
     input,
-    output_split_sizes=None,
-    input_split_sizes=None,
+    output_split_sizes,
+    input_split_sizes,
     group=None,
-    flag=None,
-    async_op = False,
+    flag=0,
+    async_op=False,
 ) -> None:
     assert output.is_contiguous(), 'output is not contiguous'
     assert input.is_contiguous(), 'input is not contiguous'
+    assert output_split_sizes is not None
+    assert input_split_sizes is not None
+
     if flag == 1:
-        torch.distributed.all_to_all_single(
-            output_split_sizes, input_split_sizes, group=group
-        )
-    assert output.shape[0] >= output_split_sizes.sum().item(), 'output shape error'
-    assert input.shape[0] >= input_split_sizes.sum().item(), 'output shape error'
+        torch.distributed.all_to_all_single(output_split_sizes,
+                                            input_split_sizes,
+                                            group=group)
+
+    assert output.shape[0] >= output_split_sizes.sum().item(
+    ), 'output shape error'
+    assert input.shape[0] >= input_split_sizes.sum().item(
+    ), 'input shape error'
+
     return torch.distributed.all_to_all_single(
-        output[: output_split_sizes.sum().item()],
-        input[: input_split_sizes.sum().item()],
+        output[:output_split_sizes.sum().item()],
+        input[:input_split_sizes.sum().item()],
         output_split_sizes.cpu().tolist(),
         input_split_sizes.cpu().tolist(),
         group=group,
@@ -92,21 +104,100 @@ def all_to_all_v2_ref(
     )
 
 
-class GroupWrapper:
-    # proxy
-    def __init__(self, group: GroupCoordinator):
-        self.group = group
-        self.group.device = torch.device(f"gcu:{self.group.local_rank}")
-        self.group.pynccl_comm = PyEcclCommunicator(
-            group=self.group.cpu_group, device=self.group.device
-        )
+def reduce_scatter_v(inp: torch.Tensor, scatter_counts: list[int],
+                     group_name: str) -> torch.Tensor:
+    assert group_name in _groups, f"Group {group_name} is not found."
+    group = _groups[group_name]()
+    if group is None:
+        raise ValueError(f"Group {group_name} is destroyed.")
+    output_size = (scatter_counts[group.rank_in_group], ) + inp.size()[1:]
 
-    def __getattr__(self, method: str):
-        return getattr(self.group, method)
+    if not current_platform.has_device_capability(140):
+        # reduce_scatter_v is not supported on 130 currently
+        # impl by pad + reduce_scatter + slice instead
+        world_size = group.world_size
+        assert world_size == len(scatter_counts)
 
-    def all_to_all_single(
-        self, output, input, output_split_sizes=None, input_split_sizes=None
-    ):
-        return torch.distributed.all_to_all(
-            output, input, output_split_sizes, input_split_sizes
+        output = group.all_reduce(inp)
+        return output[sum(scatter_counts[:group.rank_in_group]):sum(scatter_counts[:group.rank_in_group + 1])]
+
+    output = torch.empty(output_size, dtype=inp.dtype, device=inp.device)
+    torch_gcu.distributed.reduce_scatter_tensor_v(output,
+                                                  inp,
+                                                  scatter_counts,
+                                                  group=group.device_group)
+    return output
+
+
+def reduce_scatter_v_fake(inp: torch.Tensor, scatter_counts: list[int],
+                          group_name: str) -> torch.Tensor:
+    assert group_name in _groups, f"Group {group_name} is not found."
+    group = _groups[group_name]()
+    if group is None:
+        raise ValueError(f"Group {group_name} is destroyed.")
+    output_size = (scatter_counts[group.rank_in_group], ) + inp.size()[1:]
+    output = torch.empty(output_size, dtype=inp.dtype, device=inp.device)
+    return output
+
+
+direct_register_custom_op(
+    op_name="reduce_scatter_v",
+    op_func=reduce_scatter_v,
+    mutates_args=[],
+    fake_impl=reduce_scatter_v_fake,
+    dispatch_key=current_platform.dispatch_key,
+)
+
+
+def all_gather_v(inp: torch.Tensor, recv_counts: list[int],
+                 group_name: str) -> torch.Tensor:
+    assert group_name in _groups, f"Group {group_name} is not found."
+    group = _groups[group_name]()
+    if group is None:
+        raise ValueError(f"Group {group_name} is destroyed.")
+
+    if not current_platform.has_device_capability(140):
+        B = inp.shape[0]
+        world_size = group.world_size
+        assert world_size == len(recv_counts)
+
+        inp = torch.nn.functional.pad(
+            inp,
+            (0, 0, 0, max(recv_counts) - B),
+            mode="constant",
+            value=0,
         )
+        gathered = [torch.empty_like(inp) for _ in range(world_size)]
+        torch.distributed.all_gather(gathered, inp, group=group.device_group)
+
+        results = []
+        for i in range(world_size):
+            results.append(gathered[i][: recv_counts[i]])
+
+        output = torch.cat(results, dim=0)
+        return output
+
+    output_size = (sum(recv_counts), ) + inp.size()[1:]
+    output = torch.empty(output_size, dtype=inp.dtype, device=inp.device)
+
+    torch_gcu.distributed.all_gather_into_tensor_v(output,
+                                                   inp,
+                                                   recv_counts,
+                                                   group=group.device_group)
+    return output
+
+
+def all_gather_v_fake(inp: torch.Tensor, recv_counts: list[int],
+                      group_name: str) -> torch.Tensor:
+    output_size = (sum(recv_counts), ) + inp.size()[1:]
+    output = torch.empty(output_size, dtype=inp.dtype, device=inp.device)
+    return output
+
+
+direct_register_custom_op(
+    op_name="all_gather_v",
+    op_func=all_gather_v,
+    mutates_args=[],
+    fake_impl=all_gather_v_fake,
+    dispatch_key=current_platform.dispatch_key,
+)

@@ -9,7 +9,6 @@ try:
 except ImportError:
     from torch.library import impl_abstract as register_fake
 
-from vllm.platforms import current_platform
 
 import vllm_gcu._C  # noqa: F401
 
@@ -38,6 +37,7 @@ def paged_attention_v1(
     k_zero_float: float = 0.0,
     v_zero_float: float = 0.0,
     out_scales: Optional[torch.Tensor] = None,
+    query_scales: Optional[torch.Tensor] = None,
 ) -> None:
     # TODO change hard code
     torch.ops._C.paged_attention_v1(
@@ -63,6 +63,7 @@ def paged_attention_v1(
         k_zero_float,
         v_zero_float,
         out_scales,
+        query_scales
     )
 
 
@@ -273,6 +274,25 @@ def gptq_gemm_gcu(
         )
         return output
 
+@register_fake("_C::gptq_gemm_gcu")
+def _gptq_gemm_gcu_fake(
+    a: torch.Tensor,
+    b_q_weight: torch.Tensor,
+    b_gptq_qzeros: torch.Tensor,
+    b_gptq_scales: torch.Tensor,
+    b_g_idx: torch.Tensor,
+    bit: int,
+    bias=None,
+    group_size=128,
+) -> torch.Tensor:
+    if bit == 4:
+        out_shape = a.shape[:-1] + (b_q_weight.shape[-1],)
+    elif bit == 8:
+        out_shape = a.shape[:-1] + (b_q_weight.shape[0],)
+
+    return torch.empty(out_shape, dtype=a.dtype, device=a.device)
+
+
 
 # 8bit
 def scaled_fp8_quant(
@@ -281,45 +301,20 @@ def scaled_fp8_quant(
     num_token_padding: Optional[int] = None,
     scale_ub: Optional[torch.Tensor] = None,
     use_per_token_if_dynamic: bool = False,
+    output: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    raise NotImplementedError
-
-
-def scaled_int8_quant(
-    input: torch.Tensor,
-    scale: Optional[torch.Tensor] = None,
-    azp: Optional[torch.Tensor] = None,
-    symmetric: bool = True,
-) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
-    output = torch.empty_like(input, dtype=torch.int8)
-    if scale is not None:
-        # static-per-tensor quantization.
-        assert symmetric == (azp is None), (
-            "azp must only be provided for asymmetric quantization."
-        )
-        torch.ops._C.static_scaled_int8_quant(output, input, scale, None)
-        return output, scale, azp
-
-    # dynamic-per-token quantization.
-    input_scales = torch.empty(
-        (input.numel() // input.shape[-1], 1), device=input.device, dtype=torch.float32
-    )
-    input_azp = None if symmetric else torch.empty_like(input_scales, dtype=torch.int32)
-    torch.ops._C.dynamic_scaled_int8_quant(output, input, input_scales)
-    return output, input_scales, input_azp
-
-
-def scaled_int8_dequant(
-    input: torch.Tensor,
-    scale: Optional[torch.Tensor] = None,
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    output = torch.empty_like(input, dtype=scale.dtype)
-    if scale is not None:
-        # static-per-tensor quantization.
-        torch.ops._C.static_scaled_int8_dequant(output, input, scale)
-        return output, scale
+    if scale is None:
+        if use_per_token_if_dynamic:
+            output = torch.empty_like(input, dtype=torch.float8_e4m3fn)
+            # dynamic-per-token quantization.
+            shape = input.shape[:-1] + (1,)
+            scale = torch.empty(shape, device=input.device, dtype=torch.float32)
+            torch.ops._C.dynamic_per_token_scaled_fp8_quant(output, input, scale, scale_ub=scale_ub)
+        else:
+            raise NotImplementedError("dynamic_scaled_fp8_quant is not implemented for per tensor!")
     else:
-        assert False, "dynamic scaled int8 quant not support yet"
+        torch.ops._C.static_scaled_fp8_quant(output, input, scale)
+    return output, scale
 
 
 def gelu_tanh_quant(
@@ -442,32 +437,28 @@ def dot_bias_quant(
 
 
 def dispatch_bgmv(
-    y: torch.Tensor,
     x: torch.Tensor,
     w: torch.Tensor,
-    indicies: torch.Tensor,
-    layer_idx: int,
-    scale: float,
+    y: torch.Tensor,
+    indices: torch.Tensor,
+    scale: float = 1.0,
 ):
     w = w.unsqueeze(1)
-    torch.ops._C.dispatch_bgmv(y, x, w, indicies, layer_idx, scale)
+    torch.ops._C.dispatch_bgmv(y, x, w, indices, 0, scale)
 
 
-# dispatch bgmv
 def dispatch_bgmv_low_level(
-    y: torch.Tensor,
     x: torch.Tensor,
     w: torch.Tensor,
-    indicies: torch.Tensor,
-    layer_idx: int,
-    scale: float,
-    h_in: int,
-    h_out: int,
-    y_offset: int,
+    y: torch.Tensor,
+    indices: torch.Tensor,
+    slice_offset: int,
+    slice_size: int,
 ):
     w = w.unsqueeze(1)
+    h_in = x.size(1)
     torch.ops._C.dispatch_bgmv_low_level(
-        y, x, w, indicies, layer_idx, scale, h_in, h_out, y_offset
+        y, x, w, indices, 0, 1.0, h_in, slice_size, slice_offset
     )
 
 
@@ -601,3 +592,38 @@ def merge_attn_states(
     )
 
 #torch.ops._C.cutlass_scaled_mm.default.tags.append(torch._C.Tag.flexible_layout)
+
+def eplb_map_to_physical_and_record(
+        topk_ids: torch.Tensor,
+        expert_load_view: torch.Tensor,
+        logical_to_physical_map: torch.Tensor,
+        logical_replica_count: torch.Tensor,
+        indices_type: Optional[torch.dtype] = None) -> torch.Tensor:
+    '''
+    Map the logical expert ids to physical expert ids
+    and record the expert load metrics.
+    This will select a pseudo-random replica for each logical expert.
+    Only used for EPLB.
+    Args:
+        topk_ids: The logical expert ids.
+        expert_load_view: The expert load view.
+        logical_to_physical_map: The logical to physical map.
+        logical_replica_count: The logical replica count.
+        indices_type: The indices type.
+    Returns:
+        The physical expert ids.
+    '''
+    if indices_type is not None:
+        out = torch.empty_like(topk_ids, dtype=indices_type)
+    else:
+        out = torch.empty_like(topk_ids)
+
+    torch.ops._C.eplb_map_to_physical_and_record(
+        out,
+        topk_ids,
+        expert_load_view,
+        logical_to_physical_map,
+        logical_replica_count
+    )
+
+    return out
