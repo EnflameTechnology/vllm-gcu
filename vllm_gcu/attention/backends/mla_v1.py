@@ -122,12 +122,7 @@ class GCUMLAMetadataBuilder(MLACommonMetadataBuilder[GCUMLAMetadata]):
             # for fused_mtp we don't decode attention does not rely on
             # metadata.decode.max_decode_seq_len
         elif m.num_actual_tokens == 0:
-            self._num_decodes = m.num_reqs
-            m.max_query_len = 1
-            self._num_decode_tokens = m.num_actual_tokens
-            self._num_prefills = 0
-            self._num_prefill_tokens = 0
-            metadata = super().build_for_cudagraph_capture(m)
+            metadata = self.build(0, m)
             # overwrite max_decode_seq_len to max_model_len when capture
             metadata.decode.max_decode_seq_len = m.max_seq_len
         else:

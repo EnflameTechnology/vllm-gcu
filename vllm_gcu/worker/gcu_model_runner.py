@@ -7,6 +7,7 @@ from unittest.mock import patch
 import numpy as np
 import torch
 from vllm.utils import cdiv
+from vllm.v1.attention.backends.utils import AttentionCGSupport
 from vllm.compilation.counter import compilation_counter
 from vllm.compilation.monitor import set_cudagraph_capturing_enabled
 from vllm.distributed.parallel_state import (get_tp_group, get_pp_group, get_ep_group,
@@ -1555,10 +1556,21 @@ class GCUModelRunner(GPUModelRunner):
 
     def initialize_cudagraph_capture(self) -> None:
         super().initialize_cudagraph_capture()
-        if self.vllm_config.additional_config["deepseek_fused_mtp"]:
+        if 0 in self.cudagraph_batch_sizes:
             self.cudagraph_dispatcher.add_cudagraph_key(
-                        CUDAGraphMode.FULL,
-                        BatchDescriptor(num_tokens=0, uniform_decode=True))
+                CUDAGraphMode.FULL,
+                BatchDescriptor(num_tokens=0, uniform_decode=True))
+
+        min_cg_support = AttentionCGSupport.ALWAYS
+        for attn_group in self._attn_group_iterator():
+            builder = attn_group.get_metadata_builder()
+            if builder.cudagraph_support.value < min_cg_support.value:
+                min_cg_support = builder.cudagraph_support
+        if min_cg_support == AttentionCGSupport.UNIFORM_BATCH:
+            self.cudagraph_dispatcher.cudagraph_keys[CUDAGraphMode.FULL] = {
+                x for x in self.cudagraph_dispatcher.cudagraph_keys[CUDAGraphMode.FULL]
+                if x.num_tokens % self.uniform_decode_query_len == 0
+            }
 
         if hasattr(self, "drafter") and isinstance(self.drafter,
                                                    EagleProposer):
@@ -1568,6 +1580,16 @@ class GCUModelRunner(GPUModelRunner):
 
             self.drafter.cudagraph_dispatcher2.initialize_cudagraph_keys(
                 self.compilation_config.cudagraph_mode, 1)
+            if min_cg_support == AttentionCGSupport.UNIFORM_BATCH:
+                supported = {i.num_tokens for i in self.cudagraph_dispatcher.cudagraph_keys[CUDAGraphMode.FULL]}
+                self.drafter.cudagraph_dispatcher1.cudagraph_keys[CUDAGraphMode.FULL] = {
+                    x for x in self.drafter.cudagraph_dispatcher1.cudagraph_keys[CUDAGraphMode.FULL]
+                    if x.num_tokens in supported
+                }
+                self.drafter.cudagraph_dispatcher2.cudagraph_keys[CUDAGraphMode.FULL] = {
+                    x for x in self.drafter.cudagraph_dispatcher2.cudagraph_keys[CUDAGraphMode.FULL]
+                    if x.num_tokens * self.uniform_decode_query_len in supported
+                }
 
     def capture_model(self) -> int:
         if self.compilation_config.cudagraph_mode == CUDAGraphMode.NONE:
@@ -1602,6 +1624,7 @@ class GCUModelRunner(GPUModelRunner):
         # Trigger CUDA graph capture for specific shapes.
         # Capture the large shapes first so that the smaller shapes
         # can reuse the memory pool allocated for the large shapes.
+        compiled_cases = []
         set_cudagraph_capturing_enabled(True)
         with freeze_gc(), graph_capture(device=self.device):
             cudagraph_mode = self.compilation_config.cudagraph_mode
@@ -1610,6 +1633,7 @@ class GCUModelRunner(GPUModelRunner):
                 cudagraph_runtime_mode = cudagraph_mode.mixed_mode()
 
                 compilation_cases = list(reversed(self.cudagraph_batch_sizes))
+                compiled_cases += compilation_cases
                 self._capture_cudagraphs(
                     compilation_cases,
                     cudagraph_runtime_mode=cudagraph_runtime_mode,
@@ -1621,14 +1645,15 @@ class GCUModelRunner(GPUModelRunner):
                 cudagraph_mode.separate_routine():
                 max_num_tokens = self.scheduler_config.max_num_seqs * \
                         self.uniform_decode_query_len
+                cudagraph_keys = {i.num_tokens for i in self.cudagraph_dispatcher.cudagraph_keys[CUDAGraphMode.FULL]}
                 decode_cudagraph_batch_sizes = [
                     x for x in self.cudagraph_batch_sizes if
                     ((x <= max_num_tokens and x >= self.uniform_decode_query_len) \
-                     or (self.vllm_config.additional_config["deepseek_fused_mtp"] and \
-                         x == 0))
+                     or x == 0) and x in cudagraph_keys
                 ]
                 compilation_cases_decode = list(
                     reversed(decode_cudagraph_batch_sizes))
+                compiled_cases += compilation_cases_decode
                 self._capture_cudagraphs(
                     compilation_cases=compilation_cases_decode,
                     cudagraph_runtime_mode=CUDAGraphMode.FULL,
@@ -1640,6 +1665,20 @@ class GCUModelRunner(GPUModelRunner):
         # we may do lazy capturing in future that still allows capturing
         # after here.
         set_cudagraph_capturing_enabled(False)
+
+        # NOTE: some cases need be compiled may be filtered out by cudagraph conditions
+        compilation_cases = set(
+            self.vllm_config.compilation_config.compile_sizes) & (
+                set(self.cudagraph_batch_sizes) - set(compiled_cases))
+        compilation_cases = sorted(compilation_cases, reverse=True)
+        for num_tokens in compilation_cases:
+            for _ in range(self.compilation_config.cudagraph_num_of_warmups + 1):
+                self._dummy_run(num_tokens,
+                                cudagraph_runtime_mode=CUDAGraphMode.NONE,
+                                uniform_decode=False,
+                                allow_microbatching=False,
+                                skip_eplb=True,
+                                remove_lora=False)
 
         end_time = time.perf_counter()
         end_free_gpu_memory = torch.cuda.mem_get_info()[0]

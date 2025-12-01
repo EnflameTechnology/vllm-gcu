@@ -127,6 +127,10 @@ class EagleProposerWithGraph(EagleProposer):
                 for x in mtp_config.compilation_config.cudagraph_capture_sizes
                 if x > self.num_speculative_tokens))
         mtp_config.compilation_config.cudagraph_capture_sizes = None
+        # NOTE: WA for _set_cudagraph_sizes ugly logics.
+        if len(mtp_config.scheduler_config.cuda_graph_sizes) == 1:
+            mtp_config.scheduler_config.cuda_graph_sizes.append(
+                mtp_config.scheduler_config.max_num_batched_tokens + 1)
         mtp_config._set_cudagraph_sizes()
 
         self.mtp_config = mtp_config
@@ -423,8 +427,7 @@ class EagleProposerWithGraph(EagleProposer):
         common_attn_metadata: Optional[CommonAttentionMetadata] = None,
         cudagraph_runtime_mode: CUDAGraphMode = CUDAGraphMode.NONE,
     ) -> None:
-        if cudagraph_runtime_mode == CUDAGraphMode.FULL:
-            assert common_attn_metadata is not None
+        if cudagraph_runtime_mode == CUDAGraphMode.FULL and common_attn_metadata is not None:
             spec_common_attn_metadata = CommonAttentionMetadata(
                 query_start_loc=common_attn_metadata.query_start_loc,
                 seq_lens=common_attn_metadata.seq_lens,
@@ -487,6 +490,7 @@ class EagleProposerWithGraph(EagleProposer):
             return
 
         batch_size = cdiv(num_tokens, (self.num_speculative_tokens + 1))
+        batch_size = max(1, batch_size)
 
         # mtp>1
         per_layer_attn_metadata = None
