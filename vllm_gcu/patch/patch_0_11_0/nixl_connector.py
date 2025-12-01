@@ -58,8 +58,8 @@ def get_num_new_matched_tokens(self, request: "Request",
             gcu_envs.VLLM_GCU_NIXL_ENABLE_FIRST_TOKEN_REUSE:
         logger.debug("VLLM_GCU_NIXL_ENABLE_FIRST_TOKEN_REUSE is enabled,"
                      "skipping first token")
-        first_token = params.get("first_token")
-        if first_token:
+        first_token = params.get("first_token", None)
+        if first_token is not None:
             logger.debug(
                 "NIXLConnector: first_token(%s) from kv_transfer_params",
                 first_token)
@@ -85,6 +85,7 @@ def request_finished(
     if gcu_envs.VLLM_GCU_NIXL_ENABLE_FIRST_TOKEN_REUSE:
         logger.debug("VLLM_GCU_NIXL_ENABLE_FIRST_TOKEN_REUSE is enabled")
         # Get the first token from the request's output tokens
+        first_token = None
         if request.num_output_tokens > 0:
             first_token = request.output_token_ids[0]
         else:
