@@ -1325,10 +1325,10 @@ class GCUModelRunner(GPUModelRunner):
                 assert self.input_batch.prev_req_id_to_index is not None
                 req_idx = self.input_batch.prev_req_id_to_index.get(
                     req_id, None)
-                if req_idx is not None and len(req_state.output_token_ids) > 1:
-                    prev_draft_tokens_len = len(self.input_batch.prev_sampled_token_ids[req_idx])
-                    num_accepted = prev_valid_sampled_token_count[req_idx]
-                    num_computed_tokens -= (prev_draft_tokens_len -
+                if req_idx is not None:
+                    prev_num_draft_len = getattr(req_state, 'prev_num_draft_len', 0)
+                    num_accepted = prev_valid_sampled_token_count[req_idx] - 1
+                    num_computed_tokens -= (prev_num_draft_len -
                                             num_accepted)
 
             # Update the cached states.
@@ -1394,8 +1394,9 @@ class GCUModelRunner(GPUModelRunner):
             # Add spec_token_ids to token_ids_cpu.
             spec_token_ids = (
                 scheduler_output.scheduled_spec_decode_tokens.get(req_id, ()))
+            num_spec_tokens = len(spec_token_ids)
+            req_state.prev_num_draft_len = num_spec_tokens
             if spec_token_ids:
-                num_spec_tokens = len(spec_token_ids)
                 start_index = self.input_batch.num_tokens_no_spec[req_index]
                 end_token_index = start_index + num_spec_tokens
                 self.input_batch.token_ids_cpu[
@@ -1403,7 +1404,7 @@ class GCUModelRunner(GPUModelRunner):
                 # NOTE(woosuk): `num_tokens` here may include spec tokens.
                 self.input_batch.num_tokens[req_index] += num_spec_tokens
 
-        self.prev_valid_sampled_tokens_count_pinned_cpu[-1] == 0
+        self.prev_valid_sampled_tokens_count_pinned_cpu[-1] = 0
 
         # Add the new or resumed requests to the persistent batch.
         # The smaller empty indices are filled first.
@@ -2476,20 +2477,23 @@ class GCUModelRunner(GPUModelRunner):
         prev_common_req_indices = []
         indices_match = True
         max_flattened_index = -1
+        prev_sampled_dim1 = self.input_batch.prev_sampled_token_ids.shape[1]
+        num_scheduled_tokens = np.diff(cu_num_tokens, prepend=0)
         for req_id, cur_index in self.input_batch.req_id_to_index.items():
             if (prev_index := prev_req_id_to_index.get(req_id)) is not None:
-                prev_common_req_indices.append(prev_index)
                 # We need to compute the flattened input_ids index of the
                 # last token in each common request.
-                flattened_index = cu_num_tokens[cur_index].item(
-                ) - self.uniform_decode_query_len
-                flattened_indices.append(flattened_index)
+                flattened_index_start = cu_num_tokens[cur_index-1].item() if cur_index > 0 else 0
+                req_tokens = num_scheduled_tokens[cur_index]
+                for i in range(req_tokens):
+                    prev_common_req_indices.append(prev_index * prev_sampled_dim1 + i)
+                    flattened_indices.append(flattened_index_start+i)
                 indices_match &= (
                     prev_index *
-                    self.uniform_decode_query_len == flattened_index)
-                max_flattened_index = max(max_flattened_index, flattened_index)
-        num_common_tokens = len(
-            flattened_indices) * self.uniform_decode_query_len
+                    self.uniform_decode_query_len == flattened_index_start)
+                indices_match &= (req_tokens == self.uniform_decode_query_len)
+                max_flattened_index = max(max_flattened_index, flattened_index_start+req_tokens)
+        num_common_tokens = len(flattened_indices)
         if num_common_tokens < total_num_scheduled_tokens:
             # If not all requests are decodes from the last iteration,
             # We need to copy the input_ids_cpu to the GPU first.
@@ -2501,8 +2505,7 @@ class GCUModelRunner(GPUModelRunner):
             # No requests in common with the previous iteration
             # So input_ids_cpu will have all the input ids.
             return
-        if indices_match and max_flattened_index == (
-                num_common_tokens - self.uniform_decode_query_len):
+        if indices_match and max_flattened_index == (num_common_tokens - 1):
             # Common-case optimization: the batch is unchanged
             # and no reordering happened.
             # The indices are both the same permutation of 0..N-1 so
@@ -2528,12 +2531,11 @@ class GCUModelRunner(GPUModelRunner):
             dtype=torch.int64,
             pin_memory=self.pin_memory).to(self.device, non_blocking=True)
 
-        for i_s in range(self.uniform_decode_query_len):
-            self.input_ids.gpu.scatter_(
-                dim=0,
-                index=input_ids_index_tensor + i_s,
-                src=self.input_batch.prev_sampled_token_ids[
-                    prev_common_req_indices_tensor, i_s])
+        self.input_ids.gpu.scatter_(
+            dim=0,
+            index=input_ids_index_tensor,
+            src=self.input_batch.prev_sampled_token_ids.flatten()[
+                prev_common_req_indices_tensor])
 
     def _allocate_kv_cache_tensors(
             self, kv_cache_config: KVCacheConfig) -> dict[str, torch.Tensor]:
