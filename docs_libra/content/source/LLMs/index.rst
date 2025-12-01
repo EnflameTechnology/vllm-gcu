@@ -1,4 +1,4 @@
-模型推理及性能评估指南
+大语言模型
 =======================
 
 .. toctree::
@@ -7,4 +7,7 @@
 
    lists
    deepseek
+   llama
+   internlm
    qwen
+   
