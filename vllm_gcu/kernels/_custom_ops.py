@@ -241,8 +241,8 @@ def gptq_gemm_gcu(
     elif bit == 8:
         out_shape = a.shape[:-1] + (b_q_weight.shape[0],)
         output = torch.empty(out_shape, dtype=a.dtype, device=a.device)
-        torch.ops._C.weight_only_quant(
-            output, a, b_q_weight, bias, b_gptq_scales, group_size
+        torch.ops._C.linear_quant(
+            output, a, b_q_weight, bias, b_gptq_scales, None, group_size
         )
         return output
 
@@ -393,17 +393,6 @@ def layer_norm_quant(
         output, input, scaling, normalized_shape, weight, bias, epsilon
     )
 
-
-def dot_bias_quant(
-    out: torch.Tensor,
-    lhs: torch.Tensor,
-    rhs: torch.Tensor,
-    scale: torch.Tensor,
-    bias: torch.Tensor,
-) -> None:
-    torch.ops._C.dot_bias_quant(out, lhs, rhs, scale, bias)
-
-
 def dispatch_bgmv(
     x: torch.Tensor,
     w: torch.Tensor,
@@ -542,12 +531,13 @@ def w8a8_block_fp8_matmul(
     block_size: List[int],
     output_dtype: torch.dtype = torch.float16,
     bias: Optional[torch.Tensor] = None,
+    group_size: int = -1
 ) -> torch.Tensor:
     N, _ = B.shape
     C_shape = A.shape[:-1] + (N,)
     C = A.new_empty(C_shape, dtype=output_dtype)
 
-    torch.ops._C.linear_quant(C, A, B, bias, As, Bs)
+    torch.ops._C.linear_quant(C, A, B, bias, As, Bs, group_size)
 
     return C
 

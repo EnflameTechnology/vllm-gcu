@@ -9,7 +9,6 @@
 #include "src/cutlass_scaled_mm.h"
 #include "src/dispatch_bgmv.h"
 #include "src/dispatch_bgmv_low_level.h"
-#include "src/dot_bias_quant.h"
 #include "src/dynamic_per_token_group_fp8_quant.h"
 #include "src/dynamic_per_token_group_fp8_quant_with_size.h"
 #include "src/dynamic_per_token_scaled_fp8_quant.h"
@@ -88,7 +87,6 @@
 #include "src/static_scaled_int8_quant.h"
 #include "src/topk_softmax.h"
 #include "src/weak_ref_tensor.h"
-#include "src/weight_only_quant.h"
 #include "src/mha_fwd_kvcache_mla.h"
 #include "src/topk_topp_random_sampler_from_logits.h"
 #include "src/top_k_top_p.h"
@@ -800,15 +798,6 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
   ops.impl("context_attention_forward", c10::kPrivateUse1,
            &context_attention_forward);
 
-  handle =
-        c10::Dispatcher::singleton().findSchema({"_C::weight_only_quant", ""});
-    if (!handle.has_value()) {
-      ops.def(
-          "weight_only_quant(Tensor! output, Tensor input, Tensor qweight, "
-          "Tensor? bias, Tensor scale, int group_size) -> ()");
-    }
-  ops.impl("weight_only_quant", c10::kPrivateUse1, &weight_only_quant);
-
   handle = c10::Dispatcher::singleton().findSchema(
       {"_C::rms_norm_static_int8_quant", ""});
   if (!handle.has_value()) {
@@ -960,14 +949,6 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
   ops.impl("layer_norm_static_int8_quant", c10::kPrivateUse1,
            &layer_norm_static_int8_quant);
 
-  handle = c10::Dispatcher::singleton().findSchema({"_C::dot_bias_quant", ""});
-  if (!handle.has_value()) {
-    ops.def(
-      "dot_bias_quant(Tensor! out, Tensor lhs, Tensor rhs, "
-      "Tensor scale, Tensor? bias) -> ()");
-  }
-  ops.impl("dot_bias_quant", c10::kPrivateUse1, &dot_bias_quant);
-
   handle = c10::Dispatcher::singleton().findSchema(
       {"_C::cutlass_scaled_mm", ""});
   if (!handle.has_value()) {
@@ -982,7 +963,7 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
   if (!handle.has_value()) {
     ops.def(
         "linear_quant(Tensor! out, Tensor lhs, Tensor rhs, Tensor? bias, "
-        "Tensor lhs_scale, Tensor rhs_scale) -> ()");
+        "Tensor lhs_scale, Tensor? rhs_scale, int group_size) -> ()");
   }
   ops.impl("linear_quant", torch::kPrivateUse1, linear_quant);
 

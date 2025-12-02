@@ -64,9 +64,6 @@
 - func: context_attention_forward(Tensor q, Tensor k, Tensor v, Tensor(a!) o, Tensor key_cache, Tensor value_cache, Tensor block_tables, Tensor subquery_start_loc, Tensor seq_lens_tensor, Tensor context_lens, int max_query_len, Tensor? alibi_slopes, int? sliding_window) -> ()
   variants: function
 
-- func: weight_only_quant(Tensor(a!) output, Tensor input, Tensor qweight, Tensor? bias, Tensor scale, int group_size) -> ()
-  variants: function
-
 - func: rms_norm_static_int8_quant(Tensor(a!) output, Tensor input, Tensor weight, Tensor scale, float epsilon) -> ()
   variants: function
 
@@ -127,9 +124,6 @@
 - func: layer_norm_static_int8_quant(Tensor(a!) output, Tensor input, Tensor scale, int[] normalized_shape, Tensor? weight, Tensor? bias, float epsilon) -> ()
   variants: function
 
-- func: dot_bias_quant(Tensor(a!) out, Tensor lhs, Tensor rhs, Tensor scale, Tensor? bias) -> ()
-  variants: function
-
 - func: cutlass_scaled_mm(Tensor(a!) out, Tensor x, Tensor weight, Tensor x_scale, Tensor w_scale, Tensor? bias) -> ()
   variants: function
 
@@ -172,7 +166,7 @@
 - func: moe_sum(Tensor(a!) out, Tensor input, Tensor size, int dim, bool keepdim) -> ()
   variants: function
 
-- func: linear_quant(Tensor(a!) out, Tensor lhs, Tensor rhs, Tensor? bias, Tensor lhs_scale, Tensor rhs_scale) -> ()
+- func: linear_quant(Tensor(a!) out, Tensor lhs, Tensor rhs, Tensor? bias, Tensor lhs_scale, Tensor? rhs_scale, int group_size) -> ()
   variants: function
 
 - func: dynamic_split(Tensor[] out, Tensor input, Tensor size, int[] split_sizes, int dim) -> ()

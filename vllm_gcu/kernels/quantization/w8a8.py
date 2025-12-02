@@ -182,9 +182,7 @@ class W8A8LinearMethod(LinearMethodBase):
         shape = list(x.shape)
         shape[-1] = int(layer.weight.shape[0])
         output = torch.empty(shape, dtype=layer.out_dtype, device=x.device)
-        # gcu_ops.dot_bias_quant(output, x, layer.weight, layer.out_scales, bias)
-        # use weight_only_quant to for better performance
-        torch.ops._C.weight_only_quant(output, x, layer.weight, bias, layer.out_scales, -1)
+        torch.ops._C.linear_quant(output, x, layer.weight, bias, layer.out_scales, None, -1)
         return output
 
 
@@ -361,10 +359,6 @@ class FusedW8A8MoEMethod(FusedMoEMethodBase):
             activation=activation,
             global_num_experts=global_num_experts,
             expert_map=expert_map,
-            #w1_scale=layer.w13_out_scales,
-            #w2_scale=layer.w2_out_scales,
-            #a1_scale=layer.w13_in_scales,
-            #a2_scale=layer.w2_in_scales,
             apply_router_weight_on_input=apply_router_weight_on_input,
         )
 
