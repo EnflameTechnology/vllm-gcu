@@ -36,6 +36,10 @@ environment_variables: Dict[str, Callable[[], Any]] = {
     "VLLM_GCU_TRITON_EAGLE": lambda: bool(
         int(os.getenv("VLLM_GCU_TRITON_EAGLE", "0"))
     ),
+    # 控制是否开启block块聚合优化版本的nixl connector
+    "VLLM_GCU_ENABLE_NIXL_BLOCK_MERGE_TRANSFER": lambda: bool(
+        int(os.getenv("VLLM_GCU_ENABLE_NIXL_BLOCK_MERGE_TRANSFER", "0"))
+    ),
 }
 
 
