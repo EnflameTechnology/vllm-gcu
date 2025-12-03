@@ -979,3 +979,82 @@ export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 注：
 *  本模型支持的`max-model-len`为131072；
 *  `input-len`、`output-len`、`max-concurrency`和`num-prompts`可按需调整；
+
+
+### Qwen2-72B-Instruct-GPTQ-Int8
+#### 模型下载
+*  url: [Qwen2-72B-Instruct-GPTQ-Int8](https://www.modelscope.cn/models/Qwen/Qwen2-72B-Instruct-GPTQ-Int8/files)
+
+*  branch: `master`
+
+*  commit id: `f7d561d4`
+
+将上述url设定的路径下的内容全部下载到`Qwen2-72B-Instruct-GPTQ-Int8`文件夹中。
+注：需要安装以下依赖：
+
+```shell
+python3 -m pip install transformers==4.52.3
+```
+
+#### 环境变量
+
+```
+# v1 engine
+export VLLM_USE_V1=1
+export TORCHGCU_INDUCTOR_ENABLE=0
+export PYTORCH_EFML_BASED_GCU_CHECK=1
+export TORCH_ECCL_AVOID_RECORD_STREAMS=1
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export VLLM_ATTENTION_BACKEND=FLASH_ATTN
+```
+
+#### 离线推理
+
+```shell
+# 启动服务端
+  vllm serve [path of Qwen2-72B-Instruct-GPTQ-Int8] \
+    --served-model-name Qwen2-72B-Instruct-GPTQ-Int8 \
+    --max-model-len=32768 \
+    --block-size=64 \
+    --dtype=bfloat16 \
+    --tensor-parallel-size=8 \
+    --gpu-memory-utilization=0.9 \
+    --no-enable-prefix-caching
+
+
+# 启动客户端
+  curl "http://localhost:8000/v1/completions" \
+  -H "Content-Type: application/json" \
+  -d '{"max_tokens": 64,"prompt":"李白是谁","model":"Qwen2-72B-Instruct-GPTQ-Int8","stop": null,"stream": false}'
+```
+
+#### 性能测试
+
+```shell
+# 启动服务端
+  vllm serve [path of Qwen2-72B-Instruct-GPTQ-Int8] \
+    --max-model-len=32768 \
+    --disable-log-requests \
+    --block-size=64 \
+    --dtype=bfloat16 \
+    --tensor-parallel-size=8 \
+    --gpu-memory-utilization=0.9 \
+    --no-enable-prefix-caching \
+    --async-scheduling
+
+
+# 启动客户端
+  vllm bench serve \
+  --backend vllm \
+  --dataset-name random \
+  --model [path of Qwen2-72B-Instruct-GPTQ-Int8] \
+  --max-concurrency 4 \
+  --num-prompts 40 \
+  --random-input-len 1024 \
+  --random-output-len 32 \
+  --trust-remote-code \
+  --ignore_eos
+```
+注：
+*  本模型支持的`max-model-len`为32768；
+*  `input-len`、`output-len`、`max-concurrency`和`num-prompts`可按需调整；
