@@ -1,50 +1,29 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 import math
-import queue
 import threading
 import time
-import uuid
-from collections import defaultdict
-from concurrent.futures import Future, ThreadPoolExecutor
-from typing import TYPE_CHECKING, Any, Optional, List, Tuple
+
+from typing import TYPE_CHECKING, Any, Optional
 
 import msgspec
 import numpy as np
 import torch
 import zmq
 
-from vllm import envs
-from vllm.attention.selector import backend_name_to_enum, get_attn_backend
 from vllm.config import VllmConfig
-from vllm.distributed.kv_transfer.kv_connector.v1.base import (
-    CopyBlocksOp)
-
-from vllm.distributed.parallel_state import (
-    get_tensor_model_parallel_rank, get_tensor_model_parallel_world_size,
-    get_tp_group)
 from vllm.distributed.utils import divide
 from vllm.logger import init_logger
-from vllm.platforms import _Backend, current_platform
 from vllm.utils import make_zmq_path
-from vllm.v1.attention.backends.utils import get_kv_cache_layout
 
 
-from vllm.logger import init_logger
 from vllm.distributed.kv_transfer.kv_connector.v1.nixl_connector import NixlConnectorScheduler, NixlConnectorWorker
-from vllm_gcu.utils import get_tx_ctx, get_tx_mark_func
+from vllm_gcu.utils import get_tx_mark_func
 import vllm_gcu.envs as gcu_envs
 import vllm.envs as envs
 from vllm.distributed.kv_transfer.kv_connector.v1.nixl_connector import NixlAgentMetadata
-from vllm.distributed.kv_transfer.kv_connector.v1.nixl_connector import NixlKVConnectorStats
-from vllm.distributed.kv_transfer.kv_connector.v1.nixl_connector import NixlAgentMetadata
-from vllm.distributed.kv_transfer.kv_connector.v1.nixl_connector import ReqMeta
 from vllm.distributed.kv_transfer.kv_connector.v1.nixl_connector import zmq_ctx
 from vllm.distributed.kv_transfer.kv_connector.v1.nixl_connector import GET_META_MSG
-from vllm.distributed.kv_transfer.kv_connector.v1.nixl_connector import _NIXL_SUPPORTED_DEVICE
-from vllm.distributed.kv_transfer.kv_connector.v1.nixl_connector import Transfer
-from vllm.distributed.kv_transfer.kv_connector.v1.nixl_connector import EngineId
-from vllm.distributed.kv_transfer.kv_connector.v1.nixl_connector import ReqId
 
 from unittest.mock import patch
 import orjson
@@ -113,27 +92,6 @@ def request_finished(
         txfer_params['first_token'] = first_token
     return async_save, txfer_params
 
-
-origin_read_blocks = NixlConnectorWorker._read_blocks
-
-def _read_blocks(self, local_block_ids: list[int],
-                    remote_block_ids: list[int], dst_engine_id: str,
-                    request_id: str):
-    origin_read_blocks(self, local_block_ids, remote_block_ids, dst_engine_id, request_id)
-
-    message = "_read_blocks"
-    color = "blue"
-    domain = "VLLM"
-    category = "KVConnector"
-    payload = {
-        "req_ids": [request_id]
-    }
-    payload_str = orjson.dumps(payload)
-
-    tx_mark_func = get_tx_mark_func()
-    tx_mark_func(message, color, domain, category, payload_str)
-
-
 def _pop_done_transfers(
         self, transfers: dict[str, list[tuple[int, float]]]) -> set[str]:
     """
@@ -176,151 +134,11 @@ def _pop_done_transfers(
             del transfers[req_id]
     return done_req_ids
 
+origin__init__ = NixlConnectorWorker.__init__
 
 def __init__(self, vllm_config: VllmConfig, engine_id: str):
-    if NixlWrapper is None:
-        logger.error("NIXL is not available")
-        raise RuntimeError("NIXL is not available")
-    logger.info("Initializing NIXL GCU Enhanced wrapper")
-    logger.info("Initializing NIXL worker %s", engine_id)
-
-    # Config.
-    self.vllm_config = vllm_config
-    self.block_size = vllm_config.cache_config.block_size
-
-    self.nixl_backends = \
-        vllm_config.kv_transfer_config.get_from_extra_config(
-            "backends", ["UCX"])
-    # Agent.
-    non_ucx_backends = [b for b in self.nixl_backends if b != "UCX"]
-    if nixl_agent_config is None:
-        config = None
-    else:
-        config = nixl_agent_config(backends=self.nixl_backends) if len(
-            non_ucx_backends) > 0 else nixl_agent_config(num_threads=8)
-
-    self.nixl_wrapper = NixlWrapper(str(uuid.uuid4()), config)
-    # Map of engine_id -> {rank0: agent_name0, rank1: agent_name1..}.
-    self._remote_agents: dict[EngineId, dict[int, str]] = defaultdict(dict)
-
-    # NIXL handshake port.
-    # NOTE(rob): Within a DP group, each DP rank gets its own
-    # base port (which is sent in the KVTransferParams).
-    # Each TP rank listens/queries on the base_port + tp_rank.
-    self.side_channel_port: int = (
-        envs.VLLM_NIXL_SIDE_CHANNEL_PORT +
-        vllm_config.parallel_config.data_parallel_rank *
-        vllm_config.parallel_config.tensor_parallel_size)
-
-    # Metadata.
-    self.engine_id: EngineId = engine_id
-    self.tp_rank = get_tensor_model_parallel_rank()
-    self.world_size = get_tensor_model_parallel_world_size()
-    self.tp_group = get_tp_group()
-    self.num_blocks = 0
-
-    # KV Caches and nixl tracking data.
-    self.device_type = current_platform.device_type
-    self.kv_buffer_device: str = \
-        vllm_config.kv_transfer_config.kv_buffer_device
-    if self.device_type not in _NIXL_SUPPORTED_DEVICE:
-        raise RuntimeError(f"{self.device_type} is not supported.")
-    elif self.kv_buffer_device not in _NIXL_SUPPORTED_DEVICE[
-            self.device_type]:
-        raise RuntimeError(
-            f"{self.device_type} with {self.kv_buffer_device} kv_buffer "
-            "is not supported.")
-    self.device_kv_caches: dict[str, torch.Tensor] = {}
-
-    # cpu kv buffer for xfer
-    # used when device memory can not be registered under nixl
-    self.host_xfer_buffers: dict[str, torch.Tensor] = {}
-    self.use_host_buffer = self.kv_buffer_device == "cpu"
-    # support for oot platform which can't register nixl memory
-    # type based on kv_buffer_device
-    self.nixl_memory_type = current_platform.get_nixl_memory_type()
-    if self.nixl_memory_type is None:
-        if self.kv_buffer_device == "cuda":
-            self.nixl_memory_type = "VRAM"
-        elif self.kv_buffer_device == "cpu":
-            self.nixl_memory_type = "DRAM"
-    if self.nixl_memory_type is None:
-        raise RuntimeError(
-            f"{self.device_type} with {self.kv_buffer_device} kv_buffer "
-            "is not supported.")
-
-    # Note: host xfer buffer ops when use_host_buffer is True
-    self.copy_blocks: Optional[CopyBlocksOp] = None
-
-    # Map of engine_id -> kv_caches_base_addr. For TP case, each local
-    # rank will still only pull from a single remote TP worker.
-    self.kv_caches_base_addr: dict[EngineId, list[int]] = {}
-
-    # Number of NIXL regions. Currently one region per cache
-    # (so 1 per layer for MLA, otherwise 2 per layer)
-    self.num_regions = 0
-    self.num_layers = 0
-
-    # nixl_prepped_dlist_handle.
-    self.src_xfer_side_handle: int = 0
-    # Map of engine_id -> nixl_prepped_dlist_handle (int)].
-    self.dst_xfer_side_handles: dict[EngineId, int] = {}
-
-    # Map of engine_id -> num_blocks. All ranks in the same deployment will
-    # have the same number of blocks.
-    self.dst_num_blocks: dict[EngineId, int] = {}
-    self._registered_descs: list[Any] = []
-
-    # In progress transfers.
-    # [req_id -> list[handle]]
-    self._recving_metadata: dict[ReqId, ReqMeta] = {}
-    self._recving_transfers = defaultdict[ReqId, list[Transfer]](list)
-    # Track the expiration time of requests that are waiting to be sent.
-    self._reqs_to_send: dict[ReqId, float] = {}
-    # Set of requests that have been part of a batch, regardless of status.
-    self._reqs_to_process: set[ReqId] = set()
-
-    # Background thread for handling new handshake requests.
-    self._nixl_handshake_listener_t: Optional[threading.Thread] = None
-    # Background thread for initializing new NIXL handshakes.
-    self._handshake_initiation_executor = ThreadPoolExecutor(
-        # NIXL is not guaranteed to be thread-safe, limit 1 worker.
-        max_workers=1,
-        thread_name_prefix="vllm-nixl-handshake-initiator")
-    self._ready_requests = queue.Queue[tuple[ReqId, ReqMeta]]()
-    self._handshake_futures: dict[EngineId, Future[dict[int, str]]] = {}
-    # Protects _handshake_futures and _remote_agents.
-    self._handshake_lock = threading.RLock()
-
-    self.vllm_config = vllm_config
-    self.block_size = vllm_config.cache_config.block_size
-    self.model_config = vllm_config.model_config
-    self.cache_config = vllm_config.cache_config
-
-    # TODO(mgoin): remove this once we have hybrid memory allocator
-    # Optimization for models with local attention (Llama 4)
-    # List of block window sizes for each layer for local attention
-    self.block_window_per_layer: list[Optional[int]] = []
-    self.use_mla = self.model_config.use_mla
-
-    backend = get_attn_backend(self.model_config.get_head_size(),
-                                self.model_config.dtype,
-                                self.cache_config.cache_dtype,
-                                self.block_size,
-                                use_mla=self.use_mla)
-    self.backend_name = backend.get_name()
-    attn_backend = backend_name_to_enum(self.backend_name)
-    self._use_flashinfer = attn_backend == _Backend.FLASHINFER
-    self._use_pallas = attn_backend == _Backend.PALLAS
-    self.kv_cache_layout = get_kv_cache_layout()
-    logger.debug("Detected attention backend %s", self.backend_name)
-    logger.debug("Detected kv cache layout %s", self.kv_cache_layout)
-
-    self._tp_size: dict[EngineId, int] = {self.engine_id: self.world_size}
-    # With heterogeneous TP, P must wait for all assigned D TP workers to
-    # finish reading before safely freeing the blocks.
-    self.consumer_notification_counts_by_req = defaultdict[ReqId, int](int)
-    self.xfer_stats = NixlKVConnectorStats()
+    origin__init__(self, vllm_config, engine_id)
+    logger.info("Initializing GCU NIXL Connector Worker with Merge Block Transfer")
     self.remote_agent_meta: Optional[NixlAgentMetadata] = None
 
 def nixl_handshake(
@@ -749,6 +567,28 @@ def read_blocks(self, local_block_ids: list[int],
             (handle, time.perf_counter()))
 
 
+if envs.VLLM_NVTX_SCOPES_FOR_PROFILING and (not gcu_envs.VLLM_GCU_ENABLE_NIXL_BLOCK_MERGE_TRANSFER):
+    origin_read_blocks = NixlConnectorWorker._read_blocks
+if envs.VLLM_NVTX_SCOPES_FOR_PROFILING and gcu_envs.VLLM_GCU_ENABLE_NIXL_BLOCK_MERGE_TRANSFER:
+    origin_read_blocks = read_blocks
+
+def _read_blocks(self, local_block_ids: list[int],
+                    remote_block_ids: list[int], dst_engine_id: str,
+                    request_id: str):
+    origin_read_blocks(self, local_block_ids, remote_block_ids, dst_engine_id, request_id)
+
+    message = "_read_blocks"
+    color = "blue"
+    domain = "VLLM"
+    category = "KVConnector"
+    payload = {
+        "req_ids": [request_id]
+    }
+    payload_str = orjson.dumps(payload)
+
+    tx_mark_func = get_tx_mark_func()
+    tx_mark_func(message, color, domain, category, payload_str)
+
 
 patch(
     "vllm.distributed.kv_transfer.kv_connector.v1.nixl_connector.NixlConnectorScheduler.get_num_new_matched_tokens",
@@ -761,12 +601,11 @@ patch(
     "vllm.distributed.kv_transfer.kv_connector.v1.nixl_connector.NixlConnectorWorker._pop_done_transfers",
     _pop_done_transfers).start()
 
-if envs.VLLM_NVTX_SCOPES_FOR_PROFILING and (not gcu_envs.VLLM_GCU_ENABLE_NIXL_BLOCK_MERGE_TRANSFER):
+if envs.VLLM_NVTX_SCOPES_FOR_PROFILING:
     patch(
         "vllm.distributed.kv_transfer.kv_connector.v1.nixl_connector.NixlConnectorWorker._read_blocks",
         _read_blocks).start()
-
-if gcu_envs.VLLM_GCU_ENABLE_NIXL_BLOCK_MERGE_TRANSFER and (not envs.VLLM_NVTX_SCOPES_FOR_PROFILING):
+if gcu_envs.VLLM_GCU_ENABLE_NIXL_BLOCK_MERGE_TRANSFER:
     logger.debug(f"VLLM_GCU: VLLM_GCU_ENABLE_NIXL_BLOCK_MERGE_TRANSFER is enabled")
     patch(
         "vllm.distributed.kv_transfer.kv_connector.v1.nixl_connector.NixlConnectorWorker.__init__",
@@ -775,11 +614,12 @@ if gcu_envs.VLLM_GCU_ENABLE_NIXL_BLOCK_MERGE_TRANSFER and (not envs.VLLM_NVTX_SC
         "vllm.distributed.kv_transfer.kv_connector.v1.nixl_connector.NixlConnectorWorker._nixl_handshake",
         nixl_handshake).start()
     patch(
-        "vllm.distributed.kv_transfer.kv_connector.v1.nixl_connector.NixlConnectorWorker._read_blocks",
-        read_blocks).start()
-    patch(
         "vllm.distributed.kv_transfer.kv_connector.v1.nixl_connector.NixlConnectorWorker.register_kv_caches",
         register_kv_caches).start()
     patch(
         "vllm.distributed.kv_transfer.kv_connector.v1.nixl_connector.NixlConnectorWorker.add_remote_agent",
         add_remote_agent).start()
+    if not envs.VLLM_NVTX_SCOPES_FOR_PROFILING:
+        patch(
+            "vllm.distributed.kv_transfer.kv_connector.v1.nixl_connector.NixlConnectorWorker._read_blocks",
+            read_blocks).start()
