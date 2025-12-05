@@ -85,7 +85,9 @@ class GCUMLAMetadataBuilder(MLACommonMetadataBuilder[GCUMLAMetadata]):
                          GCUMLAMetadata)
 
         self.use_tile_scheduler_metadata = True if \
-          current_platform.get_device_capability().to_int() == 140 else False
+          current_platform.get_device_capability().to_int() == 140 and \
+          vllm_config.cache_config.cache_dtype.startswith("fp8") \
+          else False
 
         self.cg_buf_tile_scheduler_metadata = torch.empty(
             24 * 1024 * 1024,
