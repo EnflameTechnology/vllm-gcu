@@ -1876,6 +1876,13 @@ class GCUModelRunner(GPUModelRunner):
                Optional[IntermediateTensors], dict[str, Any]]:
         return super()._preprocess(scheduler_output, intermediate_tensors, ubatch_slices, num_tokens_after_padding)
 
+    def _sample(
+        self, logits: Optional[torch.Tensor],
+        spec_decode_metadata: Optional[SpecDecodeMetadata]
+    ) -> SamplerOutput:
+        self.input_batch.update_async_output_token_ids()
+        return super()._sample(logits, spec_decode_metadata)
+
     @torch.inference_mode()
     @dump_memory_snapshot_when_exception('step')
     def execute_model(
@@ -2196,7 +2203,7 @@ class GCUModelRunner(GPUModelRunner):
         if not self.use_async_scheduling:
             return output
 
-        return GCUAsyncGPUModelRunnerOutput(
+        async_output = GCUAsyncGPUModelRunnerOutput(
             vocab_size=self.input_batch.vocab_size,
             event_poll_span_ms= 1 if self.vllm_config.additional_config["deepseek_fused_mtp"] else -1,
             model_runner_output=output,
@@ -2204,6 +2211,14 @@ class GCUModelRunner(GPUModelRunner):
             invalid_req_indices=invalid_req_indices,
             async_output_copy_stream=self.async_output_copy_stream,
         )
+        # Save ref of sampled_token_ids CPU tensor if the batch contains
+        # any requests with sampling params that that require output ids.
+        self.input_batch.set_async_sampled_token_ids(
+            async_output._sampled_token_ids_cpu,
+            async_output._async_copy_ready_event,
+        )
+
+        return async_output
 
     def take_draft_token_ids(self) -> Optional[DraftTokenIds]:
         if self._draft_token_ids is None:
