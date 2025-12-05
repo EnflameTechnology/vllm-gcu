@@ -13,68 +13,50 @@ from vllm.model_executor.layers.activation import (
 )
 
 
-def fatrelu_and_mul_forward_oot(self, x: torch.Tensor) -> torch.Tensor:
-    return self.forward_native(x)
+@FatreluAndMul.register_oot
+class GCUFatreluAndMul(FatreluAndMul):
+
+    def forward_oot(self, *args, **kwargs) -> torch.Tensor:
+        return self.forward_native(*args, **kwargs)
 
 
-FatreluAndMul.forward_oot = fatrelu_and_mul_forward_oot
+@SiluAndMul.register_oot
+class GCUSiluAndMul(SiluAndMul):
+
+    def forward_oot(self, *args, **kwargs) -> torch.Tensor:
+        return self.forward_cuda(*args, **kwargs)
 
 
-def silu_and_mul_forward_oot(self, x: torch.Tensor) -> torch.Tensor:
-    d = x.shape[-1] // 2
-    output_shape = x.shape[:-1] + (d,)
-    out = torch.empty(output_shape, dtype=x.dtype, device=x.device)
+@MulAndSilu.register_oot
+class GCUMulAndSilu(MulAndSilu):
 
-    if x.numel() == 0:
-        return out
-
-    torch.ops._C.silu_and_mul(out, x)
-    return out
+    def forward_oot(self, *args, **kwargs) -> torch.Tensor:
+        return self.forward_native(*args, **kwargs)
 
 
-SiluAndMul.forward_oot = silu_and_mul_forward_oot
+@GeluAndMul.register_oot
+class GCUGeluAndMul(GeluAndMul):
+
+    def forward_oot(self, *args, **kwargs) -> torch.Tensor:
+        return self.forward_cuda(*args, **kwargs)
 
 
-def mul_and_silu_forward_oot(self, x: torch.Tensor) -> torch.Tensor:
-    return self.forward_native(x)
+@NewGELU.register_oot
+class GCUNewGELU(NewGELU):
+
+    def forward_oot(self, *args, **kwargs) -> torch.Tensor:
+        return self.forward_cuda(*args, **kwargs)
 
 
-MulAndSilu.forward_oot = mul_and_silu_forward_oot
+@FastGELU.register_oot
+class GCUFastGELU(FastGELU):
+
+    def forward_oot(self, *args, **kwargs) -> torch.Tensor:
+        return self.forward_cuda(*args, **kwargs)
 
 
-def gelu_and_mul_forward_oot(self, x: torch.Tensor) -> torch.Tensor:
-    d = x.shape[-1] // 2
-    output_shape = x.shape[:-1] + (d,)
-    out = torch.empty(output_shape, dtype=x.dtype, device=x.device)
-    torch.ops._C.gelu_and_mul(out, x)
-    return out
+@QuickGELU.register_oot
+class GCUQuickGELU(QuickGELU):
 
-
-GeluAndMul.forward_oot = gelu_and_mul_forward_oot
-
-
-def new_gelu_forward_oot(self, x: torch.Tensor) -> torch.Tensor:
-    out = torch.empty_like(x)
-    torch.ops._C.gelu_new(out, x)
-    return out
-
-
-NewGELU.forward_oot = new_gelu_forward_oot
-
-
-def fast_gelu_forward_oot(self, x: torch.Tensor) -> torch.Tensor:
-    out = torch.empty_like(x)
-    torch.ops._C.gelu_fast(out, x)
-    return out
-
-
-FastGELU.forward_oot = fast_gelu_forward_oot
-
-
-def quick_gelu_forward_oot(self, x: torch.Tensor) -> torch.Tensor:
-    out = torch.empty_like(x)
-    torch.ops._C.gelu_quick(out, x)
-    return out
-
-
-QuickGELU.forward_oot = quick_gelu_forward_oot
+    def forward_oot(self, *args, **kwargs) -> torch.Tensor:
+        return self.forward_cuda(*args, **kwargs)
