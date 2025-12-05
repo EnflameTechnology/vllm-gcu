@@ -7,6 +7,7 @@
 
    lists
    deepseek
+   deepseek_disaggregated_PD_MTP1
    llama
    internlm
    qwen

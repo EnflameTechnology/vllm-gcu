@@ -1,4 +1,4 @@
-## Deepseek-V3.1-Terminus PD 分离 MTP1 运行说明
+## Deepseek-V3.1-Terminus PD 分离 MTP1 推理
 
 本文档说明如何按 PD 分离（Prefill/Decode）方式启动 1P1D（1 Prefill 节点 + 1 Decode 节点， 8+8卡），并使用 dp2-tp4-sp4-ep8-w8a8-c8 的参数配置启动 vLLM 服务与代理。文末附完整脚本源码，便于直接对照与复用。
 
@@ -13,13 +13,13 @@
   - 弹性易扩展：可按业务分别扩缩容。
   - 负载更隔离：避免 Prefill 突发影响 Decode 稳定性。
 
-#### 模型来源与路径
+#### 模型来源
 - 来源：[DeepSeek-V3.1-Terminus](https://modelscope.cn/models/deepseek-ai/DeepSeek-V3.1-Terminus/files)
 - branch: master
 - commit_id: 9c9951d1
 - 模型保存路径：`/home/pretrained_models/deepseek-v3.1-terminus`。
 
-#### 主要配置与实际影响
+#### 主要配置
 - 关键配置与含义：
   - `-dp 2 -tp 4`：数据/张量并行组合，需两端保持一致；
   - `--enable-expert-parallel`：启用 MoE 专家并行；
@@ -34,7 +34,7 @@
   - FP8 KV 与全量 KV 传输对互联带宽与栈配置（ECCL/UCX）更敏感；
   - MoE（ep=8）对跨卡通信质量有要求，自动网卡亲和与设备筛选能降低抖动。
 
-### 目录结构与文件放置
+### 目录结构
 请将以下脚本置于同一目录中，Prefill 与 Decode 两台机器均建议保持相同目录结构（便于维护与迁移）。`logs/` 及其子目录由脚本在运行时自动创建。
 
 ```bash
