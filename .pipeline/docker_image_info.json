@@ -3,13 +3,13 @@
         "BUILD": {
             "UBUNTU_2004": {
                 "X86_GCC9": {
-                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2004_gcc13:0.0.1",
+                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2204_gcc13:0.0.1",
                     "TORCH_2_3_0": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2004_gcc9:1.7.1"
                 }
             },
             "UBUNTU_DEFAULT": {
                 "X86_DEFAULT": {
-                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2004_gcc13:0.0.1"
+                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2204_gcc13:0.0.1"
                 }
             },
             "TLINUX_DEFAULT": {
@@ -40,7 +40,7 @@
         "BUILD": {
             "UBUNTU_2004": {
                 "X86_GCC9": {
-                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2004_gcc13:0.0.1",
+                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2204_gcc13:0.0.1",
                     "TORCH_2_3_0": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2004_gcc9:1.7.1"
                 },
                 "X86_GCC11": {
@@ -58,7 +58,7 @@
             },
             "UBUNTU_DEFAULT": {
                 "X86_DEFAULT": {
-                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2004_gcc13:0.0.1",
+                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2204_gcc13:0.0.1",
                     "COVERAGE": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2004_gcc13_codecov:0.0.1"
                 },
                 "AARCH64_DEFAULT": {
@@ -89,7 +89,7 @@
         "BUILD": {
             "UBUNTU_2004": {
                 "X86_GCC9": {
-                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2004_gcc13:0.0.1",
+                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2204_gcc13:0.0.1",
                     "TORCH_2_3_0": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2004_gcc9:1.7.1"
                 },
                 "AARCH64_GCC9": {
@@ -99,7 +99,7 @@
             },
             "UBUNTU_DEFAULT": {
                 "X86_DEFAULT": {
-                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2004_gcc13:0.0.1"
+                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2204_gcc13:0.0.1"
                 },
                 "AARCH64_DEFAULT": {
                     "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2404_aarch64_gcc13:1.0.0"
@@ -111,7 +111,7 @@
         "BUILD": {
             "UBUNTU_2004": {
                 "X86_GCC9": {
-                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2004_gcc13:0.0.1",
+                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2204_gcc13:0.0.1",
                     "TORCH_2_3_0": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2004_gcc9:1.7.1"
                 },
                 "AARCH64_GCC9": {
@@ -126,7 +126,7 @@
             },
             "UBUNTU_DEFAULT": {
                 "X86_DEFAULT": {
-                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2004_gcc13:0.0.1"
+                    "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2204_gcc13:0.0.1"
                 },
                 "AARCH64_DEFAULT": {
                     "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2404_aarch64_gcc13:1.0.0"
