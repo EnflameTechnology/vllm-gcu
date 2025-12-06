@@ -15,6 +15,7 @@ from torch.autograd.profiler import record_function
 import vllm.envs as envs
 from vllm.model_executor.models.utils import extract_layer_index
 from vllm.platforms import current_platform
+from vllm_gcu.kernels._custom_ops import get_token_bin_counts_and_mask
 
 def bind_kv_cache(
     kv_caches: dict[str, torch.Tensor],
@@ -94,3 +95,4 @@ def record_function_or_nullcontext(name: str) -> AbstractContextManager:
 patch("vllm.v1.worker.gpu_model_runner.bind_kv_cache", bind_kv_cache).start()
 patch("vllm.v1.worker.gpu_model_runner.record_function_or_nullcontext", record_function_or_nullcontext).start()
 patch("vllm_gcu.worker.gcu_model_runner.record_function_or_nullcontext", record_function_or_nullcontext).start()
+patch("vllm.model_executor.layers.utils.get_token_bin_counts_and_mask", get_token_bin_counts_and_mask).start()

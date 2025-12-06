@@ -611,3 +611,26 @@ def indexer_k_quant_and_cache(k: torch.Tensor, kv_cache: torch.Tensor,
                                                      quant_block_size,
                                                      kv_cache_dtype)
 
+def get_token_bin_counts_and_mask(
+    tokens: torch.Tensor,
+    vocab_size: int,
+    num_seqs: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    # 3.0 not support get_token_bin_counts_and_mask fusion
+    from vllm.platforms import current_platform
+    if not current_platform.has_device_capability(140):
+        from vllm.model_executor.layers import utils as vllm_utils
+        return vllm_utils.get_token_bin_counts_and_mask(tokens, vocab_size, num_seqs)
+    else:
+        bin_counts = torch.empty((num_seqs, vocab_size),
+                                dtype=torch.long,
+                                device=tokens.device)
+        mask = torch.empty((num_seqs, vocab_size),
+                        dtype=torch.bool,
+                        device=tokens.device)
+        torch.ops._C.get_token_bin_counts_and_mask(bin_counts,
+                                                        mask,
+                                                        tokens,
+                                                        vocab_size,
+                                                        num_seqs)
+        return bin_counts, mask

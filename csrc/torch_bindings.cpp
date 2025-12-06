@@ -98,6 +98,7 @@
 #include "src/indexer_k_quant_and_cache.h"
 #include "src/dynamic_per_token_group_fp8_quant_with_ue8m0.h"
 #include "src/mha_fwd_kvcache_mla_sparse.h"
+#include "src/get_token_bin_counts_and_mask.h"
 
 // Note on op signatures:
 // The X_meta signatures are for the meta functions corresponding to op X.
@@ -1271,6 +1272,17 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
   }
   ops.impl("dynamic_per_token_group_fp8_quant_with_ue8m0", torch::kPrivateUse1,
            dynamic_per_token_group_fp8_quant_with_ue8m0);
+
+  handle = c10::Dispatcher::singleton().findSchema(
+      {"_C::get_token_bin_counts_and_mask", ""});
+  if (!handle.has_value()) {
+    ops.def(
+        "get_token_bin_counts_and_mask(Tensor! bin_counts, "
+        "Tensor! mask, Tensor tokens, int vocab_size, int num_seqs) "
+        "-> ()");
+  }
+  ops.impl("get_token_bin_counts_and_mask", torch::kPrivateUse1,
+           get_token_bin_counts_and_mask);
 }
 
 // TORCH_LIBRARY_FRAGMENT(CONCAT(_cache_ops, TORCH_EXTENSION_NAME), cache_ops) {
