@@ -6,7 +6,7 @@
 vLLM-gcu用户使用手册
 ==================
 
-vLLM-gcu是适配于燧原S60 gcu的vLLM，用于支持在Enflame gcu上运行各LLM的推理。
+vLLM-gcu是适配于燧原L600 gcu的vLLM，用于支持在Enflame gcu上运行各LLM的推理。
 
 .. raw:: latex
 

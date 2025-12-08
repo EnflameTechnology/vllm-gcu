@@ -1,6 +1,6 @@
 ## Chunked prefill
 ### 功能介绍
-[vLLM chunked prefill](https://docs.vllm.ai/en/latest/models/performance.html#chunked-prefill)
+[vLLM chunked prefill](https://docs.vllm.ai/en/v0.11.0/configuration/optimization.html#chunked-prefill_1)
 
 ### 使用方法
 ```shell

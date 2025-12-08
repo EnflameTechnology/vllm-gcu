@@ -8,6 +8,7 @@
 * 使用指定的数据集进行视觉大语言模型的推理精度测试；
 
 可以通过`python3 -m vllm_utils.benchmark_vision_language --help`查看各参数含义。
+* 说明：在下次发版时将移除benchmark_vision_language方法。
 
 ### 离线推理测试
 离线推理测试，是使用输入的prompt和视觉输入文件完成指定vision language model的推理，以演示Enflame gcu的推理能力。

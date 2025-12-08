@@ -13,6 +13,7 @@ vLLM-gcu维持vLLM中的模型推理、request调度策略，只是在Enflame gc
 vLLM-gcu当前支持MLA backend。
 
 ## 版本信息与使用注意事项
+
 当前vLLM-gcu是与Enflame gcu适配的vLLM 0.11.0 版本，其使用方式与vLLM 社区 0.11.0 版本基本一致，但具备如下特性：
 
 - 默认关闭vllm统计信息收集；

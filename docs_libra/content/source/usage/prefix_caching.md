@@ -1,6 +1,6 @@
 ## Auto prefix caching
 ### 功能介绍
-[vLLM auto prefix caching](https://docs.vllm.ai/en/latest/automatic_prefix_caching/apc.html)
+[vLLM auto prefix caching](https://docs.vllm.ai/en/v0.11.0/features/automatic_prefix_caching.html)
 
 ### 离线推理
 ```shell
@@ -22,7 +22,7 @@ python3 -m vllm_utils.offline_inference_with_prefix \
 * 默认采用graph模式进行推理，可以添加`--enforce-eager`启用eager mode进行推理；
 
 该示例使用内置的`prefix`和`prompts`给出了启用`auto prefix caching`前后的推理结果及耗时.
-测试结果表明，在燧原S60 gcu上启用该特性后的推理结果与未启用时的结果一致，且具有一定的加速效果。具体加速比例随模型、`prefix`和`prompts`的不同而变动。
+测试结果表明，在燧原L600 gcu上启用该特性后的推理结果与未启用时的结果一致，且具有一定的加速效果。具体加速比例随模型、`prefix`和`prompts`的不同而变动。
 
 ### 性能测试
 ```shell

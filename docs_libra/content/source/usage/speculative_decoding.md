@@ -1,6 +1,6 @@
 ## speculative decoding
 ### 功能介绍
-[vLLM speculative decoding](https://docs.vllm.ai/en/latest/models/spec_decode.html)
+[vLLM speculative decoding](https://docs.vllm.ai/en/v0.11.0/features/spec_decode.html#lossless-guarantees-of-speculative-decoding)
 
 ### 使用方法
 ```shell
@@ -31,7 +31,7 @@ python3 -m vllm_utils.offline_inference_with_speculative_decoding \
 * 默认采用graph模式进行推理，可以添加`--enforce-eager`启用eager mode进行推理；
 
 该示例使用内置的`prompts`给出了启用`speculative decoding`与`ngram`后相比未启用时的推理结果及耗时。
-测试结果表明，在燧原S60 gcu上启用该特性后的推理结果与未启用时的结果一致，且具有一定的加速效果。具体加速比例随模型和`prompts`的不同而变动。
+测试结果表明，在燧原L600 gcu上启用该特性后的推理结果与未启用时的结果一致，且具有一定的加速效果。具体加速比例随模型和`prompts`的不同而变动。
 
 ### 性能测试
 #### Speculating with a draft model

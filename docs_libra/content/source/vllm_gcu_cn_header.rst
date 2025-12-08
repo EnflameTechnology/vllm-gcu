@@ -25,7 +25,13 @@
                                                  | • 支持 DP2-TP4SP4-EP8 并行推理
                                                  | • 支持 DP4-TP4SP4-EP16 并行推理
                                                  | • 支持 P/D 分离、MTP1 等
-                                                 | **4.新增特性**
+                                                 | **4. 支持internlm3/llama3/qwen2/qwen3系列模型**
+                                                 | • internlm3-8b-instruct
+                                                 | • Meta-Llama-3-70B
+                                                 | •  Meta-Llama-3-8B
+                                                 | • Qwen3-32B
+                                                 | • Qwen2-72B-Instruct
+                                                 | **5.新增特性**
                                                  | • 运行时图模式增强（Runtime Graph Mode Enhancement）
                                                  | • MoE 模型深度优化（MOE deepep ll+deepgemm masked）
                                                  | • 异步调度与计算重叠（Async Scheduling + Overlap Model Execution）

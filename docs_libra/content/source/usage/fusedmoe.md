@@ -5,4 +5,4 @@
 
 ### 使用方法
 
-该功能已默认使能，从用户角度不需要设置其他参数。
+MoE类模型默认都会使能FusedMoE功能。在多卡推理情况下，默认MoE采用的Tensor Parallelism (TP)的并行方式，可以通过添加参数`enable_expert_parallel=True`使能[Expert Parallelism (EP)](https://docs.vllm.ai/en/v0.11.0/configuration/optimization.html#expert-parallelism-ep)。

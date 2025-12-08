@@ -4,9 +4,7 @@
    contain the root `toctree` directive.
 
 vLLM-gcu用户使用手册(L600)
-==================
-
-vLLM-gcu是适配于燧原S60 gcu的vLLM，用于支持在Enflame gcu上运行各LLM的推理。
+==========================
 
 .. raw:: latex
 
@@ -21,7 +19,7 @@ vLLM-gcu是适配于燧原S60 gcu的vLLM，用于支持在Enflame gcu上运行�
    vllm_gcu_cn_header
    introduction/index
    install/index
-   usage/index
+   .. usage/index
    LLMs/index
 
 .. Comments: not used

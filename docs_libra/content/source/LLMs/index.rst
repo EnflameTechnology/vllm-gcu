@@ -6,9 +6,9 @@
    :glob:
 
    lists
-   deepseek
    deepseek_disaggregated_PD_MTP1
-   llama
+   deepseek
    internlm
+   llama
    qwen
    

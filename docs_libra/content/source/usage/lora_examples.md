@@ -1,4 +1,8 @@
 ## multilora
+vllm_gcu使能了LoRA功能，可以参考[vLLM官方手册](https://docs.vllm.ai/en/v0.11.0/features/lora.html)学习LoRA原理及使用细节。
+
+本章节主要给出vllm_gcu上LoRA功能的使用示例。
+
 ### 使用方法
 ```shell
 python3 -m vllm_utils.multilora_inference --base-model=[path of base model] --device=[device type] --lora-config=[path of lora config file]
