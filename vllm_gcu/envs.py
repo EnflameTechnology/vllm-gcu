@@ -41,6 +41,9 @@ environment_variables: Dict[str, Callable[[], Any]] = {
     "VLLM_GCU_ENABLE_NIXL_BLOCK_MERGE_TRANSFER": lambda: bool(
         int(os.getenv("VLLM_GCU_ENABLE_NIXL_BLOCK_MERGE_TRANSFER", "0"))
     ),
+    "VLLM_GCU_DEEPEP_USE_FP8_DISPATCH": lambda: bool(
+        int(os.getenv("VLLM_GCU_DEEPEP_USE_FP8_DISPATCH", "0"))
+    ),
 }
 
 

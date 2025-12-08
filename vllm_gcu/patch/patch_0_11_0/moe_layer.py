@@ -11,6 +11,7 @@ from vllm.forward_context import get_forward_context
 from vllm.utils import cdiv
 
 from vllm.logger import init_logger
+from vllm.platforms import current_platform
 
 import vllm_gcu.envs as gcu_envs
 from vllm_gcu.kernels.prepare_finalize import AlltoAllSelector
@@ -35,6 +36,7 @@ def init_prepare_finalize(self, layer: torch.nn.Module):
 
     prepare_finalize: Optional[FusedMoEPrepareAndFinalize] = None
 
+    # NOTE: use origin_make after deepep gcu supports fp8
     if self.moe.use_deepep_ll_kernels:
         from vllm.model_executor.layers.fused_moe.deepep_ll_prepare_finalize import DeepEPLLPrepareAndFinalize, DEEPEP_QUANT_BLOCK_SHAPE
         all2all_manager = get_ep_group().device_communicator.all2all_manager
@@ -51,10 +53,10 @@ def init_prepare_finalize(self, layer: torch.nn.Module):
 
         # Note: We may want to use FP8 dispatch just to reduce
         # data movement.
-        # use_fp8_dispatch = (
-        #     self.moe_quant_config.quant_dtype == current_platform.fp8_dtype()
-        #     and self.moe_quant_config.block_shape == DEEPEP_QUANT_BLOCK_SHAPE)
-        use_fp8_dispatch = False
+        use_fp8_dispatch = (
+            self.moe_quant_config.quant_dtype == current_platform.fp8_dtype()
+            and self.moe_quant_config.block_shape == DEEPEP_QUANT_BLOCK_SHAPE)
+        use_fp8_dispatch &= gcu_envs.VLLM_GCU_DEEPEP_USE_FP8_DISPATCH
 
         prepare_finalize = DeepEPLLPrepareAndFinalize(
             handle,
@@ -62,7 +64,22 @@ def init_prepare_finalize(self, layer: torch.nn.Module):
             num_dispatchers=all2all_manager.world_size,
             use_fp8_dispatch=use_fp8_dispatch,
         )
-    elif self.moe.use_pplx_kernels or self.moe.use_deepep_ht_kernels:
+    elif self.moe.use_deepep_ht_kernels:
+        from vllm_gcu.kernels.deepep_ht_prepare_finalize import DeepEPHTPrepareAndFinalizeGCU
+        all2all_manager = get_ep_group().device_communicator.all2all_manager
+        assert self.moe.dp_size == all2all_manager.dp_world_size
+
+        all_to_all_args = dict()
+        handle = all2all_manager.get_handle(all_to_all_args)
+        prepare_finalize = DeepEPHTPrepareAndFinalizeGCU(
+            handle,
+            num_dispatchers=all2all_manager.world_size,
+            dp_size=all2all_manager.dp_world_size,
+            rank_expert_offset=all2all_manager.rank *
+            self.moe.num_local_experts,
+        )
+    elif (self.moe.use_pplx_kernels or self.moe.use_deepep_ht_kernels
+          or self.moe.use_deepep_ll_kernels):
         prepare_finalize = origin_make(self)
     elif self.moe.moe_parallel_config.ep_size > 1 and (
             self.moe.moe_parallel_config.dp_size > 1
