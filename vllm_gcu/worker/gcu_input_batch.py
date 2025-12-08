@@ -14,6 +14,10 @@ class GCUInputBatch(InputBatch):
         self.sampled_token_ids_cpu: Optional[torch.Tensor] = None
         self.async_copy_ready_event: Optional[torch.cuda.Event] = None
 
+        self.prev_valid_sampled_tokens_count: torch.Tensor | None = None
+        self.prev_next_token_ids: torch.Tensor | None = None
+        self.prev_num_tokens_to_verify: torch.Tensor | None = None
+
     def add_request(self,
         request: "CachedRequestState",
     ) -> int:

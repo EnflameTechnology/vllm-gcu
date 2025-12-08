@@ -111,10 +111,8 @@ class EagleProposerWithGraph(EagleProposer):
     def __init__(self,
                  vllm_config: VllmConfig,
                  device: torch.device,
-                 runner=None,
-                 prepare_next_token_ids_padded_event=None):
+                 runner=None):
         super().__init__(vllm_config=vllm_config, device=device, runner=runner)
-        self.prepare_next_token_ids_padded_event = prepare_next_token_ids_padded_event
 
         self.cudagraph_mode = self.vllm_config.compilation_config.cudagraph_mode
         self.runtime_mode = self.cudagraph_mode.decode_mode()
@@ -142,6 +140,7 @@ class EagleProposerWithGraph(EagleProposer):
         self.slot_mapping = torch.zeros(self.max_num_tokens,
                                         device=device,
                                         dtype=torch.int32)
+        self.use_async_scheduling = self.vllm_config.scheduler_config.async_scheduling
 
     def load_model(self, target_model: torch.nn.Module) -> None:
         super().load_model(target_model)
@@ -602,12 +601,9 @@ class EagleProposerWithGraph(EagleProposer):
                 num_discarded_requests
             )
 
-        if self.prepare_next_token_ids_padded_event is not None:
-            self.runner.prev_valid_sampled_tokens_count_pinned_cpu[:valid_sampled_tokens_count.shape[0]].copy_(valid_sampled_tokens_count, non_blocking=True)
-            self.runner.prev_valid_sampled_tokens_count_pinned_cpu[-1] = 1
-            self.prepare_next_token_ids_padded_event.record()
-
-            self.runner.prev_next_token_ids = next_token_ids
+        if self.use_async_scheduling:
+            self.runner.input_batch.prev_valid_sampled_tokens_count = valid_sampled_tokens_count
+            self.runner.input_batch.prev_next_token_ids = next_token_ids
 
         return next_token_ids, valid_sampled_tokens_count
 

@@ -83,3 +83,48 @@ def multi_compute_slot_mapping_device(self, req_indices: np.ndarray,
 if gcu_envs.VLLM_GCU_ENABLE_DEEPSEEK_MTP_FUSION:
     patch.object(BlockTable, "compute_slot_mapping_device", compute_slot_mapping_device, create=True).start()
     patch.object(MultiGroupBlockTable, "compute_slot_mapping_device", multi_compute_slot_mapping_device, create=True).start()
+
+
+def _compute_slot_mapping(
+    self,
+    req_indices: torch.Tensor,
+    positions: torch.Tensor
+) -> None:
+    if isinstance(req_indices, torch.Tensor) and isinstance(positions, torch.Tensor):
+        if self.dcp_world_size > 1:
+            virtual_block_size = self.block_size * self.dcp_world_size
+            block_table_indices = (req_indices * self.max_num_blocks_per_req + positions // virtual_block_size)
+            block_numbers = self.block_table.gpu.flatten()[block_table_indices]
+            virtual_block_offsets = positions % virtual_block_size
+            mask = virtual_block_offsets % self.dcp_world_size == self.dcp_rank
+            block_offsets = virtual_block_offsets // self.dcp_world_size
+            slot_mapping = block_numbers * self.block_size + block_offsets
+            self.slot_mapping.gpu[:req_indices.shape[0]] = torch.where(mask, slot_mapping, -1)
+        else:
+            block_table_indices = (req_indices * self.max_num_blocks_per_req + positions // self.block_size)
+            block_numbers = self.block_table.gpu.flatten()[block_table_indices]
+            block_offsets = positions % self.block_size
+            torch.add(block_numbers * self.block_size, block_offsets, out=self.slot_mapping.gpu[:req_indices.shape[0]])
+    else:
+        if self.dcp_world_size > 1:
+            virtual_block_size = self.block_size * self.dcp_world_size
+            block_table_indices = (req_indices * self.max_num_blocks_per_req +
+                                   positions // virtual_block_size)
+            block_numbers = self.block_table.np.ravel()[block_table_indices]
+            virtual_block_offsets = positions % virtual_block_size
+            mask = virtual_block_offsets % self.dcp_world_size == self.dcp_rank
+            block_offsets = virtual_block_offsets // self.dcp_world_size
+            slot_mapping = block_numbers * self.block_size + block_offsets
+            self.slot_mapping.np[:req_indices.shape[0]] = np.where(
+                mask, slot_mapping, -1)
+        else:
+            block_table_indices = (req_indices * self.max_num_blocks_per_req +
+                                   positions // self.block_size)
+            block_numbers = self.block_table.np.ravel()[block_table_indices]
+            block_offsets = positions % self.block_size
+            np.add(block_numbers * self.block_size,
+                   block_offsets,
+                   out=self.slot_mapping.np[:req_indices.shape[0]])
+
+
+patch("vllm.v1.worker.block_table.BlockTable.compute_slot_mapping", _compute_slot_mapping).start()
