@@ -21,16 +21,12 @@ def register_custom_models():
     from vllm import ModelRegistry
     custom_configs = [
         ("cusllama", "vllm_gcu.models.cusllama.cusllama_config", "CustomerLlaMAConfig"),
-        ("hunyuan", "vllm_gcu.models.hunyuan.hunyuan_config", "HunyuanConfig"),
-        ("hunyuan_v1_dense", "vllm_gcu.models.hunyuan_v1.configuration_hunyuan_v1_dense", "HunYuanDenseV1Config"),
-        ("hunyuan_v1_moe", "vllm_gcu.models.hunyuan_v1.configuration_hunyuan_v1_moe", "HunYuanMoEV1Config"),
     ]
 
     for name, module_name, class_name in custom_configs:
         _try_register_config(name, module_name, class_name)
 
     ModelRegistry.register_model("CustomerLlaMAForCausalLM", "vllm_gcu.models.cusllama.cusllama:CustomerLlaMAForCausalLM")
-    ModelRegistry.register_model("HunyuanForCausalLM", "vllm_gcu.models.hunyuan.hunyuan:HunyuanForCausalLM")
     ModelRegistry.register_model("DeepSeekMTPModel", "vllm_gcu.models.deepseek_mtp.deepseek_mtp:DeepSeekMTP")
     ModelRegistry.register_model("DeepseekV3ForCausalLM", "vllm_gcu.models.deepseek_v3.deepseek_v3:DeepseekV3ForCausalLM")
     ModelRegistry.register_model("XLMRobertaForSequenceClassification", "vllm_gcu.models.roberta.roberta:RobertaForSequenceClassification")
@@ -42,5 +38,3 @@ def register_custom_models():
     ModelRegistry.register_model("QuantDeepseekForCausalLM", "vllm_gcu.models.deepseek_moe_quant.deepseek_moe_quant:QuantDeepseekForCausalLM")
     ModelRegistry.register_model("QuantMixtralForCausalLM", "vllm_gcu.models.mixtral_quant.mixtral_quant:MixtralForCausalLM")
     ModelRegistry.register_model("DeepseekVLV2ForCausalLM", "vllm_gcu.models.deepseek_vl2.deepseek_vl2:DeepseekVLV2ForCausalLMGCU")
-    ModelRegistry.register_model("HunYuanDenseV1ForCausalLM", "vllm_gcu.models.hunyuan_v1.hunyuan_v1:HunYuanDenseV1ForCausalLM")
-    ModelRegistry.register_model("HunYuanMoEV1ForCausalLM", "vllm_gcu.models.hunyuan_v1.hunyuan_v1:HunYuanMoEV1ForCausalLM")
