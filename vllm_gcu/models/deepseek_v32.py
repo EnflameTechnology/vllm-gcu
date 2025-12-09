@@ -78,6 +78,9 @@ from vllm.model_executor.models.utils import (PPMissingLayer, is_pp_missing_para
                     make_empty_intermediate_tensors_factory, make_layers,
                     maybe_prefix)
 from vllm.model_executor.models.deepseek_v2 import DeepseekV32IndexerCache
+import vllm_gcu.envs as gcu_envs
+from vllm_gcu.models.deepseek_v3.deepseek_v3 import DeepseekV2MLP, DeepseekV2MoE
+from vllm_gcu.distributed.sp import sp_to_tp, slice_tensor_sp, tp_to_sp
 
 if current_platform.is_cuda_alike():
     from vllm import _custom_ops as ops
@@ -85,190 +88,6 @@ elif current_platform.is_xpu():
     from vllm._ipex_ops import ipex_ops as ops
 
 logger = init_logger(__name__)
-
-
-class DeepseekV2MLP(nn.Module):
-
-    def __init__(
-        self,
-        hidden_size: int,
-        intermediate_size: int,
-        hidden_act: str,
-        quant_config: Optional[QuantizationConfig] = None,
-        reduce_results: bool = True,
-        is_sequence_parallel=False,
-        prefix: str = "",
-    ) -> None:
-        super().__init__()
-
-        # If is_sequence_parallel, the input and output tensors are sharded
-        # across the ranks within the tp_group. In this case the weights are
-        # replicated and no collective ops are needed.
-        # Otherwise we use standard TP with an allreduce at the end.
-        self.gate_up_proj = MergedColumnParallelLinear(
-            hidden_size, [intermediate_size] * 2,
-            bias=False,
-            quant_config=quant_config,
-            disable_tp=is_sequence_parallel,
-            prefix=f"{prefix}.gate_up_proj")
-        self.down_proj = RowParallelLinear(intermediate_size,
-                                           hidden_size,
-                                           bias=False,
-                                           quant_config=quant_config,
-                                           reduce_results=reduce_results,
-                                           disable_tp=is_sequence_parallel,
-                                           prefix=f"{prefix}.down_proj")
-        if hidden_act != "silu":
-            raise ValueError(f"Unsupported activation: {hidden_act}. "
-                             "Only silu is supported for now.")
-        self.act_fn = SiluAndMul()
-
-    def forward(self, x):
-        gate_up, _ = self.gate_up_proj(x)
-        x = self.act_fn(gate_up)
-        x, _ = self.down_proj(x)
-        return x
-
-
-class DeepseekV2MoE(nn.Module):
-
-    def __init__(
-        self,
-        config: Union[DeepseekV2Config, DeepseekV3Config],
-        parallel_config: ParallelConfig,
-        quant_config: Optional[QuantizationConfig] = None,
-        prefix: str = "",
-    ):
-        super().__init__()
-        self.tp_size = get_tensor_model_parallel_world_size()
-        self.tp_rank = get_tensor_model_parallel_rank()
-
-        self.routed_scaling_factor = config.routed_scaling_factor
-
-        self.ep_group = get_ep_group().device_group
-        self.ep_rank = self.ep_group.rank()
-        self.ep_size = self.ep_group.size()
-        self.n_routed_experts: int = config.n_routed_experts
-        self.n_shared_experts: int = config.n_shared_experts
-
-        self.is_sequence_parallel = parallel_config.use_sequence_parallel_moe
-
-        if config.hidden_act != "silu":
-            raise ValueError(f"Unsupported activation: {config.hidden_act}. "
-                             "Only silu is supported for now.")
-
-        self.gate = ReplicatedLinear(config.hidden_size,
-                                     config.n_routed_experts,
-                                     bias=False,
-                                     quant_config=None,
-                                     prefix=f"{prefix}.gate")
-        if config.topk_method == "noaux_tc":
-            self.gate.e_score_correction_bias = nn.Parameter(
-                torch.empty(config.n_routed_experts, dtype=torch.float32))
-        else:
-            self.gate.e_score_correction_bias = None
-
-        # Load balancing settings.
-        eplb_config = parallel_config.eplb_config
-        self.enable_eplb = parallel_config.enable_eplb
-
-        self.n_redundant_experts = eplb_config.num_redundant_experts
-        self.n_logical_experts = self.n_routed_experts
-        self.n_physical_experts = (self.n_logical_experts +
-                                   self.n_redundant_experts)
-        self.n_local_physical_experts = self.n_physical_experts // self.ep_size
-
-        self.physical_expert_start = (self.ep_rank *
-                                      self.n_local_physical_experts)
-        self.physical_expert_end = (self.physical_expert_start +
-                                    self.n_local_physical_experts)
-
-        if config.n_shared_experts is None:
-            self.experts = FusedMoE(
-                num_experts=config.n_routed_experts,
-                top_k=config.num_experts_per_tok,
-                hidden_size=config.hidden_size,
-                intermediate_size=config.moe_intermediate_size,
-                reduce_results=False,
-                renormalize=config.norm_topk_prob,
-                quant_config=quant_config,
-                use_grouped_topk=True,
-                num_expert_group=config.n_group,
-                topk_group=config.topk_group,
-                prefix=f"{prefix}.experts",
-                scoring_func=config.scoring_func,
-                # we do scaling outside, set factor to 1.0 to avoid double mul
-                routed_scaling_factor=1.0,
-                e_score_correction_bias=self.gate.e_score_correction_bias.to(torch.get_default_dtype()),
-                enable_eplb=self.enable_eplb,
-                num_redundant_experts=self.n_redundant_experts,
-                is_sequence_parallel=self.is_sequence_parallel,
-            )
-            self.shared_experts = None
-        else:
-            intermediate_size = (config.moe_intermediate_size *
-                                 config.n_shared_experts)
-
-            self.shared_experts = DeepseekV2MLP(
-                hidden_size=config.hidden_size,
-                intermediate_size=intermediate_size,
-                hidden_act=config.hidden_act,
-                quant_config=quant_config,
-                is_sequence_parallel=self.is_sequence_parallel,
-                reduce_results=False,
-                prefix=f"{prefix}.shared_experts",
-            )
-
-            self.experts = SharedFusedMoE(
-                shared_experts=self.shared_experts,
-                num_experts=config.n_routed_experts,
-                top_k=config.num_experts_per_tok,
-                hidden_size=config.hidden_size,
-                intermediate_size=config.moe_intermediate_size,
-                reduce_results=False,
-                renormalize=config.norm_topk_prob,
-                quant_config=quant_config,
-                use_grouped_topk=True,
-                num_expert_group=config.n_group,
-                topk_group=config.topk_group,
-                prefix=f"{prefix}.experts",
-                scoring_func=config.scoring_func,
-                # we do scaling outside, set factor to 1.0 to avoid double mul
-                routed_scaling_factor=self.routed_scaling_factor,
-                e_score_correction_bias=self.gate.e_score_correction_bias.to(torch.get_default_dtype()),
-                enable_eplb=self.enable_eplb,
-                num_redundant_experts=self.n_redundant_experts,
-                is_sequence_parallel=self.is_sequence_parallel,
-            )
-        # NOTE: just for alltoall, fuse add into index_add,
-        # if we only use deepep, adding it externally makes no difference
-        self.experts.add_shared = True
-        self.tp_size = self.experts.tp_size
-
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        num_tokens, hidden_dim = hidden_states.shape
-        hidden_states = hidden_states.view(-1, hidden_dim)
-
-        router_logits, _ = self.gate(hidden_states)
-        fused_moe_out = self.experts(
-            hidden_states=hidden_states,
-            router_logits=router_logits,
-        )
-        if self.n_shared_experts is not None:
-            _, final_hidden_states = fused_moe_out
-            shared_output = None
-        else:
-            final_hidden_states = fused_moe_out
-            shared_output = None
-
-        if shared_output is not None:
-            final_hidden_states *= self.routed_scaling_factor
-            final_hidden_states = final_hidden_states + shared_output
-        if self.tp_size > 1:
-            final_hidden_states = tensor_model_parallel_all_reduce(final_hidden_states)
-
-        return final_hidden_states.view(num_tokens, hidden_dim)
-
 
 def yarn_get_mscale(scale: float = 1, mscale: float = 1) -> float:
     import math
@@ -936,7 +755,11 @@ class DeepseekV2MLAAttention(nn.Module):
         self,
         positions: torch.Tensor,
         hidden_states: torch.Tensor,
+        actual_seqlen = None,
     ) -> torch.Tensor:
+        if actual_seqlen is not None:
+            hidden_states = sp_to_tp(hidden_states, actual_seqlen)
+
         return self.mla_attn(positions, hidden_states)
 
 
@@ -949,6 +772,7 @@ class DeepseekV2DecoderLayer(nn.Module):
         super().__init__()
 
         config = vllm_config.model_config.hf_config
+        self.hf_config = config
         model_config = vllm_config.model_config
         cache_config = vllm_config.cache_config
         quant_config = vllm_config.quant_config
@@ -992,9 +816,10 @@ class DeepseekV2DecoderLayer(nn.Module):
                 and layer_idx % config.moe_layer_freq == 0):
             self.mlp = DeepseekV2MoE(
                 config=config,
-                parallel_config=parallel_config,
+                model_config=model_config,
                 quant_config=quant_config,
                 prefix=f"{prefix}.mlp",
+                enable_eplb=parallel_config.enable_eplb,
             )
         else:
             self.mlp = DeepseekV2MLP(
@@ -1015,6 +840,7 @@ class DeepseekV2DecoderLayer(nn.Module):
         positions: torch.Tensor,
         hidden_states: torch.Tensor,
         residual: Optional[torch.Tensor],
+        actual_seqlen: Optional[int],
     ) -> torch.Tensor:
         # Self Attention
         if residual is None:
@@ -1023,10 +849,22 @@ class DeepseekV2DecoderLayer(nn.Module):
         else:
             hidden_states, residual = self.input_layernorm(
                 hidden_states, residual)
+
+        if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
+            assert actual_seqlen is not None
+            # add mtp layer
+            if self.layer_idx % self.hf_config.num_hidden_layers == 0:
+                residual = slice_tensor_sp(residual, actual_seqlen)
+
         hidden_states = self.self_attn(
             positions=positions,
             hidden_states=hidden_states,
+            actual_seqlen=actual_seqlen if self.layer_idx %
+            self.hf_config.num_hidden_layers != 0 else None,
         )
+
+        if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
+            hidden_states = tp_to_sp(hidden_states, actual_seqlen)
 
         if hidden_states.dtype == torch.float16:
             # Fix FP16 overflow
@@ -1060,7 +898,12 @@ class DeepseekV2Model(nn.Module):
 
     fall_back_to_pt_during_load = False
 
-    def __init__(self, *, vllm_config: VllmConfig, prefix: str = ""):
+    def __init__(
+        self,
+        *,
+        vllm_config: VllmConfig,
+        prefix: str = ""
+    ):
         super().__init__()
 
         config = vllm_config.model_config.hf_config
@@ -1123,8 +966,10 @@ class DeepseekV2Model(nn.Module):
             hidden_states = intermediate_tensors["hidden_states"]
             residual = intermediate_tensors["residual"]
 
+        actual_seqlen = hidden_states.shape[0]
+
         for layer in islice(self.layers, self.start_layer, self.end_layer):
-            hidden_states, residual = layer(positions, hidden_states, residual)
+            hidden_states, residual = layer(positions, hidden_states, residual, actual_seqlen)
 
         if not get_pp_group().is_last_rank:
             return IntermediateTensors({
@@ -1133,6 +978,8 @@ class DeepseekV2Model(nn.Module):
             })
 
         hidden_states, _ = self.norm(hidden_states, residual)
+        if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
+            hidden_states = sp_to_tp(hidden_states, actual_seqlen)
         return hidden_states
 
 

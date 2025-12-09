@@ -16,3 +16,4 @@ import vllm_gcu.patch.patch_0_11_0.scheduler  # noqa
 import vllm_gcu.patch.patch_0_11_0.block_table # noqa
 import vllm_gcu.patch.patch_0_11_0.utils  # noqa
 import vllm_gcu.patch.patch_0_11_0.internvl  # noqa
+import vllm_gcu.patch.patch_0_11_0.indexer  # noqa
