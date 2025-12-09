@@ -1,5 +1,6 @@
 from typing import Optional
 from contextlib import nullcontext
+import inspect
 
 import torch
 import torch_gcu
@@ -246,9 +247,11 @@ class AlltoAllStaticShape(AlltoAllPrepareAndFinalize):
 
             shared_output = None
             if self.shared_experts is not None:
+                sig = inspect.signature(self.shared_experts.__call__)
                 if hidden_states_ori.shape[0] == 0:
                     shared_output = torch.empty_like(hidden_states_ori)
-                elif a1_scale is not None and not input_static_quant:
+                elif a1_scale is not None and not input_static_quant and len(
+                        sig.parameters) > 1:
                     shared_output = self.shared_experts(
                         hidden_states, a1_scale)
                 else:
@@ -427,7 +430,9 @@ class AlltoAllDynamicShape(AlltoAllPrepareAndFinalize):
 
             shared_output = None
             if self.shared_experts is not None:
-                if a1_scale is not None and not input_static_quant:
+                sig = inspect.signature(self.shared_experts.__call__)
+                if a1_scale is not None and not input_static_quant and len(
+                        sig.parameters) > 1:
                     shared_output = self.shared_experts(
                         hidden_states, a1_scale)
                 else:
