@@ -157,3 +157,9 @@ class GCUWorker(Worker):
 
     def execute_dummy_batch(self) -> None:
         self.model_runner._dummy_run(0, uniform_decode = True)
+
+
+    def compile_or_warm_up_model(self) -> None:
+        super().compile_or_warm_up_model()
+        if self.model_runner.eplb_state is not None:
+            self.model_runner.eplb_state.expert_load_pass.zero_()
