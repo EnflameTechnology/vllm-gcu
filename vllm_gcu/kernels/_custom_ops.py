@@ -9,7 +9,7 @@ try:
 except ImportError:
     from torch.library import impl_abstract as register_fake
 
-
+import vllm
 import vllm_gcu._C  # noqa: F401
 
 
@@ -611,6 +611,10 @@ def indexer_k_quant_and_cache(k: torch.Tensor, kv_cache: torch.Tensor,
                                                      quant_block_size,
                                                      kv_cache_dtype)
 
+
+get_token_bin_counts_and_mask_origin = \
+    vllm.model_executor.layers.utils.get_token_bin_counts_and_mask
+
 def get_token_bin_counts_and_mask(
     tokens: torch.Tensor,
     vocab_size: int,
@@ -619,8 +623,7 @@ def get_token_bin_counts_and_mask(
     # 3.0 not support get_token_bin_counts_and_mask fusion
     from vllm.platforms import current_platform
     if not current_platform.has_device_capability(140):
-        from vllm.model_executor.layers import utils as vllm_utils
-        return vllm_utils.get_token_bin_counts_and_mask(tokens, vocab_size, num_seqs)
+        return get_token_bin_counts_and_mask_origin(tokens, vocab_size, num_seqs)
     else:
         bin_counts = torch.empty((num_seqs, vocab_size),
                                 dtype=torch.long,
