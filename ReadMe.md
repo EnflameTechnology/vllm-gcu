@@ -11,7 +11,7 @@
 
 ## 📌 特性一览
 
-* 完整支持 **vLLM 0.8.0** 功能特性
+* 完整支持 **vLLM 0.9.2** 功能特性
 * 面向燧原第三代 **S60 GCU**，深度优化推理流程
 * 支持 FP16、BF16，以及 GPTQ、AWQ、INT8 等多种量化方式
 * 原生支持 Qwen、LLaMa、Gemma、Mistral、ChatGLM、DeepSeek 系列 LLM（和/或VLM）推理
@@ -23,9 +23,9 @@
 
 ### 🔧 系统与环境要求
 
-* **操作系统**: Ubuntu 20.04 / 22.04
+* **操作系统**: Ubuntu 22.04
 * **Python**: 3.10 \~ 3.12
-* **硬件**: 燧原 S60 GCU（已部署 TopsRider **i3x 3.4+** 软件栈）
+* **硬件**: 燧原 S60 GCU（已部署 TopsRider **i3x 3.5+** 软件栈）
 
 ### 📦 安装步骤
 
@@ -34,7 +34,7 @@
 请首先参考[《TopsRider 软件栈安装手册》](https://support.enflame-tech.com/onlinedoc_dev_3.4/2-install/sw_install/content/source/installation.html)在主机中完成**驱动程序**安装。
 
 
-#### 2️⃣ 安装方式（任选其一，Docker 环境中）
+#### 2️⃣ 编译与安装
 
 **Python3.10+：** 确保你已经安装了 Python 3.10 或更高版本，并且默认的 Python 版本是 3.10 及以上。
 
@@ -55,37 +55,31 @@ curl -sS https://bootstrap.pypa.io/get-pip.py | sudo python3
 
 # 安装setuptools
 python3 -m pip install setuptools
+sudo apt install python3.10-dev -y
 ```
 
-✅ **方式一：使用 TopsRider 安装**
-
-```bash
-python3 -m pip install triton==3.2
-sudo chmod +x ./TopsRider_i3x_3.4.xxx.run
-sudo ./TopsRider_i3x_3.4.xxx.run -y -C vllm-gcu
-```
-
-✅ **方式二：从源代码编译并安装 `.whl` 包**
+✅ **从源代码编译并安装 vLLM-GCU `.whl` 包**
 
 ```bash
 # 安装依赖
-python3 -m pip install torch==2.6.0+cpu -i https://download.pytorch.org/whl/cpu
-python3 -m pip install torchvision==0.21.0 -i https://download.pytorch.org/whl/cpu
-python3 -m pip install vllm==0.8.0
-python3 -m pip install triton==3.2
+pip install torch==2.7.0+cpu torchvision==0.22.0 -i https://download.pytorch.org/whl/cpu
+pip install vllm==0.9.2 triton==3.2 transformers==4.51.1
 # Enflame依赖
-python3 -m pip install torch_gcu-2.6.0+<version>*.whl
-python3 -m pip install tops_extension-<version>*.whl
-python3 -m pip install xformers-<version>*.whl
-sudo dpkg -i topsaten_3.4*.deb
-sudo dpkg -i eccl_3.3*.deb
-sudo apt install python3.10-dev -y #根据python版本选择
+pip install torch_gcu-2.7.0*.whl
+pip install flash_attn-2.6.3+torch.2.7.0.gcu*.whl
+pip install topsgraph-3.5.5.7*.whl
+pip install tops_extension-3.2*.whl
+pip install xformers-0.0.30+torch.2.7.0.gcu*.whl
+sudo dpkg -i topsaten_3.6*.deb
+sudo dpkg -i eccl_3.5*.deb
+sudo dpkg -i tops-sdk_3.5*.deb
+sudo dpkg -i topsgraph_3.5*.deb
 
 # 编译 vllm_gcu .whl安装包
 python3 setup.py bdist_wheel
 
 # 安装编译好的 vllm_gcu whl包
-python3 -m pip install ./dist/vllm_gcu-0.8.0+<version>*.whl
+python3 -m pip install ./dist/vllm_gcu-0.9.2*.whl
 ```
 
 ---
@@ -94,8 +88,14 @@ python3 -m pip install ./dist/vllm_gcu-0.8.0+<version>*.whl
 
 ### ✅ 启动推理时必备参数
 
+* 启用flash attention（可选）并禁用Torch Inductor（必选）
+```
+export VLLM_ATTENTION_BACKEND=FLASH_ATTN # v1 使用 flash attention
+export TORCHGCU_INDUCTOR_ENABLE=0 #禁用Torch Inductor
+```
+
 * 启动需指定：`--device=gcu`
-* 仅支持 `xformers` 作为 attention backend
+* 支持 `xformers`与`flash-attn` 作为 attention backend
 * 默认关闭以下功能：
 
   * vLLM 日志统计收集

@@ -11,7 +11,7 @@
 
 ## 📌 Key Features
 
-* Fully supports **vLLM 0.8.0** capabilities
+* Fully supports **vLLM 0.9.2** capabilities
 * Deeply optimized inference pipeline for **Enflame S60 GCU**
 * Supports various quantization formats, including GPTQ, AWQ, INT8, in addition to FP16 and BF16.
 * Native support for Qwen, LLaMa, Gemma, Mistral, ChatGLM, DeepSeek series of LLMs (and/or VLMs)
@@ -23,9 +23,9 @@
 
 ### 🔧 System Requirements
 
-* **OS**: Ubuntu 20.04 / 22.04
+* **OS**: Ubuntu 22.04
 * **Python**: 3.10 \~ 3.12 (default python version `3.10+`)
-* **Hardware**: Enflame S60 GCU (with TopsRider **i3x 3.4+** software stack installed)
+* **Hardware**: Enflame S60 GCU (with TopsRider **i3x 3.5+** software stack installed)
 
 ### 📦 Installation Steps
 
@@ -34,7 +34,7 @@
 Refer to the [TopsRider Installation Manual](https://support.enflame-tech.com/onlinedoc_dev_3.4/2-install/sw_install/content/source/installation.html) to install **Enflame driver**.
 
 
-#### 2️⃣ Installation Options (Choose one, within Docker)
+#### 2️⃣ Build & Installation
 
 **Python3.10+:** Make sure you have python3.10+ installed and the default python version is 3.10+
 
@@ -55,37 +55,31 @@ curl -sS https://bootstrap.pypa.io/get-pip.py | sudo python3
 
 # install setuptools
 python3 -m pip install setuptools
+sudo apt install python3.10-dev -y
 ```
 
-✅ **Option 1: Install via TopsRider**
-
-```bash
-python3 -m pip install triton==3.2
-sudo chmod +x ./TopsRider_i3x_3.4.xxx.run
-sudo ./TopsRider_i3x_3.4.xxx.run -y -C vllm-gcu
-```
-
-✅ **Option 2: Build and install `.whl` package from source code**
+✅ **Build and install vLLM-GCU `.whl` package from source code**
 
 ```bash
 # Install dependencies
-python3 -m pip install torch==2.6.0+cpu -i https://download.pytorch.org/whl/cpu
-python3 -m pip install torchvision==0.21.0 -i https://download.pytorch.org/whl/cpu
-python3 -m pip install vllm==0.8.0
-python3 -m pip install triton==3.2
+pip install torch==2.7.0+cpu torchvision==0.22.0 -i https://download.pytorch.org/whl/cpu
+pip install vllm==0.9.2 triton==3.2 transformers==4.51.1
 # Enflame dependencies
-python3 -m pip install torch_gcu-2.6.0+<version>*.whl
-python3 -m pip install tops_extension-<version>*.whl
-python3 -m pip install xformers-<version>*.whl
-sudo dpkg -i topsaten_3.4*.deb
-sudo dpkg -i eccl_3.3*.deb
-sudo apt install python3.10-dev -y #depend on the python version
+pip install torch_gcu-2.7.0*.whl
+pip install flash_attn-2.6.3+torch.2.7.0.gcu*.whl
+pip install topsgraph-3.5.5.7*.whl
+pip install tops_extension-3.2*.whl
+pip install xformers-0.0.30+torch.2.7.0.gcu*.whl
+sudo dpkg -i topsaten_3.6*.deb
+sudo dpkg -i eccl_3.5*.deb
+sudo dpkg -i tops-sdk_3.5*.deb
+sudo dpkg -i topsgraph_3.5*.deb
 
 # build vllm_gcu .whl package
 python3 setup.py bdist_wheel
 
 # install the built package
-python3 -m pip install ./dist/vllm_gcu-0.8.0+<version>*.whl
+python3 -m pip install ./dist/vllm_gcu-0.9.2*.whl
 ```
 
 ---
@@ -94,9 +88,15 @@ python3 -m pip install ./dist/vllm_gcu-0.8.0+<version>*.whl
 
 ### ✅ Required Parameters for Inference
 
+* Enable flash attention (optional) and disable Torch Inductor (must)
+```
+export VLLM_ATTENTION_BACKEND=FLASH_ATTN # enable flash attention
+export TORCHGCU_INDUCTOR_ENABLE=0 # disable Torch Inductor
+```
+
 * Must specify: `--device=gcu`
 
-* Only `xformers` is supported as the attention backend
+* Support `xformers` and `flash-attn` as the attention backend
 
 * The following features are disabled by default:
 
