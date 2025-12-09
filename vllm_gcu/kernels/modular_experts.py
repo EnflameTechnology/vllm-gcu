@@ -83,7 +83,7 @@ class TritonExpertsPad(mk.FusedMoEPermuteExpertsUnpermute):
         apply_router_weight_on_input: bool,
     ):
         topk_ids = topk_ids.to(torch.int32)
-        if expert_tokens_meta is None or expert_tokens_meta.expert_num_tokens.shape != torch.Size([1]):
+        if expert_tokens_meta is None:
             # noep or deepep ht
             expert_num_tokens = torch.full((1, ),
                                            hidden_states.shape[0],

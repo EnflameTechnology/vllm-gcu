@@ -9,6 +9,7 @@ from vllm.model_executor.layers.fused_moe.modular_kernel import (
     FusedMoEPermuteExpertsUnpermute, SharedResizableBuffer)
 from vllm.utils import cdiv
 import vllm_gcu.envs as gcu_envs
+from vllm_gcu.kernels.modular_experts import TritonExpertsPad
 from vllm_gcu.kernels.prepare_finalize import AlltoAllPrepareAndFinalize
 from vllm.v1.worker.ubatching import (dbo_current_ubatch_id, dbo_enabled,
                                       dbo_maybe_run_recv_hook,
@@ -416,6 +417,10 @@ class FusedMoEModularKernel(torch.nn.Module):
         topk_ids = topk_ids if _expert_topk_ids is None else _expert_topk_ids
         topk_weights = (topk_weights if _expert_topk_weights is None else
                         _expert_topk_weights)
+        if envs.VLLM_ALL2ALL_BACKEND == 'deepep_high_throughput' \
+            and isinstance(self.fused_experts, TritonExpertsPad):
+            # NOTE: never used by fused moe, but introduce ops when chunk
+            expert_tokens_meta = None
 
         fused_out = None
 
