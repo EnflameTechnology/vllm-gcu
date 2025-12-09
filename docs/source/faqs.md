@@ -7,7 +7,7 @@
 vLLM-GCU currently supports:
 
 * Enflame **S60** Inference Card
-* Enflame-compatible GCU systems running with **TopsRider ≥ i3x 3.4**
+* Enflame-compatible GCU systems running with **TopsRider ≥ i3x 3.5**
 
 > Check availability using `efsmi`.
 
@@ -68,7 +68,7 @@ Additionally, large models can be inferenced with multi-gcus by setting `--tenso
 
 ### 6. How does vLLM-GCU integrate with vLLM?
 
-vLLM-GCU is implemented as a **plugin** to vLLM using Enflame’s GCU kernel interface. Make sure vLLM-GCU and vLLM use **matching versions** (e.g. `vllm==0.8.0`, `vllm-gcu==0.8.0`).
+vLLM-GCU is implemented as a **plugin** to vLLM using Enflame’s GCU kernel interface. Make sure vLLM-GCU and vLLM use **matching versions** (e.g. `vllm==0.9.2`, `vllm-gcu==0.9.2`).
 
 ---
 
