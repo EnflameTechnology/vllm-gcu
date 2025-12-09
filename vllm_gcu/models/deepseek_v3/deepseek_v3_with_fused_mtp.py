@@ -1193,6 +1193,11 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
                   temperature,
                   top_p,
                   top_k,
+                  repetition_penalty,
+                  frequency_penalty,
+                  presence_penalty,
+                  prompt_token_ids,
+                  output_token_ids,
                   draft_tokens):
         attn_metadata = get_forward_context().attn_metadata
         if ds_hidden_states.shape[0] == 0: 
@@ -1212,12 +1217,16 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
             attn_metadata.is_for_decode_gcu_graph:
             main_model_sampled_tokens, accepted_tokens, accepted_lens, draft_tokens = self.fused_mtp_pure_decode(
                 ds_hidden_states, input_ids, positions,
-                temperature, top_p, top_k, draft_tokens, attn_metadata)
+                temperature, top_p, top_k, repetition_penalty,
+                frequency_penalty, presence_penalty, prompt_token_ids,
+                output_token_ids, draft_tokens, attn_metadata)
             main_model_sampled_tokens = main_model_sampled_tokens.squeeze(-1)
         else:
             _, accepted_tokens, accepted_lens, draft_tokens = self.fused_mtp_prefill_decode(
                 ds_hidden_states, input_ids, positions,
-                temperature, top_p, top_k, draft_tokens, attn_metadata)
+                temperature, top_p, top_k, repetition_penalty,
+                frequency_penalty, presence_penalty, prompt_token_ids,
+                output_token_ids, draft_tokens, attn_metadata)
             main_model_sampled_tokens = torch.empty_like(input_ids)
 
         if gcu_envs.VLLM_GCU_ENABLE_DEEPSEEK_MTP_FUSION and \
@@ -1251,6 +1260,11 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
                                  temperature,
                                  top_p,
                                  top_k,
+                                 repetition_penalty,
+                                 frequency_penalty,
+                                 presence_penalty,
+                                 prompt_token_ids,
+                                 output_token_ids,
                                  draft_tokens,
                                  attn_metadata):
         spec_k = self.num_speculative_tokens
@@ -1267,12 +1281,12 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
             top_k=top_k,
             generators={},
             max_num_logprobs=None,
-            no_penalties=True,
-            prompt_token_ids=None,
-            frequency_penalties=torch.full_like(temperature, fill_value=0.1),
-            presence_penalties=torch.full_like(temperature, fill_value=0.1),
-            repetition_penalties=torch.full_like(temperature, fill_value=0.1),
-            output_token_ids=[[] for _ in range(bsz)],
+            no_penalties=not self.vllm_config.additional_config.get("deepseek_fused_mtp_use_penalty", True),
+            prompt_token_ids=prompt_token_ids,
+            frequency_penalties=frequency_penalty,
+            presence_penalties=presence_penalty,
+            repetition_penalties=repetition_penalty,
+            output_token_ids=output_token_ids,
             allowed_token_ids_mask=None,
             bad_words_token_ids={},
             logitsprocs=LogitsProcessors(),
@@ -1325,6 +1339,11 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
                                  temperature,
                                  top_p,
                                  top_k,
+                                 repetition_penalty,
+                                 frequency_penalty,
+                                 presence_penalty,
+                                 prompt_token_ids,
+                                 output_token_ids,
                                  draft_tokens,
                                  attn_metadata):
         device = ds_hidden_states.device
@@ -1365,12 +1384,12 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
             top_k=top_k,
             generators={},
             max_num_logprobs=None,
-            no_penalties=True,
-            prompt_token_ids=None,
-            frequency_penalties=torch.full_like(temperature, fill_value=0.1),
-            presence_penalties=torch.full_like(temperature, fill_value=0.1),
-            repetition_penalties=torch.full_like(temperature, fill_value=0.1),
-            output_token_ids=[[] for _ in range(num_prefills + num_decodes)], # not used temporarily
+            no_penalties=not self.vllm_config.additional_config.get("deepseek_fused_mtp_use_penalty", True),
+            prompt_token_ids=prompt_token_ids,
+            frequency_penalties=frequency_penalty,
+            presence_penalties=presence_penalty,
+            repetition_penalties=repetition_penalty,
+            output_token_ids=output_token_ids,
             allowed_token_ids_mask=None,
             bad_words_token_ids={},
             logitsprocs=LogitsProcessors(),
@@ -1568,6 +1587,11 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
         temperature: Optional[torch.Tensor] = None,
         top_p: Optional[torch.Tensor] = None,
         top_k: Optional[torch.Tensor] = None,
+        repetition_penalty: Optional[torch.Tensor] = None,
+        frequency_penalty: Optional[torch.Tensor] = None,
+        presence_penalty: Optional[torch.Tensor] = None,
+        prompt_token_ids: Optional[torch.Tensor] = None,
+        output_token_ids: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, IntermediateTensors]:
         hidden_states = self.model(
             input_ids,
@@ -1580,11 +1604,13 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
         if self.use_torch_compile:
             main_model_sampled_tokens, accepted_tokens, accepted_lens, draft_tokens, next_token_ids = \
                 torch.ops.vllm.fused_mtp(hidden_states, input_ids, positions, temperature,
-                           top_p, top_k, draft_tokens, self.layer_name)
+                           top_p, top_k, repetition_penalty, frequency_penalty, presence_penalty,
+                           prompt_token_ids, output_token_ids, draft_tokens, self.layer_name)
         else:    
             main_model_sampled_tokens, accepted_tokens, accepted_lens, draft_tokens, next_token_ids = \
                 self.fused_mtp(hidden_states, input_ids, positions, temperature,
-                           top_p, top_k, draft_tokens)
+                           top_p, top_k, repetition_penalty, frequency_penalty, presence_penalty,
+                           prompt_token_ids, output_token_ids, draft_tokens)
         
         return IntermediateTensors({
             # [(num_decodes x (spec_k + 1)) + num_prefills, 1]
@@ -1803,11 +1829,17 @@ def fused_mtp(ds_hidden_states: torch.Tensor,
               temperature: torch.Tensor,
               top_p: torch.Tensor,
               top_k: torch.Tensor,
+              repetition_penalty: torch.Tensor,
+              frequency_penalty: torch.Tensor,
+              presence_penalty: torch.Tensor,
+              prompt_token_ids: torch.Tensor,
+              output_token_ids: torch.Tensor,
               draft_tokens: torch.Tensor,
               layer_name: str = "") -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     forward_context = get_forward_context()
     self = forward_context.no_compile_layers[layer_name]
-    return self.fused_mtp(ds_hidden_states, input_ids, positions, temperature, top_p, top_k, draft_tokens)
+    return self.fused_mtp(ds_hidden_states, input_ids, positions, temperature, top_p, top_k, repetition_penalty,
+                          frequency_penalty, presence_penalty, prompt_token_ids, output_token_ids, draft_tokens)
 
 def fused_mtp_fake(ds_hidden_states: torch.Tensor,
               input_ids: torch.Tensor,
@@ -1815,6 +1847,11 @@ def fused_mtp_fake(ds_hidden_states: torch.Tensor,
               temperature: torch.Tensor,
               top_p: torch.Tensor,
               top_k: torch.Tensor,
+              repetition_penalty: torch.Tensor,
+              frequency_penalty: torch.Tensor,
+              presence_penalty: torch.Tensor,
+              prompt_token_ids: torch.Tensor,
+              output_token_ids: torch.Tensor,
               draft_tokens: torch.Tensor,
               layer_name: str = "") -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     return torch.empty_like(input_ids), \

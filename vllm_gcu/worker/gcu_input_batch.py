@@ -3,6 +3,7 @@ from typing import Optional
 from vllm.sampling_params import SamplingType
 from vllm.v1.worker.gpu_input_batch import InputBatch, CachedRequestState
 from vllm_gcu.kernels.rejection_sampler import GCURejectionSampler
+import vllm_gcu.envs as gcu_envs
 
 class GCUInputBatch(InputBatch):
 
@@ -73,3 +74,25 @@ class GCUInputBatch(InputBatch):
             # Replace placeholder token id with actual sampled id.
             del req_output_token_ids[-1]
             req_output_token_ids.extend(sampled_token_ids[prev_index])
+
+    def _make_prompt_token_ids_tensor(self) -> torch.Tensor:
+        num_reqs = self.num_reqs
+        max_prompt_len = self.num_prompt_tokens[:num_reqs].max()
+        prompt_token_ids_cpu_tensor = torch.empty(
+            (self.num_reqs, max_prompt_len),
+            device="cpu",
+            dtype=torch.int64,
+            pin_memory=self.pin_memory,
+        )
+        prompt_token_ids = prompt_token_ids_cpu_tensor.numpy()
+        prompt_token_ids[:] = self.token_ids_cpu[:num_reqs, :max_prompt_len]
+        # Use the value of vocab_size as a pad since we don't have a
+        # token_id of this value.
+        for i in range(num_reqs):
+            prompt_token_ids[i, self.num_prompt_tokens[i]:] = self.vocab_size
+        
+        if gcu_envs.VLLM_GCU_ENABLE_DEEPSEEK_MTP_FUSION:
+            # for fused_mtp, no need to transfer to device in advance
+            return prompt_token_ids_cpu_tensor
+        return prompt_token_ids_cpu_tensor.to(device=self.device,
+                                                non_blocking=True)

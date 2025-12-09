@@ -52,10 +52,17 @@ logger = init_logger(__name__)
 
 class GCUAsyncGPUModelRunnerOutput(AsyncGPUModelRunnerOutput):
 
-    def __init__(self, vocab_size: int, event_poll_span_ms = -1, *args, **kwargs):
+    def __init__(self, vocab_size: int, event_poll_span_ms = -1, 
+                 delay_update_output_token_ids = False, num_output_placeholder=1,
+                 req_ids = None, requests = None, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.vocab_size = vocab_size
         self.event_poll_span_ms = event_poll_span_ms
+        self.delay_update_output_token_ids = delay_update_output_token_ids
+        if delay_update_output_token_ids:
+            self.batch_req_ids = req_ids
+            self.requests = requests
+            self.num_output_placeholder = num_output_placeholder
 
     def wait_event_ready(self):
         if self.event_poll_span_ms > 0:
@@ -77,6 +84,24 @@ class GCUAsyncGPUModelRunnerOutput(AsyncGPUModelRunnerOutput):
         )
         for i in self._invalid_req_indices:
             valid_sampled_token_ids[i].clear()
+        if self.delay_update_output_token_ids:
+            for i in range(len(self.batch_req_ids)):
+                if i in self._invalid_req_indices:
+                    continue
+                req_id = self.batch_req_ids[i]
+                if req_id in self.requests:
+                    req = self.requests[req_id]
+                    assert len(req.output_token_ids) >= self.num_output_placeholder
+                    try:
+                        placeholder_idx = req.output_token_ids.index(self.vocab_size)
+                        num_rejected = self.num_output_placeholder - len(valid_sampled_token_ids[i])
+                        if num_rejected > 0:
+                            req.output_token_ids[-num_rejected:] = []
+                        req.output_token_ids[
+                            placeholder_idx:placeholder_idx+len(valid_sampled_token_ids[i])
+                            ] = valid_sampled_token_ids[i]
+                    except:
+                        logger.error(f'fused_mtp delay update output ids, placeholder not found')
         output = self._model_runner_output
         output.sampled_token_ids = valid_sampled_token_ids
         return output
@@ -108,31 +133,31 @@ class GCUModelRunner(GPUModelRunner):
             assert self.compilation_config.full_cuda_graph or \
                 self.compilation_config.cudagraph_mode.decode_mode() == CUDAGraphMode.FULL, \
                 "deepseek with fused mtp requires full cuda graph"
-
-            self.temperature = torch.full(((self.get_spec_k() + 1) * self.max_num_reqs,),
+            self.expand_max_num_reqs = (self.get_spec_k() + 1) * self.max_num_reqs
+            self.temperature = torch.full((self.expand_max_num_reqs,),
                                            fill_value=float('inf'),
                                            dtype=torch.float32,
                                            device=self.device)
-            self.temperature_cpu_tensor = torch.full(((self.get_spec_k() + 1) * self.max_num_reqs,),
+            self.temperature_cpu_tensor = torch.full((self.expand_max_num_reqs,),
                                                       fill_value=float('inf'),
                                                       dtype=torch.float32,
                                                       device="cpu",
                                                       pin_memory=True)
             self.temperature_cpu = self.temperature_cpu_tensor.numpy()
 
-            self.top_p = torch.ones(((self.get_spec_k() + 1) * self.max_num_reqs),
+            self.top_p = torch.ones(self.expand_max_num_reqs,
                                      dtype=torch.float32,
                                      device=self.device)
-            self.top_p_cpu_tensor = torch.ones(((self.get_spec_k() + 1) * self.max_num_reqs),
+            self.top_p_cpu_tensor = torch.ones(self.expand_max_num_reqs,
                                                 dtype=torch.float32,
                                                 device="cpu",
                                                 pin_memory=True)
             self.top_p_cpu = self.top_p_cpu_tensor.numpy()
 
-            self.top_k = torch.ones(((self.get_spec_k() + 1) * self.max_num_reqs),
+            self.top_k = torch.ones(self.expand_max_num_reqs,
                                      dtype=torch.int32,
                                      device=self.device)
-            self.top_k_cpu_tensor = torch.ones(((self.get_spec_k() + 1) * self.max_num_reqs),
+            self.top_k_cpu_tensor = torch.ones(self.expand_max_num_reqs,
                                                 dtype=torch.int32,
                                                 device="cpu",
                                                 pin_memory=True)
@@ -146,6 +171,56 @@ class GCUModelRunner(GPUModelRunner):
                                                        device="cpu",
                                                        pin_memory=True)
             self.draft_tokens_cpu = self.draft_tokens_cpu_tensor.numpy()
+
+            self.repetition_penalties = torch.ones(self.expand_max_num_reqs,
+                                                   dtype=torch.float32,
+                                                   device=self.device)
+            self.repetition_penalties_cpu_tensor = torch.ones(self.expand_max_num_reqs,
+                                                              dtype=torch.float32,
+                                                              device="cpu",
+                                                              pin_memory=True)
+            self.repetition_penalties_cpu = self.repetition_penalties_cpu_tensor.numpy()
+
+            self.frequency_penalties = torch.zeros(self.expand_max_num_reqs,
+                                                   dtype=torch.float32,
+                                                   device=self.device)
+            self.frequency_penalties_cpu_tensor = torch.zeros(self.expand_max_num_reqs,
+                                                              dtype=torch.float32,
+                                                              device="cpu",
+                                                              pin_memory=True)
+            self.frequency_penalties_cpu = self.frequency_penalties_cpu_tensor.numpy()
+            self.presence_penalties = torch.zeros(self.expand_max_num_reqs,
+                                                   dtype=torch.float32,
+                                                   device=self.device)
+            self.presence_penalties_cpu_tensor = torch.zeros(self.expand_max_num_reqs,
+                                                              dtype=torch.float32,
+                                                              device="cpu",
+                                                              pin_memory=True)
+            self.presence_penalties_cpu = self.presence_penalties_cpu_tensor.numpy()
+
+            self.max_penalty_prompt_len = self.vllm_config.additional_config.get("deepseek_fused_mtp_penalty_max_prompt_len", 1)
+            self.max_penalty_output_len = self.vllm_config.additional_config.get("deepseek_fused_mtp_penalty_max_output_len", 1)
+            vocab_size = self.model_config.get_vocab_size()
+            self.output_token_ids = torch.full((self.expand_max_num_reqs, self.max_penalty_output_len),
+                                               fill_value = vocab_size,
+                                               dtype=torch.int64,
+                                               device=self.device)
+            self.output_token_ids_cpu_tensor = torch.full((self.expand_max_num_reqs, self.max_penalty_output_len),
+                                               fill_value = vocab_size,
+                                               dtype=torch.int64,
+                                               device="cpu",
+                                               pin_memory=True)
+            self.output_token_ids_cpu = self.output_token_ids_cpu_tensor.numpy()
+            self.prompt_token_ids = torch.full((self.expand_max_num_reqs, self.max_penalty_prompt_len),
+                                               fill_value = vocab_size,
+                                               dtype=torch.int64,
+                                               device=self.device)
+            self.prompt_token_ids_cpu_tensor = torch.full((self.expand_max_num_reqs, self.max_penalty_prompt_len),
+                                               fill_value = vocab_size,
+                                               dtype=torch.int64,
+                                               device="cpu",
+                                               pin_memory=True)
+            self.prompt_token_ids_cpu = self.prompt_token_ids_cpu_tensor.numpy()
 
             self.reorder_batch_threshold = 1 + self.get_spec_k()
 
@@ -189,7 +264,7 @@ class GCUModelRunner(GPUModelRunner):
 
     @topstx_wrapper
     def prepare_fused_mtp_input(self,
-                                samplingMetadata: SamplingMetadata,
+                                sampling_metadata: SamplingMetadata,
                                 batch_size: int,
                                 num_decodes: int,
                                 num_prefills: int,
@@ -200,6 +275,25 @@ class GCUModelRunner(GPUModelRunner):
         temperature_cpu = self.input_batch.temperature_cpu[:batch_size]
         top_p_cpu = self.input_batch.top_p_cpu[:batch_size]
         top_k_cpu = self.input_batch.top_k_cpu[:batch_size]
+        repetition_penalties_cpu = self.input_batch.repetition_penalties_cpu[:batch_size]
+        frequency_penalties_cpu = self.input_batch.frequency_penalties_cpu[:batch_size]
+        presence_penalties_cpu = self.input_batch.presence_penalties_cpu[:batch_size]
+
+        if self.vllm_config.additional_config.get("deepseek_fused_mtp_use_penalty", True):
+            req_output_token_ids = self.input_batch.req_output_token_ids
+            vocab_size = self.model_config.get_vocab_size()
+            max_req_ot_len = max(len(req_ot) for req_ot in req_output_token_ids)
+            output_token_ids_pad = np.full((len(req_output_token_ids), max_req_ot_len),
+                                               vocab_size, dtype=np.int64)
+            for i, req_ot in enumerate(req_output_token_ids):
+                output_token_ids_pad[i, :len(req_ot)] = req_ot
+            output_token_ids = output_token_ids_pad[:batch_size, -self.max_penalty_output_len:]
+
+            if sampling_metadata.prompt_token_ids is not None:
+                prompt_tokens = sampling_metadata.prompt_token_ids.cpu().numpy()
+                prompt_token_ids = prompt_tokens[:batch_size, -self.max_penalty_prompt_len:]
+            else:
+                prompt_token_ids = np.empty((num_prefills + num_decodes, 0), dtype=np.int64)
 
         expand_reqs = num_decodes * expand_cnt + num_prefills
 
@@ -215,6 +309,25 @@ class GCUModelRunner(GPUModelRunner):
         self.temperature[:expand_reqs].copy_(self.temperature_cpu_tensor[:expand_reqs], non_blocking=True)
         self.top_p[:expand_reqs].copy_(self.top_p_cpu_tensor[:expand_reqs], non_blocking=True)
         self.top_k[:expand_reqs].copy_(self.top_k_cpu_tensor[:expand_reqs], non_blocking=True)
+
+        if self.vllm_config.additional_config.get("deepseek_fused_mtp_use_penalty", True):
+            self.repetition_penalties_cpu[:expand_reqs] = np.concatenate((repetition_penalties_cpu[:num_decodes].repeat(expand_cnt),
+                                                                            repetition_penalties_cpu[num_decodes:]))
+            self.repetition_penalties[:expand_reqs].copy_(self.repetition_penalties_cpu_tensor[:expand_reqs], non_blocking=True)
+
+            self.frequency_penalties_cpu[:expand_reqs] = np.concatenate((frequency_penalties_cpu[:num_decodes].repeat(expand_cnt),
+                                                                            frequency_penalties_cpu[num_decodes:]))
+            self.frequency_penalties[:expand_reqs].copy_(self.frequency_penalties_cpu_tensor[:expand_reqs], non_blocking=True)
+            self.presence_penalties_cpu[:expand_reqs] = np.concatenate((presence_penalties_cpu[:num_decodes].repeat(expand_cnt),
+                                                                           presence_penalties_cpu[num_decodes:]))
+            self.presence_penalties[:expand_reqs].copy_(self.presence_penalties_cpu_tensor[:expand_reqs], non_blocking=True)
+            self.output_token_ids_cpu[:expand_reqs,:output_token_ids.shape[1]] = np.concatenate((output_token_ids[:num_decodes].repeat(expand_cnt, axis=0),
+                                                                      output_token_ids[num_decodes:]),axis=0)
+            self.output_token_ids[:expand_reqs].copy_(self.output_token_ids_cpu_tensor[:expand_reqs], non_blocking=True)
+            self.prompt_token_ids_cpu[:expand_reqs,:prompt_token_ids.shape[1]] = np.concatenate((prompt_token_ids[:num_decodes].repeat(expand_cnt, axis=0),
+                                                                      prompt_token_ids[num_decodes:]),axis=0)
+            self.prompt_token_ids[:expand_reqs].copy_(self.prompt_token_ids_cpu_tensor[:expand_reqs], non_blocking=True)
+            
 
 
         for i, req_id in enumerate(self.input_batch.req_ids[:num_decodes]):
@@ -1391,8 +1504,15 @@ class GCUModelRunner(GPUModelRunner):
             if self.use_async_scheduling:
                 sampled_ids = [-1] if \
                     req_idx not in invalid_req_indices_set else None
+                if self.vllm_config.additional_config["deepseek_fused_mtp"]:
+                    num_new_tokens = 1 + self.get_spec_k()
+                    new_output_token_ids = [self.input_batch.vocab_size] * num_new_tokens if \
+                        req_idx not in invalid_req_indices_set else None
+                else:
+                    new_output_token_ids = sampled_ids
             else:
                 sampled_ids = valid_sampled_token_ids[req_idx]
+                new_output_token_ids = sampled_ids
             if not sampled_ids:
                 continue
 
@@ -1411,7 +1531,9 @@ class GCUModelRunner(GPUModelRunner):
 
             req_id = req_ids[req_idx]
             req_state = self.requests[req_id]
-            req_state.output_token_ids.extend(sampled_ids)
+            
+            #for fused_mtp with async-scheduling, new_output_token_ids is with extra spec_k placeholders
+            req_state.output_token_ids.extend(new_output_token_ids)
 
         return (
             num_nans_in_logits,
@@ -1810,6 +1932,11 @@ class GCUModelRunner(GPUModelRunner):
                     temperature = self.temperature[:num_tokens]
                     top_p = self.top_p[:num_tokens]
                     top_k = self.top_k[:num_tokens]
+                    repetition_penalty = self.repetition_penalties[:num_tokens]
+                    presence_penalty = self.presence_penalties[:num_tokens]
+                    frequency_penalty = self.presence_penalties[:num_tokens]
+                    prompt_token_ids = self.prompt_token_ids[:num_tokens]
+                    output_token_ids = self.output_token_ids[:num_tokens]
                     draft_tokens = self.draft_tokens[:num_tokens // (self.get_spec_k() + 1), :]
                     outputs = self.model(
                         input_ids=input_ids,
@@ -1820,6 +1947,11 @@ class GCUModelRunner(GPUModelRunner):
                         temperature=temperature,
                         top_p=top_p,
                         top_k=top_k,
+                        repetition_penalty=repetition_penalty,
+                        frequency_penalty=frequency_penalty,
+                        presence_penalty=presence_penalty,
+                        prompt_token_ids=prompt_token_ids,
+                        output_token_ids=output_token_ids,
                     )
                     hidden_states = torch.zeros((num_tokens, self.hidden_size), dtype = self.dtype,
                                                  device = self.device)
@@ -1980,6 +2112,11 @@ class GCUModelRunner(GPUModelRunner):
                     top_p=self.top_p[:expand_reqs],
                     top_k=self.top_k[:expand_reqs],
                     temperature=self.temperature[:expand_reqs],
+                    repetition_penalty=self.repetition_penalties[:expand_reqs],
+                    frequency_penalty=self.frequency_penalties[:expand_reqs],
+                    presence_penalty=self.presence_penalties[:expand_reqs],
+                    prompt_token_ids=self.prompt_token_ids[:expand_reqs],
+                    output_token_ids=self.output_token_ids[:expand_reqs],
                 )
                 if not self.vllm_config.model_config.enforce_eager and \
                     cudagraph_runtime_mode == CUDAGraphMode.FULL and \
@@ -2206,6 +2343,10 @@ class GCUModelRunner(GPUModelRunner):
         async_output = GCUAsyncGPUModelRunnerOutput(
             vocab_size=self.input_batch.vocab_size,
             event_poll_span_ms= 1 if self.vllm_config.additional_config["deepseek_fused_mtp"] else -1,
+            delay_update_output_token_ids=True if self.vllm_config.additional_config["deepseek_fused_mtp"] else False,
+            req_ids = self.input_batch.req_ids.copy(),
+            requests = self.requests,
+            num_output_placeholder = 1 + self.get_spec_k(),
             model_runner_output=output,
             sampled_token_ids=sampler_output.sampled_token_ids,
             invalid_req_indices=invalid_req_indices,

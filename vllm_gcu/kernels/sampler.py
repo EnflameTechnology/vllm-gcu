@@ -1,11 +1,13 @@
 import torch
-from typing import Optional
+from typing import Optional, Union
 from vllm.utils import is_pin_memory_available
 from vllm.v1.sample.ops.topk_topp_sampler import TopKTopPSampler, random_sample
+from vllm.v1.sample.ops.penalties import _convert_to_tensors
 from vllm.v1.sample.sampler import Sampler, _SAMPLING_EPS
 from vllm.v1.sample.metadata import SamplingMetadata
 from vllm.config import LogprobsMode, get_current_vllm_config
 from vllm.platforms import current_platform
+from vllm.model_executor.layers.utils import apply_penalties as apply_penalties_original
 from vllm.distributed.parallel_state import get_tp_group
 from vllm_gcu.utils import scatter
 
@@ -163,3 +165,42 @@ class GCUSampler(Sampler):
             out=greedy_sampled,  # Reuse tensor
         )
         return sampled, processed_logprobs
+    
+    def apply_penalties(
+        self,
+        logits: torch.Tensor,
+        sampling_metadata: SamplingMetadata,
+    ) -> torch.Tensor:
+        if not sampling_metadata.no_penalties:
+            assert sampling_metadata.prompt_token_ids is not None
+            logits = self.apply_all_penalties(
+                logits,
+                sampling_metadata.prompt_token_ids,
+                sampling_metadata.presence_penalties,
+                sampling_metadata.frequency_penalties,
+                sampling_metadata.repetition_penalties,
+                sampling_metadata.output_token_ids,
+            )
+        return logits
+    
+    def apply_all_penalties(
+        self,
+        logits: torch.Tensor,
+        prompt_token_ids: torch.Tensor,
+        presence_penalties: torch.Tensor,
+        frequency_penalties: torch.Tensor,
+        repetition_penalties: torch.Tensor,
+        output_token_ids: Union[list[list[int]], torch.Tensor],
+    ) -> torch.Tensor:
+        """
+        Applies presence, frequency and repetition penalties to the logits.
+        """
+        _, vocab_size = logits.shape
+        if isinstance(output_token_ids, torch.Tensor):
+            output_tokens_t = output_token_ids
+        else:
+            output_tokens_t = _convert_to_tensors(output_token_ids, vocab_size,
+                                                logits.device)
+        return apply_penalties_original(logits, prompt_token_ids, output_tokens_t,
+                            presence_penalties, frequency_penalties,
+                            repetition_penalties)

@@ -233,6 +233,10 @@ class GCUPlatform(Platform):
             os.environ["VLLM_GCU_ENABLE_DEEPSEEK_MTP_FUSION"] = "1"
         if enable_deepseek_fused_mtp:
             logger.info("Using deepseek fused mtp")
+            if vllm_config.additional_config.get("deepseek_fused_mtp_use_penalty", True):
+                vllm_config.additional_config.setdefault("deepseek_fused_mtp_penalty_max_prompt_len", 512)
+                vllm_config.additional_config.setdefault("deepseek_fused_mtp_penalty_max_output_len", 1024)
+                
         vllm_config.additional_config.update({"deepseek_fused_mtp": enable_deepseek_fused_mtp})
 
         if compilation_config:
