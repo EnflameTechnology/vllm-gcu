@@ -27,7 +27,9 @@ def _try_register_chat_template(model_type, chat_template_path):
 
 def register_custom_models():
     from vllm import ModelRegistry
-    custom_configs = []
+    custom_configs = [
+        ("step3v", "vllm_gcu.models.step3v.step3v_config", "Step3vConfig"),
+    ]
 
     for name, module_name, class_name in custom_configs:
         _try_register_config(name, module_name, class_name)
@@ -55,3 +57,5 @@ def register_custom_models():
     ModelRegistry.register_model("DeepseekOCRForCausalLM", "vllm_gcu.models.deepseek_ocr.deepseek_ocr:DeepseekOCRForCausalLM")
     ModelRegistry.register_model("DeepseekForCausalLM", "vllm_gcu.models.deepseek_ocr.deepseek:DeepseekForCausalLMGCU")
     ModelRegistry.register_model("DeepseekV32ForCausalLM", "vllm_gcu.models.deepseek_v32:DeepseekV3ForCausalLM")
+    ModelRegistry.register_model("MMGPTStep3vForCausalLM", "vllm_gcu.models.step3v.mm_step1o:MMGPTStep1oForCausalLM")
+    ModelRegistry.register_model("Step2MiniForCausalLM", "vllm_gcu.models.step3v.step2_mini:Step2MiniForCausalLM")
