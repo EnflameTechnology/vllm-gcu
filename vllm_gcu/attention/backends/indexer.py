@@ -1,10 +1,21 @@
+from unittest.mock import patch
+from functools import partial
 import torch
+from typing import ClassVar
 from vllm.v1.attention.backends.mla.indexer import (DeepseekV32IndexerMetadataBuilder,
                                                     get_max_prefill_buffer_size,
-                                                    DeepseekV32IndexerBackend)
+                                                    DeepseekV32IndexerMetadata)
+from vllm.v1.attention.backends.utils import (AttentionCGSupport,
+                                              AttentionMetadataBuilder,
+                                              CommonAttentionMetadata,
+                                              split_decodes_and_prefills)
 from vllm.v1.attention.backends.utils import AttentionMetadataBuilder
+from vllm_gcu.attention.backends.mla_v1 import customized_split_decodes_and_prefills
 
 class GCUDeepseekV32IndexerMetadataBuilder(DeepseekV32IndexerMetadataBuilder):
+    cudagraph_support: ClassVar[AttentionCGSupport] = \
+        AttentionCGSupport.UNIFORM_BATCH
+    
     def __init__(self, *args, **kwargs):
         AttentionMetadataBuilder.__init__(self, *args, **kwargs)
         scheduler_config = self.vllm_config.scheduler_config
@@ -34,6 +45,17 @@ class GCUDeepseekV32IndexerMetadataBuilder(DeepseekV32IndexerMetadataBuilder):
         self.scheduler_metadata_buffer = torch.empty((self.num_sms + 1, 2),
                                                      dtype=torch.int32,
                                                      device=self.device)
+
+    def build(self,
+              common_prefix_len: int,
+              common_attn_metadata: CommonAttentionMetadata,
+              fast_build: bool = False) -> DeepseekV32IndexerMetadata:
+        with patch(
+                'vllm.v1.attention.backends.mla.indexer.split_decodes_and_prefills',
+                partial(customized_split_decodes_and_prefills, builder = self, \
+                         require_uniform=True)):
+            return super().build(common_prefix_len, common_attn_metadata,
+                                 fast_build)
 
 @staticmethod
 def get_builder_cls() -> type["GCUDeepseekV32IndexerMetadataBuilder"]:

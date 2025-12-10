@@ -22,7 +22,6 @@ from vllm.model_executor.models.utils import maybe_prefix
 
 from vllm_gcu.distributed.sp import sp_to_tp
 import vllm_gcu.envs as gcu_envs
-from vllm_gcu.models.deepseek_v3.deepseek_v3 import DeepseekV2DecoderLayer
 
 
 class SharedHead(nn.Module):
@@ -66,7 +65,20 @@ class DeepSeekMultiTokenPredictorLayer(nn.Module):
         )
         self.shared_head = SharedHead(config=config, quant_config=quant_config)
 
-        self.mtp_block = DeepseekV2DecoderLayer(config, prefix, model_config,
+        self.is_v32 = hasattr(config, "index_topk")
+        if self.is_v32:
+            from vllm_gcu.models.deepseek_v32 import DeepseekV2DecoderLayer
+            topk_tokens = config.index_topk
+            topk_indices_buffer = torch.empty(
+                vllm_config.scheduler_config.max_num_batched_tokens,
+                topk_tokens,
+                dtype=torch.int32,
+                device="cuda")
+            self.mtp_block = DeepseekV2DecoderLayer(vllm_config, prefix,
+                topk_indices_buffer, enable_eplb=False)
+        else:
+            from vllm_gcu.models.deepseek_v3.deepseek_v3 import DeepseekV2DecoderLayer
+            self.mtp_block = DeepseekV2DecoderLayer(config, prefix, model_config,
                                                 cache_config, quant_config,
                                                 enable_eplb=False)
 

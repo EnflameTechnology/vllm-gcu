@@ -375,6 +375,13 @@ class EagleProposerWithGraph(EagleProposer):
             for layer_name in self.attn_layer_names:
                 per_layer_attn_metadata[layer_name] = attn_metadata
 
+            if self.draft_indexer_metadata_builder:
+                draft_indexer_metadata = \
+                    self.draft_indexer_metadata_builder.build_for_drafting(
+                    common_attn_metadata=common_attn_metadata, draft_index=token_index + 1)
+                for layer_name in self.indexer_layer_names:
+                    per_layer_attn_metadata[layer_name] = draft_indexer_metadata
+
             # copy inputs to buffer for cudagraph
             self.input_ids[:batch_size] = input_ids
             self._set_positions(batch_size, clamped_positions)
@@ -458,6 +465,13 @@ class EagleProposerWithGraph(EagleProposer):
             for layer_name in self.attn_layer_names:
                 per_layer_attn_metadata[layer_name] = attn_metadata
 
+            if self.draft_indexer_metadata_builder:
+                draft_indexer_metadata = \
+                    self.draft_indexer_metadata_builder.build_for_drafting(
+                    common_attn_metadata=spec_common_attn_metadata, draft_index=0)
+                for layer_name in self.indexer_layer_names:
+                    per_layer_attn_metadata[layer_name] = draft_indexer_metadata
+
         batch_descriptor = BatchDescriptor(
             num_tokens=num_tokens,
             uniform_decode=cudagraph_runtime_mode == CUDAGraphMode.FULL)
@@ -507,6 +521,13 @@ class EagleProposerWithGraph(EagleProposer):
                 common_attn_metadata=spec_common_attn_metadata, draft_index=1)
             for layer_name in self.attn_layer_names:
                 per_layer_attn_metadata[layer_name] = attn_metadata
+
+            if self.draft_indexer_metadata_builder:
+                draft_indexer_metadata = \
+                    self.draft_indexer_metadata_builder.build_for_drafting(
+                    common_attn_metadata=spec_common_attn_metadata, draft_index=1)
+                for layer_name in self.indexer_layer_names:
+                    per_layer_attn_metadata[layer_name] = draft_indexer_metadata
 
         batch_descriptor = BatchDescriptor(
             num_tokens=batch_size,

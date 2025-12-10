@@ -770,7 +770,8 @@ class DeepseekV2DecoderLayer(nn.Module):
     def __init__(self,
                  vllm_config: VllmConfig,
                  prefix: str,
-                 topk_indices_buffer: Optional[torch.Tensor] = None) -> None:
+                 topk_indices_buffer: Optional[torch.Tensor] = None,
+                 enable_eplb: bool = True) -> None:
         super().__init__()
 
         config = vllm_config.model_config.hf_config
@@ -821,7 +822,7 @@ class DeepseekV2DecoderLayer(nn.Module):
                 model_config=model_config,
                 quant_config=quant_config,
                 prefix=f"{prefix}.mlp",
-                enable_eplb=parallel_config.enable_eplb,
+                enable_eplb=enable_eplb,
             )
         else:
             self.mlp = DeepseekV2MLP(
@@ -936,7 +937,8 @@ class DeepseekV2Model(nn.Module):
         self.start_layer, self.end_layer, self.layers = make_layers(
             config.num_hidden_layers,
             lambda prefix: DeepseekV2DecoderLayer(vllm_config, prefix,
-                                                  topk_indices_buffer),
+                                                  topk_indices_buffer,
+                    enable_eplb=vllm_config.parallel_config.enable_eplb),
             prefix=f"{prefix}.layers")
 
         if get_pp_group().is_last_rank:
