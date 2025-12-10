@@ -40,8 +40,8 @@ author = 'www.enflame-tech.com'
 release = 'V 0.11.0'  # 填写当前文档版本号
 doc_name = project  # 填写全称
 
-last_update_date = '2025年12月08日'  # 填写文档更新日期，格式为YYYY年M月D日
-pdf_filename = 'vLLM-gcu用户使用手册(L600).tex'  # 填写导出的pdf的tex文件名，格式为"XXXX.tex"，注意不可以含有空格！！！
+last_update_date = '2025年12月10日'  # 填写文档更新日期，格式为YYYY年M月D日
+pdf_filename = 'vLLM-gcu用户使用手册.tex'  # 填写导出的pdf的tex文件名，格式为"XXXX.tex"，注意不可以含有空格！！！
 
 # Add any Sphinx extension module names here, as strings. They can be
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom

@@ -22,6 +22,7 @@ python3 -m pip list | grep torch-gcu
 python3 -m pip list | grep torch
 python3 -m pip list | grep torchvision
 python3 -m pip list | grep triton
+python3 -m pip list | grep triton_gcu
 ```
 如果已经正常安装，在`x86_64`架构下可以显示如下内容：
 ```
@@ -32,11 +33,13 @@ tops-extension                    <version>
 torch-gcu                         2.8.0+<version>
 torch                             2.8.0+cpu
 torchvision                       0.23.0+cpu
+triton                            3.3.0
+triton_gcu                        3.3.1+<version>
 ```
 如果未安装，可以通过以下两种安装方式完成vllm安装：
 * 通过TopsRider安装：
 ```shell
-./Topsrider_xxx.run -y -C vllm-gcu
+./Topsrider_xxx.run -y -C vllm-gcu-0.11 --python python3.12
 ```
 * 通过whl包安装：
 ```shell
@@ -48,6 +51,8 @@ python3 -m pip install torch_gcu-2.8.0+<version>*.whl
 python3 -m pip install tops_extension-<version>*.whl
 python3 -m pip install flash-attn-<version>*.whl
 python3 -m pip install triton==3.3.0
+dpkg -i triton-gcu_3.3.1+<version>*.deb
+python3 -m pip install triton_gcu-3.3.1+<version>*.whl
 
 # 安装vllm_gcu库
 python3 -m pip install vllm_gcu-0.11.0+<version>*.whl
