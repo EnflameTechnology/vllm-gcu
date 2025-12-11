@@ -13,6 +13,11 @@ from vllm.platforms import current_platform
 from vllm.forward_context import ForwardContext, get_forward_context
 from vllm.model_executor.layers.fused_moe.topk_weight_and_reduce import (
     TopKWeightAndReduceNoOP)
+from vllm.v1.worker.ubatching import (
+    dbo_current_ubatch_id, dbo_enabled, dbo_switch_to_comm,
+    dbo_switch_to_compute, dbo_switch_to_compute_sync,
+    dbo_yield_and_switch_from_comm_to_compute,
+    dbo_yield_and_switch_from_compute_to_comm)
 
 from vllm_gcu.distributed.parallel_state import all_to_all_v2
 import vllm_gcu.envs as gcu_envs
@@ -150,10 +155,18 @@ class AlltoAllStaticShape(AlltoAllPrepareAndFinalize):
     AlltoAll impl for the [Quantize-Prepare] and [Finalize] steps.
     This impl use static shape, mainly for decode.
     """
+    class IntermediateMeta:
+        ep_split_size: torch.Tensor
+        sp_split_size: torch.Tensor
+        ep_token_indices: torch.Tensor
 
     def __init__(self, threshold, num_dispatchers: int):
         super().__init__(num_dispatchers)
         self.threshold = threshold
+        self.intermediate_meta = [
+            AlltoAllStaticShape.IntermediateMeta(),
+            AlltoAllStaticShape.IntermediateMeta(),
+        ]
 
     def prepare(
         self,
@@ -212,7 +225,8 @@ class AlltoAllStaticShape(AlltoAllPrepareAndFinalize):
         ep_split_size, ep_token_indices, send_token_total \
             = self.route(num_experts, hidden_states.shape[0], topk_ids, log2phy)
 
-        enable_parallel_compute = gcu_envs.VLLM_GCU_ENABLE_PARALLEL_COMPUTE
+        enable_parallel_compute = not dbo_enabled(
+        ) and gcu_envs.VLLM_GCU_ENABLE_PARALLEL_COMPUTE
         parallel_compute_context = (torch.gcu.ParallelCompute(
             2, 10) if current_platform.is_device_capability(130)
                                     and enable_parallel_compute else
@@ -234,6 +248,7 @@ class AlltoAllStaticShape(AlltoAllPrepareAndFinalize):
         )
 
         sp_split_size = torch.empty_like(ep_split_size)
+        dbo_yield_and_switch_from_compute_to_comm()
         with parallel_compute_context:
             work = all_to_all_v2(
                 recv_packed,
@@ -244,6 +259,7 @@ class AlltoAllStaticShape(AlltoAllPrepareAndFinalize):
                 flag=1,
                 async_op=enable_parallel_compute,
             )
+            dbo_switch_to_compute_sync()
 
             shared_output = None
             if self.shared_experts is not None:
@@ -268,9 +284,11 @@ class AlltoAllStaticShape(AlltoAllPrepareAndFinalize):
         if all_to_all_with_scales:
             a1_scale = unpacked[3]
 
-        self.ep_token_indices = ep_token_indices
-        self.ep_split_size = ep_split_size
-        self.sp_split_size = sp_split_size
+        ubatch_id = dbo_current_ubatch_id()
+        meta = self.intermediate_meta[ubatch_id]
+        meta.ep_token_indices = ep_token_indices
+        meta.ep_split_size = ep_split_size
+        meta.sp_split_size = sp_split_size
 
         return hidden_states, a1_scale, ExpertTokensMetadata(
             recv_token_total, None), topk_ids, topk_weights, shared_output
@@ -296,25 +314,29 @@ class AlltoAllStaticShape(AlltoAllPrepareAndFinalize):
           fused_expert_output.
         """
         assert isinstance(weight_and_reduce_impl, TopKWeightAndReduceNoOP)
+        ubatch_id = dbo_current_ubatch_id()
+        meta = self.intermediate_meta[ubatch_id]
         sp_hidden_states = torch.zeros(
-            (self.ep_token_indices.shape[0], fused_expert_output.shape[1]),
+            (meta.ep_token_indices.shape[0], fused_expert_output.shape[1]),
             dtype=fused_expert_output.dtype,
             device=fused_expert_output.device,
         )
 
+        dbo_yield_and_switch_from_compute_to_comm()
         all_to_all_v2(
             sp_hidden_states,
             fused_expert_output,
-            self.ep_split_size,
-            self.sp_split_size,
+            meta.ep_split_size,
+            meta.sp_split_size,
             group=self.ep_group,
             flag=0,
         )
+        dbo_yield_and_switch_from_comm_to_compute()
 
         if output.numel() != 0:
             output.index_add_(
                 0,
-                self.ep_token_indices,
+                meta.ep_token_indices,
                 sp_hidden_states,
             )
 
@@ -328,8 +350,19 @@ class AlltoAllDynamicShape(AlltoAllPrepareAndFinalize):
     This impl use dynamic shape, mainly for prefill.
     """
 
+    class IntermediateMeta:
+        cpu_send_token_total: int
+        cpu_recv_token_total: int
+        cpu_ep_split_size: torch.Tensor
+        cpu_sp_split_size: torch.Tensor
+        ep_token_indices: torch.Tensor
+
     def __init__(self, num_dispatchers: int):
         super().__init__(num_dispatchers)
+        self.intermediate_meta = [
+            AlltoAllDynamicShape.IntermediateMeta(),
+            AlltoAllDynamicShape.IntermediateMeta(),
+        ]
 
     def prepare(
         self,
@@ -388,7 +421,8 @@ class AlltoAllDynamicShape(AlltoAllPrepareAndFinalize):
         ep_split_size, ep_token_indices, send_token_total \
             = self.route(num_experts, hidden_states.shape[0], topk_ids, log2phy)
 
-        enable_parallel_compute = gcu_envs.VLLM_GCU_ENABLE_PARALLEL_COMPUTE
+        enable_parallel_compute = not dbo_enabled(
+        ) and gcu_envs.VLLM_GCU_ENABLE_PARALLEL_COMPUTE
         parallel_compute_context = (torch.gcu.ParallelCompute(
             2, 10) if current_platform.is_device_capability(130)
                                     and enable_parallel_compute else
@@ -399,34 +433,38 @@ class AlltoAllDynamicShape(AlltoAllPrepareAndFinalize):
                                             ep_split_size,
                                             group=self.ep_group)
         recv_token_total = torch.sum(sp_split_size, 0, True, dtype=torch.int32)
-        self.cpu_sp_split_size = sp_split_size.cpu().tolist()
-        self.cpu_ep_split_size = ep_split_size.cpu().tolist()
-        self.cpu_recv_token_total = recv_token_total[0].item()
-        self.cpu_send_token_total = send_token_total[0].item()
-        ep_token_indices = ep_token_indices[:self.cpu_send_token_total]
+        ubatch_id = dbo_current_ubatch_id()
+        meta = self.intermediate_meta[ubatch_id]
+        meta.cpu_sp_split_size = sp_split_size.cpu().tolist()
+        meta.cpu_ep_split_size = ep_split_size.cpu().tolist()
+        meta.cpu_recv_token_total = recv_token_total[0].item()
+        meta.cpu_send_token_total = send_token_total[0].item()
+        meta.ep_token_indices = ep_token_indices[:meta.cpu_send_token_total]
         send_packed_sorted, transfer_width_as_dtype, origin_dtypes = self.pack(
             [hidden_states, topk_ids, topk_weights] +
             ([a1_scale] if all_to_all_with_scales else []),
             hidden_states.dtype,
-            ep_token_indices,
+            meta.ep_token_indices,
         )
         recv_packed = torch.empty(
             (
-                max(self.cpu_recv_token_total, 1),
+                max(meta.cpu_recv_token_total, 1),
                 sum(transfer_width_as_dtype),
             ),
             dtype=send_packed_sorted.dtype,
             device=send_packed_sorted.device,
         )
+        dbo_yield_and_switch_from_compute_to_comm()
         with parallel_compute_context:
             work = torch.distributed.all_to_all_single(
-                recv_packed[:self.cpu_recv_token_total],
-                send_packed_sorted[:self.cpu_send_token_total],
-                self.cpu_sp_split_size,
-                self.cpu_ep_split_size,
+                recv_packed[:meta.cpu_recv_token_total],
+                send_packed_sorted[:meta.cpu_send_token_total],
+                meta.cpu_sp_split_size,
+                meta.cpu_ep_split_size,
                 group=self.ep_group,
                 async_op=enable_parallel_compute,
             )
+            dbo_switch_to_compute_sync()
 
             shared_output = None
             if self.shared_experts is not None:
@@ -446,10 +484,6 @@ class AlltoAllDynamicShape(AlltoAllPrepareAndFinalize):
         hidden_states, topk_ids, topk_weights = unpacked[0:3]
         if all_to_all_with_scales:
             a1_scale = unpacked[3]
-
-        self.ep_token_indices = ep_token_indices
-        self.ep_split_size = ep_split_size
-        self.sp_split_size = sp_split_size
 
         return hidden_states, a1_scale, ExpertTokensMetadata(
             recv_token_total, None), topk_ids, topk_weights, shared_output
@@ -475,24 +509,28 @@ class AlltoAllDynamicShape(AlltoAllPrepareAndFinalize):
           fused_expert_output.
         """
         assert isinstance(weight_and_reduce_impl, TopKWeightAndReduceNoOP)
+        ubatch_id = dbo_current_ubatch_id()
+        meta = self.intermediate_meta[ubatch_id]
         sp_hidden_states = torch.zeros(
-            (self.ep_token_indices.shape[0], fused_expert_output.shape[1]),
+            (meta.ep_token_indices.shape[0], fused_expert_output.shape[1]),
             dtype=fused_expert_output.dtype,
             device=fused_expert_output.device,
         )
+        dbo_yield_and_switch_from_compute_to_comm()
 
         torch.distributed.all_to_all_single(
-            sp_hidden_states[:self.cpu_send_token_total],
-            fused_expert_output[:self.cpu_recv_token_total],
-            self.cpu_ep_split_size,
-            self.cpu_sp_split_size,
+            sp_hidden_states[:meta.cpu_send_token_total],
+            fused_expert_output[:meta.cpu_recv_token_total],
+            meta.cpu_ep_split_size,
+            meta.cpu_sp_split_size,
             group=self.ep_group,
         )
+        dbo_yield_and_switch_from_comm_to_compute()
 
         if output.numel() != 0:
             output.index_add_(
                 0,
-                self.ep_token_indices,
+                meta.ep_token_indices,
                 sp_hidden_states,
             )
 

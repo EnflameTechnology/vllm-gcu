@@ -17,4 +17,6 @@ import vllm_gcu.patch.patch_0_11_0.block_table # noqa
 import vllm_gcu.patch.patch_0_11_0.utils  # noqa
 import vllm_gcu.patch.patch_0_11_0.internvl  # noqa
 import vllm_gcu.patch.patch_0_11_0.indexer  # noqa
+import vllm_gcu.patch.patch_0_11_0.gpu_ubatch_wrapper  # noqa
+import vllm_gcu.patch.patch_0_11_0.config  # noqa
 import vllm_gcu.patch.patch_0_11_0.hunyuan_vl  # noqa

@@ -51,7 +51,7 @@ class FusedMoEModularKernel(torch.nn.Module):
         prepare_finalize: FusedMoEPrepareAndFinalize,
         fused_experts: FusedMoEPermuteExpertsUnpermute,
         shared_experts: Optional[torch.nn.Module] = None,
-        add_shared = False,
+        add_shared=False,
     ):
         super().__init__()
         self.prepare_finalize = prepare_finalize
@@ -59,8 +59,7 @@ class FusedMoEModularKernel(torch.nn.Module):
         self.shared_experts = shared_experts
         self.add_shared = add_shared
         if hasattr(self.prepare_finalize, 'set_shared_experts'):
-            self.prepare_finalize.set_shared_experts(
-                self.shared_experts)
+            self.prepare_finalize.set_shared_experts(self.shared_experts)
         assert prepare_finalize.activation_format == \
             fused_experts.activation_formats[0], (
                 f"{prepare_finalize.__class__.__name__}."
@@ -361,26 +360,21 @@ class FusedMoEModularKernel(torch.nn.Module):
         shared_output: Optional[torch.Tensor] = None
 
         if not self.prepare_finalize.supports_async():
-            # We shouldn't be running an a2a kernel that doesn't
-            # support async prepare/finalize
-            # TODO(lucas): enable in follow-up
-            assert not dbo_enabled()
-
             prepare_ret = self.prepare_finalize.prepare(
-                 a1,
-                 topk_weights,
-                 topk_ids,
-                 global_num_experts,
-                 expert_map,
-                 apply_router_weight_on_input,
-                 self.fused_experts.quant_config,
-             )
+                a1,
+                topk_weights,
+                topk_ids,
+                global_num_experts,
+                expert_map,
+                apply_router_weight_on_input,
+                self.fused_experts.quant_config,
+            )
             if hasattr(self.prepare_finalize, 'set_shared_experts'):
                 (a1q, a1q_scale, expert_tokens_meta, _expert_topk_ids,
-                _expert_topk_weights, shared_output) = prepare_ret
+                 _expert_topk_weights, shared_output) = prepare_ret
             else:
                 (a1q, a1q_scale, expert_tokens_meta, _expert_topk_ids,
-                _expert_topk_weights) = prepare_ret
+                 _expert_topk_weights) = prepare_ret
         else:
             # Overlap shared expert compute with all2all dispatch.
             dbo_maybe_run_recv_hook()
@@ -459,13 +453,11 @@ class FusedMoEModularKernel(torch.nn.Module):
         else:
             output = torch.empty_like(a1)
             if envs.VLLM_ALL2ALL_BACKEND not in [
-                "deepep_high_throughput", "deepep_low_latency"
+                    "deepep_high_throughput", "deepep_low_latency"
             ]:
                 output.fill_(0)
 
         if not self.prepare_finalize.supports_async():
-            assert not dbo_enabled()
-
             self.prepare_finalize.finalize(
                 output,
                 fused_out,

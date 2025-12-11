@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 import contextlib
 from contextlib import AbstractContextManager
+from vllm.utils import _current_stream_tls
 
 import torch
 from torch.autograd.profiler import record_function
@@ -91,6 +92,15 @@ def record_function_or_nullcontext(name: str) -> AbstractContextManager:
 
     _PROFILER_FUNC = func
     return func(name)
+
+origin_set_stream = torch.gcu.set_stream
+
+def _patched_set_stream(stream: torch.cuda.Stream) -> None:
+    _current_stream_tls.value = stream
+    origin_set_stream(stream)
+
+torch.cuda.set_stream = _patched_set_stream
+torch.gcu.set_stream = _patched_set_stream
 
 patch("vllm.v1.worker.gpu_model_runner.bind_kv_cache", bind_kv_cache).start()
 patch("vllm.v1.worker.gpu_model_runner.record_function_or_nullcontext", record_function_or_nullcontext).start()
