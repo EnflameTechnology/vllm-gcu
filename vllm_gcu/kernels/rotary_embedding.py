@@ -9,6 +9,7 @@ from vllm.model_executor.layers.rotary_embedding import (
     RotaryEmbedding,
     MRotaryEmbedding,
 )
+from vllm.model_executor.layers.rotary_embedding.mrope import apply_interleaved_rope
 from vllm_gcu.kernels import _custom_ops as ops
 
 
@@ -114,16 +115,20 @@ def m_forward_oot(
     if positions.ndim == 2:
         assert self.mrope_section
 
-        cos = torch.cat([
-            m[i]
-            for i, m in enumerate(cos.split(self.mrope_section, dim=-1))
-        ],
-                        dim=-1)
-        sin = torch.cat([
-            m[i]
-            for i, m in enumerate(sin.split(self.mrope_section, dim=-1))
-        ],
-                        dim=-1)
+        if self.mrope_interleaved:
+            cos = apply_interleaved_rope(cos, self.mrope_section)
+            sin = apply_interleaved_rope(sin, self.mrope_section)
+        else:
+            cos = torch.cat([
+                m[i]
+                for i, m in enumerate(cos.split(self.mrope_section, dim=-1))
+            ],
+                            dim=-1)
+            sin = torch.cat([
+                m[i]
+                for i, m in enumerate(sin.split(self.mrope_section, dim=-1))
+            ],
+                            dim=-1)
         cos_sin = torch.concat([cos, sin], -1)
         rotary_dim = cos.shape[0]
         positions = torch.arange(rotary_dim, device=query.device, dtype=torch.long)
