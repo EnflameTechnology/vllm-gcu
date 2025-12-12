@@ -51,6 +51,7 @@ vllm serve [path of Meta-Llama-3-70B] \
 ```shell
 curl "http://localhost:8000/v1/completions" \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-72tkvudyGLPMi" \
   -d '{"max_tokens": 50,
        "prompt": "User: What is Deep Learning?\nAssistant:",
        "model": "[path of Meta-Llama-3-70B]",
@@ -82,7 +83,7 @@ vllm bench serve \
         --backend vllm  \
         --dataset-name random  \
         --model [path of Meta-Llama-3-70B] \
-        --num-prompts 10 \
+        --num-prompts 3 \
         --max-concurrency 1 \
         --random-input-len 2048 \
         --random-output-len 1024 \
@@ -167,7 +168,7 @@ vllm bench serve \
     --backend vllm  \
     --dataset-name random \
     --model [path of Meta-Llama-3-8B] \
-    --num-prompt 10 \
+    --num-prompt 3 \
     --max-concurrency 1 \
     --random-input-len 2048 \
     --random-output-len 1024 \
