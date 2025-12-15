@@ -13,7 +13,7 @@
           "uninstall" : "sudo python -m pip uninstall vllm -y || true"
       }
     ],
-    "deb" : ["topsaten", "eccl","topsfactor", "tops-sdk", "triton-gcu"],
+    "deb" : ["topsaten", "eccl", "triton-gcu"],
     "dependences" : [ "runtime"],
     "whl" :
     {
