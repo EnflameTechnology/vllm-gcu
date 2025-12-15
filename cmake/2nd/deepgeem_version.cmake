@@ -1,0 +1,21 @@
+# modify the following variables to change the prebuild caps version
+set(DEEPGEMM_COMMIT 7ab127f)
+set(DEEPGEMM_VERSION 2.0.1+gcu.3.6.20251209)
+
+set(DEEPGEMM_PATH ${MODULE_PACKAGE_PATH_URL_BASE_BASE}/DeepGEMM/${DEEPGEMM_COMMIT})
+message(STATUS "DEEPGEMM_PATH:${DEEPGEMM_PATH}")
+if ("${CMAKE_SYSTEM_PROCESSOR}" STREQUAL "x86_64")
+    set(DEEPGEMM_PY_VERS "310" "312")
+else()
+    set(DEEPGEMM_PY_VERS )
+endif()
+
+foreach(DEEPGEMM_PY_VER IN LISTS DEEPGEMM_PY_VERS)
+    set(DEEPGEMM_LINK "${DEEPGEMM_PATH}/deep_gemm-${DEEPGEMM_VERSION}-cp${DEEPGEMM_PY_VER}-cp${DEEPGEMM_PY_VER}-linux_x86_64.whl")
+    fetchFromArtifactory(deep_gemm_${DEEPGEMM_PY_VER}_whl
+        FILE ${DEEPGEMM_LINK}
+        PKG_COMMAND ${PACKAGE_PYTHON_CMDS}
+        PKG_FILES ${PACKAGE_PYTHON_FILES}
+        PKG_ONLY ON
+    )
+endforeach(DEEPGEMM_PY_VER IN LISTS DEEPGEMM_PY_VERS)

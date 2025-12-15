@@ -296,4 +296,6 @@ if(NOT PROJECT_GIT_URL)
     set(PREBUILD_SDK_VERSION 3.4.20250506)
     include(sdk_binary)
 
+    include(${PROJECT_SOURCE_DIR}/cmake/2nd/deepgeem_version.cmake)
+    include(${PROJECT_SOURCE_DIR}/cmake/2nd/deepep_version.cmake)
 endif()

@@ -17,9 +17,8 @@
     "dependences" : [ "runtime"],
     "whl" :
     {
-      "3.10" : ["vllm-gcu","tops-extension", "triton-gcu", "flash_attn"],
-      "3.12" : ["vllm-gcu","tops-extension", "triton-gcu", "flash_attn"],
-      "3.9" : ["vllm-gcu","tops-extension", "triton-gcu", "flash_attn"]
+      "3.10" : ["vllm-gcu","tops-extension", "triton-gcu", "flash_attn", "deep_gemm", "deep_ep"],
+      "3.12" : ["vllm-gcu","tops-extension", "triton-gcu", "flash_attn", "deep_gemm", "deep_ep"]
     },
     "special_cmd" : [
       {

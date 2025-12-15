@@ -88,6 +88,16 @@
         "3.10_package_name": "flash_attn-*torch*{version}*-[cp][py]3*10-*.whl",
         "3.12_package_name": "flash_attn-*torch*{version}*-[cp][py]3*12-*.whl"
     },
+    "deep_gemm": {
+        "type":["whl"],
+        "3.10_package_name": "deep_gemm-*-[cp][py]3*10-*.whl",
+        "3.12_package_name": "deep_gemm-*-[cp][py]3*12-*.whl"
+    },
+    "deep_ep": {
+        "type":["whl"],
+        "3.10_package_name": "deep_ep-*torch*{version}*-[cp][py]3*10-*.whl",
+        "3.12_package_name": "deep_ep-*torch*{version}*-[cp][py]3*12-*.whl"
+    },
     "TopsPlatform":{
         "type":["run"],
         "rpm_run_package_name":"TopsPlatform_[0-9][0-9a-z_\\.-]*_rpm_*.run",
