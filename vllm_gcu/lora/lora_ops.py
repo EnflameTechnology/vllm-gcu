@@ -170,7 +170,7 @@ def sgmv_expand_impl(
 
     assert lora_b_weights.is_contiguous()
 
-    lora_indices_tensor = lora_indices_tensor.repeat_interleave(seq_len_tensor)
+    lora_indices_tensor = lora_indices_tensor.repeat_interleave(seq_len_tensor, output_size=inputs.shape[0])
     ops.dispatch_bgmv(inputs, lora_b_weights, output_tensor,
                       lora_indices_tensor, 1.0)
 
@@ -280,7 +280,7 @@ def sgmv_expand_slice_impl(
 
     assert lora_b_weights.is_contiguous()
 
-    lora_indices_tensor = lora_indices_tensor.repeat_interleave(seq_len_tensor)
+    lora_indices_tensor = lora_indices_tensor.repeat_interleave(seq_len_tensor, output_size=inputs.shape[0])
     ops.dispatch_bgmv_low_level(
         inputs,
         lora_b_weights,
@@ -378,7 +378,7 @@ def sgmv_shrink_impl(
         assert lora_a_weights.ndim == 3  # shape:(lora_num,rank, size)
     assert lora_a_weights.is_contiguous()
     assert output_tensor.is_contiguous()
-    lora_indices_tensor = lora_indices_tensor.repeat_interleave(seq_len_tensor)
+    lora_indices_tensor = lora_indices_tensor.repeat_interleave(seq_len_tensor, output_size=inputs.shape[0])
     ops.dispatch_bgmv(inputs, lora_a_weights, output_tensor,
                       lora_indices_tensor, scaling)
 
