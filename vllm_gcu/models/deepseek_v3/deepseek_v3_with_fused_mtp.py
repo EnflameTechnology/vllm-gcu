@@ -1148,7 +1148,15 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
         self.sampler.topk_topp_sampler = ParallelTopKTopPSampler(logprobs_mode)
         self.rejection_sampler = RejectionSamplerDS()
         self.use_dp = vllm_config.parallel_config.data_parallel_size > 1
-
+        
+        max_num_seq = vllm_config.scheduler_config.max_num_seqs
+        max_num_batched_tokens = vllm_config.scheduler_config.max_num_batched_tokens
+        device = torch.gcu.current_device()
+        
+        self.accepted_tokens = torch.full((max_num_seq, self.num_speculative_tokens + 1), fill_value=-1, dtype=torch.int32, device=device)
+        self.accepted_lens = torch.full((max_num_seq, ),  1, dtype=torch.int32, device=device)
+        self.draft_tokens = torch.full((max_num_seq, self.num_speculative_tokens),  0, dtype=torch.int32, device=device)
+        self.mtp_input_ids = torch.empty(max_num_batched_tokens, dtype=torch.int32, device=device)
     def set_eplb_state(
         self,
         expert_load_view: torch.Tensor,
@@ -1198,7 +1206,9 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
                   presence_penalty,
                   prompt_token_ids,
                   output_token_ids,
-                  draft_tokens):
+                  draft_tokens,
+                  logits_indices):
+        
         attn_metadata = get_forward_context().attn_metadata
         if ds_hidden_states.shape[0] == 0: 
             #dummy_run(0)
@@ -1226,7 +1236,7 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
                 ds_hidden_states, input_ids, positions,
                 temperature, top_p, top_k, repetition_penalty,
                 frequency_penalty, presence_penalty, prompt_token_ids,
-                output_token_ids, draft_tokens, attn_metadata)
+                output_token_ids, draft_tokens, attn_metadata, logits_indices=logits_indices)
             main_model_sampled_tokens = torch.empty_like(input_ids)
 
         if gcu_envs.VLLM_GCU_ENABLE_DEEPSEEK_MTP_FUSION and \
@@ -1270,7 +1280,7 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
         spec_k = self.num_speculative_tokens
         bsz = ds_hidden_states.shape[0] // (spec_k + 1)
         selected_hidden_states = ds_hidden_states
-
+        query_start_loc = attn_metadata.query_start_loc
         # [(num_decodes x (spec_k + 1)) , vocab_size]
         selected_logits = self.compute_logits(selected_hidden_states)
         sampling_metadata = SamplingMetadataDs(
@@ -1312,7 +1322,8 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
         mtp_input_ids = accepted_tokens.flatten()  # before [num_decodes x (spec_k + 1) , 1], after [num_decodes x (spec_k + 1)]
         mtp_positions = positions
         mtp_hidden_states = ds_hidden_states
-        selected_token_index = (accepted_lens - 1).type(torch.long).unsqueeze(-1)
+        decode_last_sample = query_start_loc[:-1] + accepted_lens - 1
+
         for i in range(spec_k):
             mtp_hidden_states = self.model.forward_mtp(
                 input_ids=mtp_input_ids,
@@ -1324,8 +1335,9 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
             mtp_logits = self.compute_logits(mtp_hidden_states, is_mtp_layer=True)
 
             mtp_token_ids = torch.argmax(mtp_logits, dim=-1, keepdim=True)
-            accepted_mtp_tokens = mtp_token_ids.reshape(bsz, spec_k + 1).gather(dim=1,index=selected_token_index)
-            draft_tokens[:, i] = accepted_mtp_tokens.squeeze(1)
+
+            torch.index_select(mtp_token_ids, 0, decode_last_sample, out=draft_tokens)
+            
             # we only support mtp1 for now
             if spec_k == 1:
                 break
@@ -1345,7 +1357,8 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
                                  prompt_token_ids,
                                  output_token_ids,
                                  draft_tokens,
-                                 attn_metadata):
+                                 attn_metadata,
+                                 logits_indices):
         device = ds_hidden_states.device
         spec_k = self.num_speculative_tokens
         dtype = ds_hidden_states.dtype
@@ -1356,26 +1369,11 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
         query_start_loc = attn_metadata.query_start_loc
         prefill_query_start = num_decodes * (spec_k + 1)
 
-        # Sample next
-        # [(num_decodes x (spec_k + 1)) , d_h]
-        decode_hidden_states = torch.empty(0, device=device, dtype=dtype)
-        prefill_hidden_states = torch.empty(0, device=device, dtype=dtype)  # [num_prefills, d_h]
-        if num_decodes > 0:
-            # for requests in decoding stage, sample every output hidden_states
-            # [(num_decodes x (spec_k + 1)) , d_h]
-            decode_hidden_states = ds_hidden_states[:prefill_query_start]
-        if num_prefills > 0:
-            # for requests in prefilling stage, sample the last output hidden_states
-            prefill_hidden_states = torch.index_select(
-                ds_hidden_states, dim=0, index=(query_start_loc[num_decodes + 1:] - 1))  # [num_prefills , d_h]
-        selected_hidden_states = torch.cat(
-            (decode_hidden_states, prefill_hidden_states), dim=0)  # [(num_decodes x (spec_k + 1)) + num_prefills , d_h]
+        selected_hidden_states = torch.index_select(
+            ds_hidden_states, dim=0, index=logits_indices)
 
         # [(num_decodes x (spec_k + 1)) + num_prefills , vocab_size]
         selected_logits = self.compute_logits(selected_hidden_states)
-        # sample_output: SamplerOutput = self.sample(selected_logits, sampling_metadata)
-        # [(num_decodes x (spec_k + 1)) + num_prefills]
-        # selected_tokens = sample_output.sampled_token_ids.squeeze(-1)
         sampling_metadata = SamplingMetadataDs(
             temperature=temperature,
             all_greedy=False,
@@ -1397,22 +1395,21 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
         sampler_output = self.sampler(logits=selected_logits,
                                                       sampling_metadata=sampling_metadata)
         selected_tokens = sampler_output.sampled_token_ids
-
-        target_token_ids: torch.Tensor = selected_tokens[:num_decodes * (spec_k + 1)]
-        draft_token_ids: torch.Tensor = draft_tokens[:num_decodes]
-        target_token_ids_prefill_make = selected_tokens[num_decodes * (spec_k + 1):]
+        
+        num_decode_tokens = num_decodes * (spec_k + 1)
+        
+        target_token_ids = selected_tokens[:num_decode_tokens]
+        draft_token_ids = draft_tokens[:num_decodes]
 
         # verify
         # (num_decodes + num_prefills, spec_k + 1)
-        accepted_tokens = torch.full((num_decodes + num_prefills, spec_k + 1), -1, dtype=torch.int32, device=device)
-        accepted_lens = torch.empty((num_decodes + num_prefills,), dtype=torch.long, device=device)
+        accepted_tokens = self.accepted_tokens[:num_decodes + num_prefills].fill_(-1)
+        accepted_lens = self.accepted_lens[:num_decodes + num_prefills].fill_(1)
+
         if num_decodes:
             target_token_ids = target_token_ids.reshape(num_decodes, spec_k + 1)
-            # only decode
-            #target_probs = top_k_probs[:num_decodes * (spec_k + 1), :]
-            #draft_probs = draft_probs[:num_decodes, :]
             draft_probs = None
-            padded_spec_logits = selected_logits[:(num_decodes * (spec_k + 1)), :]
+            padded_spec_logits = selected_logits[:num_decode_tokens, :]
             accepted_tokens[:num_decodes, :], accepted_lens[:num_decodes] = \
                 self.rejection_sampler.rejection_sampler_forward_with_fused_mtp(
                                     num_decodes,
@@ -1423,158 +1420,45 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
                                     target_token_ids,
                                     sampling_metadata
                                 )
-                
-                
-        if num_prefills:
-            accepted_tokens[num_decodes:, :] = torch.full((num_prefills, spec_k + 1), fill_value=-1, dtype=torch.long,
-                                                          device=device)
-            accepted_tokens[num_decodes:, 0] = target_token_ids_prefill_make.squeeze(-1)
-            # (num_decodes + num_prefills, )
-            accepted_lens[num_decodes:] = torch.full((num_prefills,), fill_value=1, dtype=torch.long, device=device)
 
-        # Update input_ids
-        if num_prefills == 0:
-            # for requests in decoding stage, sample
-            mtp_input_ids = accepted_tokens.flatten()  # [num_decodes x (spec_k + 1) , 1]
-        else:
-            # [num_all_input_tokens, 1]
-            mtp_input_ids = torch.cat(
-                (selected_tokens[:prefill_query_start], input_ids[prefill_query_start:].unsqueeze(-1)), dim=0)
-            mtp_input_ids = mtp_input_ids.squeeze(-1)
+        accepted_tokens[num_decodes:, 0] = selected_tokens[num_decode_tokens:, 0]
+        prefill_last_sample = query_start_loc[num_decodes + 1:] - 1
         
+        mtp_input_ids = self.mtp_input_ids[:len(input_ids)]
+        
+        mtp_input_ids[num_decode_tokens:-1] = input_ids[num_decode_tokens + 1:]
+
+        # mtp_input_ids[prefill_last_sample] = accepted_tokens[num_decodes:, 0]
+
+        mtp_input_ids.scatter_(dim=0, index=prefill_last_sample, src=accepted_tokens[num_decodes:, 0] )
+        
+        mtp_input_ids[:num_decode_tokens] = accepted_tokens[:num_decodes].flatten()
+
         mtp_positions = positions
-        mtp_hidden_states = ds_hidden_states
-        if input_ids.shape[0] > prefill_query_start and num_prefills == 0:
-            #somehow got padded
-            mtp_positions = mtp_positions[:prefill_query_start]
-            mtp_hidden_states = mtp_hidden_states[:prefill_query_start]
         
-        draft_tokens = torch.full((num_decodes + num_prefills, spec_k), fill_value=0, dtype=torch.long, device=device)
-        #draft_probs = torch.zeros((num_decodes + num_prefills, spec_k, 1), dtype=torch.float32, device=device)
+        mtp_hidden_states = ds_hidden_states
+        
+        draft_tokens = self.draft_tokens[:num_decodes + num_prefills].fill_(0)
 
-        if num_decodes:
-            # [num_decodes x 1]
-            decode_accepted_lens = accepted_lens[:num_decodes]
-            selected_token_index = (decode_accepted_lens - 1).type(torch.long).unsqueeze(-1)
-            # we don't need draft probs for now
-            #selected_probs_index = selected_token_index.unsqueeze(-1).expand(-1, -1, selected_logits.size(1))
+        mtp_hidden_states = self.model.forward_mtp(
+            input_ids=mtp_input_ids,
+            positions=mtp_positions,
+            inputs_embeds=None,
+            previous_hidden_states=mtp_hidden_states,
+            spec_step_idx=0,
+        )
+        decode_last_sample = query_start_loc[:num_decodes] + accepted_lens[:num_decodes] - 1
 
-        if num_decodes:
-            for i in range(spec_k):
-                # in prefill: [num_all_input_tokens, d_h]
-                # in decode: [num_decodes x (spec_k + 1) , d_h]
-                # in enflame solution, when ep is enabled, we don't care about dp_metadata.
-                # so no need to keep input_tokens consistency with main model hence redundant computation is saved.
-                if self.vllm_config.parallel_config.enable_expert_parallel:
-                    if i == 0 and num_prefills > 0:
-                        mtp_input_ids = mtp_input_ids[:prefill_query_start]
-                        mtp_positions = mtp_positions[:prefill_query_start]
-                        mtp_hidden_states = mtp_hidden_states[:prefill_query_start]
-                    attn_metadata.num_prefills = 0
-                    num_prefills = 0
-                mtp_hidden_states = self.model.forward_mtp(
-                    input_ids=mtp_input_ids,
-                    positions=mtp_positions,
-                    inputs_embeds=None,
-                    previous_hidden_states=mtp_hidden_states,
-                    spec_step_idx=i,
-                )
-                next_mtp_hidden_states = mtp_hidden_states
-                # for sampling
-                decode_hidden_states = mtp_hidden_states[:prefill_query_start]
-                if num_prefills > 0:
-                    prefill_hidden_states = torch.index_select(
-                        mtp_hidden_states, dim=0, index=(query_start_loc[num_decodes + 1:] - 1))
-                else:
-                    prefill_hidden_states = torch.index_select(
-                        ds_hidden_states, dim=0, index=(query_start_loc[num_decodes + 1:] - 1))
-                mtp_hidden_states = torch.cat(
-                    (decode_hidden_states, prefill_hidden_states), dim=0)
+        mtp_logits_index = torch.cat((decode_last_sample, prefill_last_sample))
 
-                # [num_decodes x (spec_k + 1) + num_prefill, vocab_size]
-                # mtp_logits = self.simple_logits(mtp_hidden_states)
-                mtp_logits = self.compute_logits(mtp_hidden_states, is_mtp_layer=True)
-                # [num_decodes x (spec_k + 1) + num_prefill]
-                #mtp_token_ids, mtp_probs = self.sample_ds(logits=mtp_logits,
-                #                                             sampling_metadata=sampling_metadata)
-                # [num_decodes, spec_k], 丢弃prefill
-                #mtp_probs = mtp_probs[:num_decodes * (spec_k + 1), :].reshape(num_decodes, spec_k + 1,
-                #                                                              mtp_logits.shape[-1])
-                # sampler_output = self.sampler(logits=mtp_logits,
-                #                                       sampling_metadata=sampling_metadata)
-                # mtp_token_ids = sampler_output.sampled_token_ids
-                mtp_token_ids = torch.argmax(mtp_logits, dim=-1, keepdim=True)
-                accepted_mtp_tokens = mtp_token_ids[:num_decodes * (spec_k + 1)].reshape(num_decodes,
-                                                                                         spec_k + 1).gather(dim=1,
-                                                                                                            index=selected_token_index)
-                # 兼容第一次decode, we don't need draft probs for now
-                #mask = accepted_mtp_tokens.eq(-1).to(torch.bool)
-                #mtp_tokens = torch.where(mask, 0, accepted_mtp_tokens)
-                #draft_probs[:num_decodes, i, :] = mtp_probs.gather(1, selected_probs_index).gather(dim=-1,
-                #                                                                                   index=mtp_tokens.unsqueeze(
-                #                                                                                       -1).to(
-                #                                                                                       torch.long)).squeeze(
-                #    1)
-                draft_tokens[:num_decodes, i] = accepted_mtp_tokens.squeeze(1)
-                
-                if spec_k == 1:
-                    break
-                # Todo(guozelin) fix spec_k > 1
-                # don't bother with spec_k > 1 for now
-                # update input_ids and positions for decode, keep unchangeable for prefill
-                #mtp_input_ids[:num_decodes * (spec_k + 1)] = mtp_token_ids[:num_decodes * (spec_k + 1)]
-                #mtp_positions[:num_decodes * (spec_k + 1)] += 1
-                #if not self.use_dp:
-                #    mtp_hidden_states = next_mtp_hidden_states
-                #else:
-                #    # repeat for dp
-                #    ds_prefill_hidden_states = ds_hidden_states[query_start_loc[num_decodes]:]
-                #    mtp_hidden_states = torch.concat((decode_hidden_states, ds_prefill_hidden_states),
-                #                                                      dim=0)
+        mtp_hidden_states = torch.index_select(mtp_hidden_states, 0, mtp_logits_index)
 
-                #if i < (spec_k - 1):
-                #    if i == 0 and not self.use_dp:  # mtp > 1
-                #        # split hidden_states for sampling
-                #        attn_metadata.num_prefills = 0
-                #        num_prefills = 0
-                #        attn_metadata.num_actual_tokens = prefill_query_start
-                #        mtp_input_ids = mtp_input_ids[:prefill_query_start]
-                #        mtp_positions = mtp_positions[:prefill_query_start]
-                #        mtp_hidden_states = next_mtp_hidden_states[:prefill_query_start]
-                    # update decode metadata
-                #    if not self.use_dp:
-                #        attn_metadata.slot_mapping = (
-                #        attn_metadata.slot_mapping[:prefill_query_start] + 1)
-                #    else:
-                #        attn_metadata.slot_mapping[:prefill_query_start] += 1
+        mtp_logits = self.compute_logits(mtp_hidden_states, is_mtp_layer=True)
 
-                #    attn_metadata.decode.input_positions += 1
-                #    attn_metadata.decode.seq_lens += 1
-                #    num_q_heads = self.num_query_heads
-                #    mla_seq_lens = attn_metadata.decode.seq_lens
-                #    # only fused mtp
-                #    num_sq = spec_k + 1
-                #    mla_seq_lens = torch.squeeze(torch.reshape(mla_seq_lens, (-1, num_sq))[:, num_sq - 1:], -1)
-                #    num_q_heads = num_q_heads * num_sq
-                #    get_mla_metadata(
-                #        mla_seq_lens,
-                #        num_q_heads,
-                #        1,  # MQA for the decode path
-                #        tile_scheduler_metadata=attn_metadata.decode.tile_scheduler_metadata,
-                #        num_splits=attn_metadata.decode.num_splits[:mla_seq_lens.shape[0] + 1],
-                #    )
-        else:
-            # prefill spec_k times for dp mock request.
-            iter = spec_k if self.use_dp else 1
-            for i in range(iter):
-                self.model.forward_mtp(
-                    input_ids = mtp_input_ids,
-                    positions = mtp_positions,
-                    inputs_embeds = None,
-                    previous_hidden_states = mtp_hidden_states,
-                    spec_step_idx = 0
-                )
+        mtp_token_ids = torch.argmax(mtp_logits, dim=-1, keepdim=True)
 
+        draft_tokens[:] = mtp_token_ids
+        
         return selected_tokens, accepted_tokens, accepted_lens, draft_tokens
 
     def forward(
@@ -1592,6 +1476,7 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
         presence_penalty: Optional[torch.Tensor] = None,
         prompt_token_ids: Optional[torch.Tensor] = None,
         output_token_ids: Optional[torch.Tensor] = None,
+        logits_indices: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, IntermediateTensors]:
         hidden_states = self.model(
             input_ids,
@@ -1599,18 +1484,19 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
             intermediate_tensors,
             inputs_embeds,
         )
+        
         if not self.vllm_config.additional_config["deepseek_fused_mtp"]:
             return hidden_states
         if self.use_torch_compile:
             main_model_sampled_tokens, accepted_tokens, accepted_lens, draft_tokens, next_token_ids = \
                 torch.ops.vllm.fused_mtp(hidden_states, input_ids, positions, temperature,
                            top_p, top_k, repetition_penalty, frequency_penalty, presence_penalty,
-                           prompt_token_ids, output_token_ids, draft_tokens, self.layer_name)
+                           prompt_token_ids, output_token_ids, draft_tokens, logits_indices, self.layer_name)
         else:    
             main_model_sampled_tokens, accepted_tokens, accepted_lens, draft_tokens, next_token_ids = \
                 self.fused_mtp(hidden_states, input_ids, positions, temperature,
                            top_p, top_k, repetition_penalty, frequency_penalty, presence_penalty,
-                           prompt_token_ids, output_token_ids, draft_tokens)
+                           prompt_token_ids, output_token_ids, draft_tokens, logits_indices)
         
         return IntermediateTensors({
             # [(num_decodes x (spec_k + 1)) + num_prefills, 1]
@@ -1835,11 +1721,13 @@ def fused_mtp(ds_hidden_states: torch.Tensor,
               prompt_token_ids: torch.Tensor,
               output_token_ids: torch.Tensor,
               draft_tokens: torch.Tensor,
-              layer_name: str = "") -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+              logits_indices: torch.Tensor,
+              layer_name: str = "",
+              ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     forward_context = get_forward_context()
     self = forward_context.no_compile_layers[layer_name]
     return self.fused_mtp(ds_hidden_states, input_ids, positions, temperature, top_p, top_k, repetition_penalty,
-                          frequency_penalty, presence_penalty, prompt_token_ids, output_token_ids, draft_tokens)
+                          frequency_penalty, presence_penalty, prompt_token_ids, output_token_ids, draft_tokens, logits_indices)
 
 def fused_mtp_fake(ds_hidden_states: torch.Tensor,
               input_ids: torch.Tensor,
@@ -1853,6 +1741,7 @@ def fused_mtp_fake(ds_hidden_states: torch.Tensor,
               prompt_token_ids: torch.Tensor,
               output_token_ids: torch.Tensor,
               draft_tokens: torch.Tensor,
+              logits_indices: torch.Tensor,
               layer_name: str = "") -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     return torch.empty_like(input_ids), \
                    torch.empty((draft_tokens.shape[0], draft_tokens.shape[-1] + 1), dtype = torch.int32, device = draft_tokens.device),\

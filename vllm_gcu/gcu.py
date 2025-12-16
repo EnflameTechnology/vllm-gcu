@@ -279,10 +279,6 @@ class GCUPlatform(Platform):
         if async_scheduling is not None:
             scheduler_config.async_scheduling = async_scheduling
             logger.info("override async_scheduling of scheduler_config by additional_config")
-            if enable_deepseek_fused_mtp:
-                assert gcu_envs.VLLM_GCU_NIXL_ENABLE_FIRST_TOKEN_REUSE, \
-                    """deepseek with fused-mtp under async-scheduling must be used under pd disaggregation
-                       with VLLM_GCU_NIXL_ENABLE_FIRST_TOKEN_REUSE=1"""
 
         if scheduler_config.async_scheduling:
             if speculative_config is not None:
