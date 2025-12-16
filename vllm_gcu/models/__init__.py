@@ -29,6 +29,7 @@ def register_custom_models():
     from vllm import ModelRegistry
     custom_configs = [
         ("step3v", "vllm_gcu.models.step3v.step3v_config", "Step3vConfig"),
+        ("hunyuan_vl", "vllm_gcu.models.hunyuan_vl.hunyuan_vl_config", "HunYuanVLConfig"),
     ]
 
     for name, module_name, class_name in custom_configs:
@@ -51,6 +52,7 @@ def register_custom_models():
     ModelRegistry.register_model("Qwen3NextForCausalLM", "vllm_gcu.models.qwen3_next.qwen3_next:Qwen3NextForCausalLM")
     ModelRegistry.register_model("HunYuanDenseV1ForCausalLM", "vllm_gcu.models.hunyuan_v1:HunYuanDenseV1ForCausalLM")
     ModelRegistry.register_model("HunYuanMoEV1ForCausalLM", "vllm_gcu.models.hunyuan_v1:HunYuanMoEV1ForCausalLM")
+    ModelRegistry.register_model("HunYuanVLForConditionalGeneration", "vllm_gcu.models.hunyuan_vl.hunyuan_vision:HunYuanVLForConditionalGeneration")
 
     ModelRegistry.register_model("KeyeVL1_5ForConditionalGeneration", "vllm_gcu.models.keye_vl:KeyeVL1_5ForConditionalGeneration")#gitleaks:allow
     ModelRegistry.register_model("Qwen2VLForConditionalGeneration", "vllm_gcu.models.qwen2_vl:Qwen2VLForConditionalGeneration")

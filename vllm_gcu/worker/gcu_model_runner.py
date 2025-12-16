@@ -6,7 +6,7 @@ import time
 from unittest.mock import patch
 import numpy as np
 import torch
-from vllm.utils import cdiv
+from vllm.utils import (cdiv, length_from_prompt_token_ids_or_embeds)
 from vllm.v1.attention.backends.utils import AttentionCGSupport
 from vllm.compilation.counter import compilation_counter
 from vllm.compilation.monitor import set_cudagraph_capturing_enabled
@@ -240,6 +240,14 @@ class GCUModelRunner(GPUModelRunner):
 
                 self.drafter = EagleProposerWithGraph(self.vllm_config,
                                                     self.device, self)
+        
+        self.uses_xdrope_dim = self.model_config.uses_xdrope_dim
+        # Only relevant for models using XD-RoPE (e.g, HunYuan-VL)
+        if self.uses_xdrope_dim > 0:
+            # Similar to mrope but use assigned dimension number for RoPE, 4 as default.
+            self.xdrope_positions = self._make_buffer(
+                (self.uses_xdrope_dim, self.max_num_tokens + 1), dtype=torch.int64
+            )
 
     def get_spec_k(self):
         if not self.vllm_config.additional_config["deepseek_fused_mtp"] \
@@ -568,6 +576,10 @@ class GCUModelRunner(GPUModelRunner):
         # Only relevant for models using M-RoPE (e.g, Qwen2-VL)
         if self.uses_mrope:
             self._calc_mrope_positions(scheduler_output)
+        # Calculate XD-RoPE positions.
+        # Only relevant for models using XD-RoPE (e.g, HunYuan-VL)
+        if self.uses_xdrope_dim > 0:
+            self._calc_xdrope_positions(scheduler_output)
         # Get token indices.
         # E.g., [0, 1, 0, 1, 2, 3, 4, 0, 1, 2]
         # -> [0, 1, M, M + 1, M + 2, M + 3, M + 4, 2 * M, 2 * M + 1, 2 * M + 2]
@@ -671,6 +683,12 @@ class GCUModelRunner(GPUModelRunner):
             self.mrope_positions.gpu[:, :total_num_scheduled_tokens].copy_(
                 self.mrope_positions.cpu[:, :total_num_scheduled_tokens],
                 non_blocking=True)
+        elif self.uses_xdrope_dim > 0:
+            # Only relevant for models using XD-RoPE (e.g, HunYuan-VL)
+            self.xdrope_positions.gpu[:, :total_num_scheduled_tokens].copy_(
+                self.xdrope_positions.cpu[:, :total_num_scheduled_tokens],
+                non_blocking=True,
+            )
         else:
             # Common case (1D positions)
             self.positions.copy_to_gpu(total_num_scheduled_tokens)
@@ -1177,6 +1195,29 @@ class GCUModelRunner(GPUModelRunner):
                 self.input_batch.block_table.compute_slot_mapping_device(
                             req_indices,
                             self.positions.gpu[:total_num_scheduled_tokens])
+
+    def _update_states(self, scheduler_output: "SchedulerOutput") -> None:
+        super()._update_states(scheduler_output)
+        
+        if self.uses_xdrope_dim > 0:
+            for new_req_data in scheduler_output.scheduled_new_reqs:
+                req_id = new_req_data.req_id
+                req_state = self.requests[req_id]
+                self._init_xdrope_positions(req_state)
+
+    def _init_xdrope_positions(self, req_state: CachedRequestState):
+        model = self.get_model()
+        assert req_state.prompt_token_ids is not None, (
+            "XD-RoPE requires prompt_token_ids to be available."
+        )
+        # Check if model supports XD-RoPE by verifying method existence
+        assert hasattr(model, 'get_xdrope_input_positions'), \
+            "XD-RoPE support is not implemented."
+
+        req_state.xdrope_positions = model.get_xdrope_input_positions(
+            req_state.prompt_token_ids,
+            req_state.mm_features,
+        )
 
     @topstx_wrapper
     def _bookkeeping_sync(
@@ -1688,6 +1729,8 @@ class GCUModelRunner(GPUModelRunner):
 
             if self.uses_mrope:
                 positions = self.mrope_positions.gpu[:, :num_tokens]
+            elif self.uses_xdrope_dim > 0:
+                positions = self.xdrope_positions.gpu[:, :num_tokens_after_padding]
             else:
                 positions = self.positions.gpu[:num_tokens]
 
@@ -1820,7 +1863,107 @@ class GCUModelRunner(GPUModelRunner):
     ) -> tuple[int, int, Optional[torch.Tensor], Optional[torch.Tensor],
                Optional[torch.Tensor], torch.Tensor,
                Optional[IntermediateTensors], dict[str, Any]]:
-        return super()._preprocess(scheduler_output, intermediate_tensors, ubatch_slices, num_tokens_after_padding)
+        
+        num_scheduled_tokens = scheduler_output.total_num_scheduled_tokens
+        if ubatch_slices:
+            assert num_tokens_after_padding is not None
+            num_input_tokens = int(num_tokens_after_padding[0].item() * 2)
+            self.pad_out_ubatch_slice(ubatch_slices, num_input_tokens)
+        elif ubatch_slices is None:
+            num_input_tokens = self._get_num_input_tokens(num_scheduled_tokens)
+            num_pad, num_tokens_after_padding = self.get_dp_padding(
+                num_input_tokens)
+            num_input_tokens += num_pad
+
+        # _prepare_inputs may reorder the batch, so we must gather multi
+        # modal outputs after that to ensure the correct order
+        if (self.supports_mm_inputs and get_pp_group().is_first_rank
+                and not self.model_config.is_encoder_decoder):
+            # Run the multimodal encoder if any.
+            self._execute_mm_encoder(scheduler_output)
+            mm_embeds = self._gather_mm_embeddings(scheduler_output)
+
+            # NOTE(woosuk): To unify token ids and soft tokens (vision
+            # embeddings), we always use embeddings (rather than token ids)
+            # as input to the multimodal model, even when the input is text.
+            inputs_embeds_scheduled = self.model.get_input_embeddings(
+                input_ids=self.input_ids.gpu[:num_scheduled_tokens],
+                multimodal_embeddings=mm_embeds or None,
+            )
+
+            # TODO(woosuk): Avoid the copy. Optimize.
+            self.inputs_embeds.gpu[:num_scheduled_tokens].copy_(
+                inputs_embeds_scheduled)
+
+            input_ids = None
+            inputs_embeds = self.inputs_embeds.gpu[:num_input_tokens]
+            model_kwargs = {
+                **self._init_model_kwargs(num_scheduled_tokens),
+                **self._extract_mm_kwargs(scheduler_output),
+            }
+        elif self.enable_prompt_embeds and get_pp_group().is_first_rank:
+            # Get the input embeddings for the tokens that are not input embeds,
+            # then put them into the appropriate positions.
+            # TODO(qthequartermasterman): Since even when prompt embeds are
+            # enabled, (a) not all requests will use prompt embeds, and (b)
+            # after the initial prompt is processed, the rest of the generated
+            # tokens will be token ids, it is not desirable to have the
+            # embedding layer outside of the CUDA graph all the time. The v0
+            # engine avoids this by "double compiling" the CUDA graph, once
+            # with input_ids and again with inputs_embeds, for all num_tokens.
+            # If a batch only has token ids, then including the embedding layer
+            # in the CUDA graph will be more performant (like in the else case
+            # below).
+            token_ids_idx = self.is_token_ids.gpu[:num_scheduled_tokens] \
+                .nonzero(as_tuple=False) \
+                .squeeze(1)
+            # Some tokens ids may need to become embeds
+            if token_ids_idx.numel() > 0:
+                token_ids = self.input_ids.gpu[token_ids_idx]
+                tokens_to_embeds = self.model.get_input_embeddings(
+                    input_ids=token_ids)
+                self.inputs_embeds.gpu[token_ids_idx] = tokens_to_embeds
+
+            inputs_embeds = self.inputs_embeds.gpu[:num_input_tokens]
+            model_kwargs = self._init_model_kwargs(num_input_tokens)
+            input_ids = None
+        else:
+            # For text-only models, we use token ids as input.
+            # While it is possible to use embeddings as input just like the
+            # multimodal models, it is not desirable for performance since
+            # then the embedding layer is not included in the CUDA graph.
+            input_ids = self.input_ids.gpu[:num_input_tokens]
+            inputs_embeds = None
+            model_kwargs = self._init_model_kwargs(num_input_tokens)
+        
+        if self.uses_mrope:
+            positions = self.mrope_positions.gpu[:, :num_input_tokens]
+        elif self.uses_xdrope_dim > 0:
+            positions = self.xdrope_positions.gpu[:, :num_input_tokens]
+        else:
+            positions = self.positions.gpu[:num_input_tokens]
+
+        if get_pp_group().is_first_rank:
+            intermediate_tensors = None
+        else:
+            intermediate_tensors = self.sync_and_slice_intermediate_tensors(
+                num_input_tokens, intermediate_tensors, True)
+
+        if (self.model_config.is_encoder_decoder
+                and scheduler_output.scheduled_encoder_inputs):
+            encoder_inputs = self._extract_encoder_inputs(scheduler_output)
+            model_kwargs.update(encoder_inputs)
+
+        return (
+            num_scheduled_tokens,
+            num_input_tokens,
+            num_tokens_after_padding,
+            input_ids,
+            inputs_embeds,
+            positions,
+            intermediate_tensors,
+            model_kwargs,
+        )
 
     def _sample(
         self, logits: Optional[torch.Tensor],
@@ -2193,6 +2336,55 @@ class GCUModelRunner(GPUModelRunner):
         self._draft_token_ids = None
         return DraftTokenIds(req_ids, draft_token_ids)
 
+    def _calc_xdrope_positions(self, scheduler_output: "SchedulerOutput"):
+        xdrope_pos_ptr = 0
+        for index, req_id in enumerate(self.input_batch.req_ids):
+            req = self.requests[req_id]
+            assert req.xdrope_positions is not None
+
+            num_computed_tokens = self.input_batch.num_computed_tokens_cpu[index]
+            num_scheduled_tokens = scheduler_output.num_scheduled_tokens[req_id]
+            num_prompt_tokens = length_from_prompt_token_ids_or_embeds(
+                req.prompt_token_ids, req.prompt_embeds
+            )
+
+            if num_computed_tokens + num_scheduled_tokens > num_prompt_tokens:
+                prompt_part_len = max(0, num_prompt_tokens - num_computed_tokens)
+                completion_part_len = max(0, num_scheduled_tokens - prompt_part_len)
+            else:
+                prompt_part_len = num_scheduled_tokens
+                completion_part_len = 0
+
+            assert num_scheduled_tokens == prompt_part_len + completion_part_len
+
+            if prompt_part_len > 0:
+                # prompt's xdrope_positions are pre-computed
+                dst_start = xdrope_pos_ptr
+                dst_end = xdrope_pos_ptr + prompt_part_len
+                src_start = num_computed_tokens
+                src_end = num_computed_tokens + prompt_part_len
+
+                self.xdrope_positions.cpu[:, dst_start:dst_end] = req.xdrope_positions[
+                    :, src_start:src_end
+                ]
+                xdrope_pos_ptr += prompt_part_len
+
+            if completion_part_len > 0:
+                # compute completion's xdrope_positions on-the-fly
+                dst_start = xdrope_pos_ptr
+                dst_end = xdrope_pos_ptr + completion_part_len
+                context_len=num_computed_tokens + prompt_part_len
+                num_new_tokens=completion_part_len
+
+                values = np.arange(
+                    context_len,
+                    context_len + num_new_tokens,
+                    dtype=self.xdrope_positions.np.dtype,
+                )
+                self.xdrope_positions.np[:, dst_start : dst_start + num_new_tokens] = values
+
+                xdrope_pos_ptr += completion_part_len
+    
     def _calc_spec_decode_metadata(
         self,
         num_draft_tokens: np.ndarray,
