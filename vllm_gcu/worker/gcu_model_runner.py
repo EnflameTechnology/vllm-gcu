@@ -1369,7 +1369,9 @@ class GCUModelRunner(GPUModelRunner):
 
     def initialize_cudagraph_capture(self) -> None:
         super().initialize_cudagraph_capture()
-        if 0 in self.cudagraph_batch_sizes:
+        cudagraph_mode = self.compilation_config.cudagraph_mode
+        if cudagraph_mode.decode_mode() == CUDAGraphMode.FULL \
+            and cudagraph_mode.separate_routine() and 0 in self.cudagraph_batch_sizes:
             self.cudagraph_dispatcher.add_cudagraph_key(
                 CUDAGraphMode.FULL,
                 BatchDescriptor(num_tokens=0, uniform_decode=True))
