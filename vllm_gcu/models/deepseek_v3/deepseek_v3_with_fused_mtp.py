@@ -93,6 +93,7 @@ from vllm_gcu.kernels.rejection_sampler import GCURejectionSampler as RejectionS
 from vllm.v1.sample.logits_processor.state import LogitsProcessors
 from vllm.platforms import current_platform
 from vllm.utils import direct_register_custom_op
+from vllm_gcu.attention.backends.mla_v1 import GCUMLADecodeMetadata
 
 
 def custom_pass(graph: torch.fx.Graph) -> torch.fx.Graph:
@@ -1157,6 +1158,7 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
         self.accepted_lens = torch.full((max_num_seq, ),  1, dtype=torch.int32, device=device)
         self.draft_tokens = torch.full((max_num_seq, self.num_speculative_tokens),  0, dtype=torch.int32, device=device)
         self.mtp_input_ids = torch.empty(max_num_batched_tokens, dtype=torch.int32, device=device)
+        self.arange = torch.arange(max_num_seq+1, device=device, dtype=torch.int32)
     def set_eplb_state(
         self,
         expert_load_view: torch.Tensor,
@@ -1324,9 +1326,38 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
         mtp_hidden_states = ds_hidden_states
         decode_last_sample = query_start_loc[:-1] + accepted_lens - 1
 
-        for i in range(spec_k):
+        mtp_hidden_states = self.model.forward_mtp(
+            input_ids=mtp_input_ids.to(torch.int32),
+            positions=mtp_positions,
+            inputs_embeds=None,
+            previous_hidden_states=mtp_hidden_states,
+            spec_step_idx=0,
+        )
+        mtp_logits = self.compute_logits(mtp_hidden_states, is_mtp_layer=True)
+
+        mtp_token_ids = torch.argmax(mtp_logits, dim=-1, keepdim=True)
+        draft_token = torch.index_select(mtp_token_ids, dim=0, index=decode_last_sample).squeeze(-1)
+        draft_tokens[:, 0] = draft_token
+            
+        # loops for spec_k > 1; we only support spec_k = 1 & 2 for now
+        for i in range(1, spec_k):
+            mtp_input_ids = draft_token
+            mtp_positions += 1
+            attn_metadata.slot_mapping += 1
+            if i == 1:
+                mtp_positions = torch.index_select(mtp_positions, dim=0, index=decode_last_sample)
+                mtp_hidden_states = torch.index_select(mtp_hidden_states, dim=0, index=decode_last_sample)
+                attn_metadata.slot_mapping = torch.index_select(attn_metadata.slot_mapping, dim=0, index=decode_last_sample)
+            attn_metadata.decode.seq_lens += 1
+            attn_metadata.decode.max_decode_seq_len += 1
+            attn_metadata.max_query_len = 1
+            attn_metadata.query_start_loc = self.arange[:bsz+1]
+            attn_metadata.num_actual_tokens = bsz
+            attn_metadata.num_decode_tokens = bsz
+
+            # mtpstep2
             mtp_hidden_states = self.model.forward_mtp(
-                input_ids=mtp_input_ids,
+                input_ids=mtp_input_ids.to(torch.int32),
                 positions=mtp_positions,
                 inputs_embeds=None,
                 previous_hidden_states=mtp_hidden_states,
@@ -1335,13 +1366,8 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
             mtp_logits = self.compute_logits(mtp_hidden_states, is_mtp_layer=True)
 
             mtp_token_ids = torch.argmax(mtp_logits, dim=-1, keepdim=True)
-
-            torch.index_select(mtp_token_ids, 0, decode_last_sample, out=draft_tokens)
-            
-            # we only support mtp1 for now
-            if spec_k == 1:
-                break
-            mtp_input_ids = mtp_token_ids
+            draft_token = mtp_token_ids.squeeze(-1)
+            draft_tokens[:, i] = draft_token
         return selected_tokens, accepted_tokens, accepted_lens, draft_tokens
 
     def fused_mtp_prefill_decode(self,
@@ -1440,24 +1466,70 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
         
         draft_tokens = self.draft_tokens[:num_decodes + num_prefills].fill_(0)
 
+        # mtp step 1
         mtp_hidden_states = self.model.forward_mtp(
-            input_ids=mtp_input_ids,
+            input_ids=mtp_input_ids.to(torch.int32),
             positions=mtp_positions,
             inputs_embeds=None,
             previous_hidden_states=mtp_hidden_states,
             spec_step_idx=0,
         )
         decode_last_sample = query_start_loc[:num_decodes] + accepted_lens[:num_decodes] - 1
-
         mtp_logits_index = torch.cat((decode_last_sample, prefill_last_sample))
-
-        mtp_hidden_states = torch.index_select(mtp_hidden_states, 0, mtp_logits_index)
-
+        mtp_hidden_states = torch.index_select(mtp_hidden_states, dim=0, index=mtp_logits_index)
         mtp_logits = self.compute_logits(mtp_hidden_states, is_mtp_layer=True)
-
         mtp_token_ids = torch.argmax(mtp_logits, dim=-1, keepdim=True)
+        draft_token = mtp_token_ids.squeeze(-1)
+        draft_tokens[:,0] = draft_token
 
-        draft_tokens[:] = mtp_token_ids
+        # loops for spec_k > 1; we only support spec_k = 1 & 2 for now
+        for i in range(1, spec_k):
+            mtp_input_ids = draft_token
+            mtp_positions += 1
+            attn_metadata.slot_mapping += 1
+            if i == 1:
+                mtp_positions = torch.index_select(mtp_positions, dim=0, index=mtp_logits_index)
+                attn_metadata.slot_mapping = torch.index_select(attn_metadata.slot_mapping, dim=0, index=mtp_logits_index)
+            attn_metadata.max_query_len = 1
+            attn_metadata.query_start_loc = self.arange[:num_decodes+num_prefills+1]
+            attn_metadata.num_actual_tokens = num_decodes+num_prefills
+            attn_metadata.num_decode_tokens = num_decodes+num_prefills
+            if num_decodes:
+                attn_metadata.decode.seq_lens += 1
+                attn_metadata.decode.max_decode_seq_len += 1
+                if num_prefills:
+                    step_k_query_start_loc = attn_metadata.prefill.query_start_loc
+                    step_k_seq_lens = step_k_query_start_loc[1:] - step_k_query_start_loc[:-1] + 1
+                    attn_metadata.decode.seq_lens = torch.cat((attn_metadata.decode.seq_lens, step_k_seq_lens))
+                    attn_metadata.decode.block_table = torch.cat((attn_metadata.decode.block_table, attn_metadata.prefill.block_table),0)
+            else:
+                step_k_query_start_loc = attn_metadata.prefill.query_start_loc
+                step_k_block_table = attn_metadata.prefill.block_table
+                step_k_seq_lens = step_k_query_start_loc[1:] - step_k_query_start_loc[:-1] + 1
+                attn_metadata.decode = GCUMLADecodeMetadata(
+                    block_table=step_k_block_table,
+                    seq_lens=step_k_seq_lens,
+                    max_decode_seq_len=step_k_seq_lens.max().item(),
+                    tile_scheduler_metadata=None,
+                    num_splits=None
+                )
+            num_decodes += num_prefills
+            num_prefills = 0
+            attn_metadata.num_decodes = num_decodes
+            attn_metadata.num_prefills = num_prefills
+            attn_metadata.prefill = None
+            mtp_hidden_states = self.model.forward_mtp(
+                input_ids=mtp_input_ids.to(torch.int32),
+                positions=mtp_positions,
+                inputs_embeds=None,
+                previous_hidden_states=mtp_hidden_states,
+                spec_step_idx=i,
+            )
+            mtp_hidden_states_for_logits = mtp_hidden_states
+            mtp_logits = self.compute_logits(mtp_hidden_states_for_logits, is_mtp_layer=True)
+            mtp_token_ids = torch.argmax(mtp_logits, dim=-1, keepdim=True)
+            draft_token = mtp_token_ids.squeeze(-1)
+            draft_tokens[:,i] = draft_token
         
         return selected_tokens, accepted_tokens, accepted_lens, draft_tokens
 
