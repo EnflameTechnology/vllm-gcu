@@ -1254,12 +1254,19 @@ class GCUModelRunner(GPUModelRunner):
                 for i, req_id in enumerate(self.input_batch.req_ids)
                 if i not in invalid_req_indices_set
             }
-            scheduled_num_spec_tokens = [
-                len(scheduler_output.scheduled_spec_decode_tokens.get(req_id, []))
-                for i, req_id in enumerate(self.input_batch.req_ids)
-                if i not in invalid_req_indices_set
-            ]
-            self.input_batch.prev_num_tokens_to_verify = torch.tensor(scheduled_num_spec_tokens, dtype=torch.int32, pin_memory=self.pin_memory).to(self.device, non_blocking=True)
+            num_draft_tokens = []
+            for i, req_id in enumerate(self.input_batch.req_ids):
+                if i not in invalid_req_indices_set:
+                    num_draft_tokens.append(
+                        1 + len(scheduler_output.scheduled_spec_decode_tokens.get(req_id, []))
+                    )
+                else:
+                    num_draft_tokens.append(0)
+
+            self.input_batch.prev_num_sampled_tokens = torch.tensor(
+                num_draft_tokens,
+                dtype=torch.int32,
+                pin_memory=self.pin_memory).to(self.device, non_blocking=True)
 
         # Cache the sampled tokens in the model runner, so that the scheduler
         # doesn't need to send them back.
@@ -2304,7 +2311,7 @@ class GCUModelRunner(GPUModelRunner):
         prev_num_reqs, prev_max_gen_len = self.input_batch.prev_sampled_token_ids.shape
         prev_num_rejected_tokens = torch.zeros([prev_num_reqs], dtype=torch.int32, device=self.device)
         if self.input_batch.prev_valid_sampled_tokens_count is not None:
-            prev_num_rejected_tokens = (self.input_batch.prev_valid_sampled_tokens_count - self.input_batch.prev_num_tokens_to_verify).to(torch.int32)
+            prev_num_rejected_tokens = (self.input_batch.prev_valid_sampled_tokens_count - self.input_batch.prev_num_sampled_tokens).to(torch.int32)
 
         # Async scheduling case, where some decode requests from the previous
         # iteration won't have entries in input_ids_cpu and need to be copied
