@@ -1,0 +1,11 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vllm_gcu_mocks"
+version = "1.0.0"
+requires-python = ">=3.8"
+
+[project.entry-points."vllm.general_plugins"]
+register_mock_models = "vllm_gcu_mocks:register_mock_models"

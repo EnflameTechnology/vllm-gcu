@@ -1568,20 +1568,17 @@ class GCUModelRunner(GPUModelRunner):
             assert not uniform_decode
             # Create mixed batch:
             # first half decode tokens, second half one prefill
-            num_decode_tokens = num_tokens // 2
+            num_decode_tokens = min(max_num_reqs - 1, num_tokens // 2)
             num_prefill_tokens = num_tokens - num_decode_tokens
             num_reqs = num_decode_tokens + 1
 
             # Create decode requests (1 token each) followed by prefill request
-            num_scheduled_tokens_list = [1] * num_decode_tokens + [
-                num_prefill_tokens
-            ]
+            num_scheduled_tokens_list = [1] * num_decode_tokens + [num_prefill_tokens]
             # Note: Overriding max_query_len to be the prefill tokens
             max_query_len = num_prefill_tokens
         elif uniform_decode:
-            num_reqs = cdiv(num_tokens, max_query_len)
-            assert num_reqs <= max_num_reqs, \
-                "Do not capture num_reqs > max_num_reqs for uniform batch"
+            assert not create_mixed_batch
+            num_reqs = min(max_num_reqs, cdiv(num_tokens, max_query_len))
             num_scheduled_tokens_list = [max_query_len] * num_reqs
             if num_tokens % max_query_len != 0:
                 num_scheduled_tokens_list[-1] = num_tokens % max_query_len
@@ -1636,7 +1633,6 @@ class GCUModelRunner(GPUModelRunner):
         # it only happens for cudagraph_runtime_mode=FULL.
         logits_indices = torch.empty(num_reqs, dtype=torch.int32, device=self.device)
         if force_attention or cudagraph_runtime_mode == CUDAGraphMode.FULL:
-            assert not is_profile, "profile_run must run under non-graph"
             attn_metadata = {}
             if ubatch_slices is not None:
                 attn_metadata = [dict() for _ in range(len(ubatch_slices))]
