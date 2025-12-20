@@ -176,6 +176,7 @@ class DeepseekV2Attention(nn.Module):
                                         self.hidden_size,
                                         bias=False,
                                         quant_config=quant_config,
+                                        reduce_results=not gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL,
                                         prefix=f"{prefix}.o_proj")
         if rope_scaling:
             rope_scaling["rope_type"] = 'deepseek_yarn'
@@ -693,6 +694,7 @@ class DeepseekV2MLAAttention(nn.Module):
                                         self.hidden_size,
                                         bias=False,
                                         quant_config=quant_config,
+                                        reduce_results=not gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL,
                                         prefix=f"{prefix}.o_proj")
 
         if rope_scaling:
@@ -1130,6 +1132,14 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts,
         for name, loaded_weight in weights:
             if "rotary_emb.inv_freq" in name:
                 continue
+
+            # must change name when shared experts in compile mode
+            if "mlp.shared_experts" in name and name not in params_dict:
+                if self.quant_config is not None:
+                    name = name.replace(
+                        "mlp.shared_experts", "mlp.shared_experts._orig_mod"
+                    )
+            # #
 
             spec_layer = get_spec_layer_idx_from_weight_name(self.config, name)
             if spec_layer is not None:
