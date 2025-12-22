@@ -191,4 +191,111 @@ evalscope perf \
 *  本模型支持的`max-model-len`为262144；
 *  `prompt-length`、`tokens`和`parallel`可按需调整；
 
+### Qwen3-VL-8B-Instruct
 
+#### 模型下载
+*  url: [Qwen3-VL-8B-Instruct](https://modelscope.cn/models/Qwen/Qwen3-VL-8B-Instruct/files)
+
+*  branch: `master`
+
+*  commit id: `4d44d86e`
+
+将上述url设定的路径下的内容全部下载到`Qwen3-VL-8B-Instruct`文件夹中。
+注：需要安装以下依赖：
+
+```shell
+python3 -m pip install transformers==4.57.3
+
+```
+#### 环境变量
+
+```
+export TORCHGCU_INDUCTOR_ENABLE=0
+export PYTORCH_EFML_BASED_GCU_CHECK=1
+export TORCH_ECCL_AVOID_RECORD_STREAMS=1
+export VLLM_USE_V1=1
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export VLLM_ATTENTION_BACKEND=FLASH_ATTN
+```
+
+#### 在线测试
+```shell
+# 启动服务器
+vllm serve "[path of Qwen3-VL-8B-Instruct]" \
+  --served-model-name Qwen3-VL-8B-Instruct \
+  --max-model-len 128000 \
+  --disable-log-requests \
+  --gpu-memory-utilization 0.9 \
+  --dtype=bfloat16 \
+  --block-size=64 \
+  --no-enable-prefix-caching \
+  --async-scheduling \
+  --compilation_config '{"cudagraph_mode":"FULL"}' \
+  --trust-remote-code \
+  --limit-mm-per-prompt.image=6 \
+  --port 8990
+
+# 启动客户端
+IMAGE_PATH="demo.jpeg"
+curl -L -O https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/$IMAGE_PATH
+IMAGE_BASE64=$(base64 -w 0 "$IMAGE_PATH")
+
+curl -X POST http://localhost:8990/v1/chat/completions   -H "Content-Type: application/json"  \
+-d @- <<EOF
+{
+    "model": "Qwen3-VL-8B-Instruct",
+    "messages": [
+        {
+         "role": "user",
+          "content": [
+            {"type": "text", "text": "Describe this image."},
+            {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,$IMAGE_BASE64"}}
+          ]
+        }
+    ],
+    "max_tokens": 1024
+}
+EOF
+
+```
+
+#### 性能测试
+
+```shell
+# 启动服务端
+vllm serve "[path of Qwen3-VL-8B-Instruct]" \
+  --max-model-len 128000 \
+  --disable-log-requests \
+  --gpu-memory-utilization 0.9 \
+  --dtype=bfloat16 \
+  --block-size=64 \
+  --no-enable-prefix-caching \
+  --async-scheduling \
+  --compilation_config '{"cudagraph_mode":"FULL"}' \
+  --trust-remote-code \
+  --limit-mm-per-prompt.image=6 \
+  --port 8990
+
+
+# 启动客户端
+evalscope perf \
+  --parallel 4 \
+  --number 40 \
+  --model [path of Qwen3-VL-8B-Instruct] \
+  --tokenizer-path [path of Qwen3-VL-8B-Instruct] \
+  --url http://localhost:8990/v1/chat/completions \
+  --api openai \
+  --dataset random_vl \
+  --min-tokens 100 \
+  --max-tokens 100 \
+  --prefix-length 0 \
+  --min-prompt-length 1200 \
+  --max-prompt-length 1200 \
+  --image-width 512 \
+  --image-height 512 \
+  --image-format RGB \
+  --image-num 1
+```
+注：
+*  本模型在 S60 上推荐的`max-model-len`为128000；
+*  `input-len`、`output-len`和`num-prompts`可按需调整；

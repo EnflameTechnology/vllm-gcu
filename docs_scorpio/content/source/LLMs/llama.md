@@ -87,8 +87,8 @@ vllm bench serve --model [path of Meta-Llama-3-8B-Instruct] \
     --backend vllm \
     --base-url "http://127.0.0.1:8990" \
     --dataset-name random \
-    --num-prompts 4 \
-    --max-concurrency 40 \
+    --num-prompts 40 \
+    --max-concurrency 4 \
     --random-input-len 2048 \
     --random-output-len 1024 \
     --trust-remote-code \
@@ -185,8 +185,8 @@ vllm bench serve --model [path of Meta-Llama-3-70B-Instruct] \
     --backend vllm \
     --base-url "http://127.0.0.1:8990" \
     --dataset-name random \
-    --num-prompts 4 \
-    --max-concurrency 40 \
+    --num-prompts 40 \
+    --max-concurrency 4 \
     --random-input-len 2048 \
     --random-output-len 1024 \
     --trust-remote-code \
