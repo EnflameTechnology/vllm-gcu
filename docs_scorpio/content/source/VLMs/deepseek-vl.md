@@ -31,7 +31,6 @@ export VLLM_GCU_DEEPSEEK_FUSION=0
 ```shell
 # 启动服务端
 vllm serve [path of deepseek-vl2] \
- --async-scheduling \
  --compilation_config '{"cudagraph_mode":"FULL"}' \
  --limit-mm-per-prompt '{"image": 6}' \
  --hf_overrides '{"architectures": ["DeepseekVLV2ForCausalLM"]}' \
@@ -72,7 +71,6 @@ EOF
 ```shell
 # 启动服务端
 vllm serve [path of deepseek-vl2] \
- --async-scheduling \
  --compilation_config '{"cudagraph_mode":"FULL"}' \
  --limit-mm-per-prompt '{"image": 6}' \
  --hf_overrides '{"architectures": ["DeepseekVLV2ForCausalLM"]}' \
