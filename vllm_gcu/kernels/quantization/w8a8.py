@@ -168,6 +168,11 @@ class W8A8LinearMethod(LinearMethodBase):
         layer.weight.resize_(w.shape)
         layer.weight.data.copy_(w.data)
         layer.in_scales.data.reciprocal_()
+        # for3.0, w8a8(int8) only support bias is fp32 or None dtype
+        from vllm.platforms import current_platform
+        if hasattr(layer, 'bias') and (layer.bias is not None) and \
+            (not current_platform.has_device_capability(140)):
+            layer.bias.data = layer.bias.data.to(torch.float32)
 
     def apply(
         self,
