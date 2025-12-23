@@ -2553,7 +2553,7 @@ class GCUModelRunner(GPUModelRunner):
                     prev_index *
                     self.uniform_decode_query_len == flattened_index_start)
                 indices_match &= (req_tokens == self.uniform_decode_query_len)
-                max_flattened_index = max(max_flattened_index, flattened_index_start+req_tokens)
+                max_flattened_index = max(max_flattened_index, flattened_index_start+req_tokens-1)
         num_common_tokens = len(flattened_indices)
 
         # Upload the index tensors asynchronously
