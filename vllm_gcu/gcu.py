@@ -280,6 +280,9 @@ class GCUPlatform(Platform):
             scheduler_config.async_scheduling = async_scheduling
             logger.info("override async_scheduling of scheduler_config by additional_config")
 
+        if additional_config.get("tokenizer_mode", False):
+            model_config.tokenizer_mode = additional_config['tokenizer_mode']
+
         if scheduler_config.async_scheduling:
             if speculative_config is not None:
                 scheduler_config.scheduler_cls = "vllm_gcu.core.scheduler.AsyncScheduler"
