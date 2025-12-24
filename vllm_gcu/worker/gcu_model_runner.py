@@ -2136,7 +2136,7 @@ class GCUModelRunner(GPUModelRunner):
                 valid_sampled_tokens_count = model_output["accepted_lens"]
                 next_token_ids = model_output["next_token_ids"][:num_decodes+num_prefills]
 
-                self.prev_next_token_ids = next_token_ids.squeeze(1)
+                self.input_batch.prev_next_token_ids = next_token_ids.squeeze(1)
                 num_draft_tokens = [self.get_spec_k() + 1] * self.input_batch.num_reqs
                 if num_prefills > 0:
                     num_draft_tokens[num_decodes:] = [1] * num_prefills
@@ -2511,7 +2511,7 @@ class GCUModelRunner(GPUModelRunner):
             _draft_token_ids = self._draft_token_ids
             if _draft_token_ids.shape[0] == 0:
                 # for fused_mtp, prefill requests has no draft_tokens computed
-                _draft_token_ids = torch.zeros((self.prev_next_token_ids.shape[0], self.get_spec_k()),
+                _draft_token_ids = torch.zeros((self.input_batch.prev_next_token_ids.shape[0], self.get_spec_k()),
                                                 dtype = torch.int32, device = self.device)
             self.input_batch.prev_sampled_token_ids = torch.cat((
                 self.input_batch.prev_next_token_ids.unsqueeze(dim=1),
