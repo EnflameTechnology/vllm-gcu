@@ -4,6 +4,7 @@ from vllm.sampling_params import SamplingType
 from vllm.v1.worker.gpu_input_batch import InputBatch, CachedRequestState
 from vllm_gcu.kernels.rejection_sampler import GCURejectionSampler
 import vllm_gcu.envs as gcu_envs
+from vllm_gcu.utils import event_sync
 
 class GCUInputBatch(InputBatch):
 
@@ -66,7 +67,7 @@ class GCUInputBatch(InputBatch):
                 continue
             if sampled_token_ids is None:
                 assert self.async_copy_ready_event is not None
-                self.async_copy_ready_event.synchronize()
+                event_sync(self.async_copy_ready_event)
                 max_gen_len = self.sampled_token_ids_cpu.shape[-1]
                 if max_gen_len != 1:
                     sampled_token_ids = GCURejectionSampler.parse_output(

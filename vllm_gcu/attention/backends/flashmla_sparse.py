@@ -341,7 +341,8 @@ class FlashMLASparseMetadataBuilder(
         # Zero-fill for cudagraphs
         self.req_id_per_token_buffer.fill_(0)
         self.req_id_per_token_buffer[:req_id_per_token.shape[0]]\
-            .copy_(torch.from_numpy(req_id_per_token), non_blocking=True)
+            .copy_(torch.from_numpy(req_id_per_token).pin_memory(), \
+            non_blocking=True)
         req_id_per_token = self.req_id_per_token_buffer[:num_tokens]
 
         fp8_extra_metadata = None

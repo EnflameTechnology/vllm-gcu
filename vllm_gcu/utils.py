@@ -6,6 +6,7 @@ import contextlib
 from importlib.util import find_spec
 from functools import wraps, lru_cache
 from contextlib import contextmanager
+import time
 
 import torch
 from packaging import version
@@ -240,3 +241,7 @@ def topstx_wrapper(f):
         with get_tx_ctx(f.__name__, "green", "VLLM"):
             return f(*args, **kwargs)
     return inner
+
+def event_sync(event: torch.cuda.Event):
+    while not event.query():
+        time.sleep(0.001)
