@@ -1,10 +1,11 @@
 import torch
 from contextlib import nullcontext
-from typing import Callable, Optional
+from typing import Callable, Optional, Any
 from unittest.mock import patch
+from torch.cuda import device
 from vllm.utils import round_up
 
-from vllm.config import VllmConfig
+from vllm.config import VllmConfig, CUDAGraphMode
 from vllm.distributed import get_ep_group
 import vllm.envs as envs
 from vllm.utils import has_deep_gemm
@@ -38,7 +39,8 @@ def get_dp_padding_ubatch(
     if is_second_ubatch_empty(num_tokens_unpadded, num_tokens_padded):
         should_ubatch = False
 
-    num_tokens_across_dp = torch.tensor([num_tokens_per_ubatch], dtype=torch.int32)
+    num_tokens_across_dp = torch.tensor([num_tokens_per_ubatch],
+                                        dtype=torch.int32)
     return should_ubatch, num_tokens_across_dp
 
 
@@ -75,6 +77,15 @@ class SipControlContextManager(SMControlContextManager):
 
 
 class GCUUBatchWrapper(UBatchWrapper):
+
+    def __init__(self, runnable: Callable[..., Any], vllm_config: VllmConfig,
+                 runtime_mode: CUDAGraphMode, device: device):
+        super().__init__(runnable, vllm_config, runtime_mode, device)
+        self.query_start_loc_ubatch = [
+            torch.empty((vllm_config.scheduler_config.max_num_seqs + 1, ),
+                         device=device,
+                         dtype=torch.int32) for i in range(2)
+        ]
 
     @staticmethod
     def _create_sm_control_context(vllm_config: VllmConfig):
@@ -120,6 +131,81 @@ class GCUUBatchWrapper(UBatchWrapper):
             for i in metas:
                 i.context.forward_context.all2allv_threshold = forward_context.all2allv_threshold
         return metas
+
+    def __call__(self, *args, **kwargs):
+        forward_context = get_forward_context()
+        batch_descriptor = forward_context.batch_descriptor
+        ubatch_slices = forward_context.ubatch_slices
+        cudagraph_runtime_mode = forward_context.cudagraph_runtime_mode
+
+        # If there's no ubatching, just run the runnable object
+        if ubatch_slices is None:
+
+            # This is to account for the case where ubatching was aborted.
+            # When we capture full graphs we only capture one graph per shape,
+            # meaning that if we have a ubatched  cudagraph for the current
+            # num_tokens, we don't have a non-ubatched one. Without this
+            # check, the cudagraph wrapper will try to capture a cudagraph
+            # for this shape during a normal run.
+            if cudagraph_runtime_mode is CUDAGraphMode.FULL:
+                assert batch_descriptor is not None
+                if batch_descriptor.num_tokens in self.cudagraphs:
+                    cudagraph_runtime_mode = CUDAGraphMode.NONE
+
+            if cudagraph_runtime_mode in (CUDAGraphMode.NONE,
+                                          CUDAGraphMode.PIECEWISE):
+                return self.runnable(*args, **kwargs)
+            else:
+                assert self.cudagraph_wrapper is not None
+                return self.cudagraph_wrapper(*args, **kwargs)
+
+        attn_metadata = forward_context.attn_metadata
+        num_tokens = (ubatch_slices[0].token_slice.stop -
+                      ubatch_slices[0].token_slice.start) * 2
+        input_ids = kwargs['input_ids']
+        positions = kwargs['positions']
+        intermediate_tensors = kwargs['intermediate_tensors']
+        inputs_embeds = kwargs['inputs_embeds']
+        compute_stream = torch.cuda.current_stream()
+
+        dp_metadata = forward_context.dp_metadata
+
+        # We shouldn't be here unless we are running with multiple DP ranks
+        # assert dp_metadata is not None
+        ubatch_metadata = self._make_ubatch_metadata(
+                ubatch_slices=ubatch_slices,
+                attn_metadata=attn_metadata,
+                input_ids=input_ids,
+                positions=positions,
+                intermediate_tensors=intermediate_tensors,
+                inputs_embeds=inputs_embeds,
+                compute_stream=compute_stream,
+                dp_metadata=dp_metadata,
+                batch_descriptor=batch_descriptor,
+                cudagraph_runtime_mode=CUDAGraphMode.NONE)
+
+        for idx, meta in enumerate(ubatch_metadata):
+            attn_metadata = meta.context.forward_context.attn_metadata
+            if attn_metadata is not None:
+                for layer_idx, name in enumerate(attn_metadata):
+                    n = attn_metadata[name].query_start_loc.shape[0]
+                    if layer_idx == 0:
+                        self.query_start_loc_ubatch[idx][:n].copy_(attn_metadata[name].query_start_loc)
+                    attn_metadata[name].query_start_loc = self.query_start_loc_ubatch[idx][:n]
+
+        if num_tokens not in self.cudagraphs \
+            and cudagraph_runtime_mode is CUDAGraphMode.FULL:
+
+            with self.sm_control:
+                return self._capture_ubatches(ubatch_metadata, self.model)
+        elif num_tokens in self.cudagraphs \
+            and cudagraph_runtime_mode is CUDAGraphMode.FULL:
+            cudagraph_metadata = self.cudagraphs[num_tokens]
+            cudagraph_metadata.cudagraph.replay()
+            return cudagraph_metadata.outputs
+        else:
+            with self.sm_control:
+                return self._run_ubatches(ubatch_metadata, self.model)
 
 
 patch('vllm.v1.worker.gpu_ubatch_wrapper.UBatchWrapper',

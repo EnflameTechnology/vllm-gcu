@@ -141,7 +141,7 @@ class GCUMLAMetadataBuilder(MLACommonMetadataBuilder[GCUMLAMetadata]):
         if hasattr(self, 'max_seq_len'):
             max_seq_len = self.max_seq_len
         elif seq_lens_cpu is not None:
-            max_seq_len = seq_lens_cpu.max()
+            max_seq_len = seq_lens_cpu.max().item()
         else:
             max_seq_len = seq_lens_device.max().item()
 

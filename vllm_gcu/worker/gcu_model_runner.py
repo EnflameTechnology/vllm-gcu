@@ -687,6 +687,9 @@ class GCUModelRunner(GPUModelRunner):
                             ubatch_slices, common_attn_metadata)
                         for ubid, common_attn_metadata in enumerate(
                                 common_attn_metadata_list):
+                            # set back max_seq_len=max_model_len for attn backends need it,
+                            # for cudagraph compatibility
+                            common_attn_metadata.max_seq_len = self.max_model_len
                             assert common_attn_metadata.max_query_len == 1
                             attn_metadata_i = (attn_group\
                                                .get_metadata_builder(ubatch_id=ubid)\
