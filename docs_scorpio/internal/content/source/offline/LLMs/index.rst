@@ -8,3 +8,5 @@
    :glob:
 
    lists
+   deepseek
+   llama
