@@ -212,6 +212,11 @@ class DeepSeekMTP(nn.Module):
                 ("qkv_a_proj_with_mqa", "q_a_proj", 0),
                 ("qkv_a_proj_with_mqa", "kv_a_proj_with_mqa", 1),
             ]
+        else:
+            stacked_params_mapping += [
+                ("fused_qkv_a_proj", "q_a_proj", 0),
+                ("fused_qkv_a_proj", "kv_a_proj_with_mqa", 1),
+            ]
 
         expert_params_mapping = FusedMoE.make_expert_params_mapping(
             ckpt_gate_proj_name="gate_proj",
