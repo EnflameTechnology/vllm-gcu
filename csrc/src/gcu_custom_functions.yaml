@@ -293,3 +293,6 @@
 
 - func: get_token_bin_counts_and_mask(Tensor(a!) bin_counts, Tensor(a!) mask, Tensor tokens, int vocab_size, int num_seqs) -> ()
   variants: function
+
+- func: cp_gather_indexer_k_quant_cache(Tensor kv_cache, Tensor(a!) dst_value, Tensor(a!) dst_scale, Tensor block_table, Tensor cu_seq_lens) -> ()
+  variants: function
