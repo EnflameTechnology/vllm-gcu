@@ -80,7 +80,7 @@
             "UBUNTU_DEFAULT": {
                 "X86_DEFAULT": {
                     "DEFAULT": "artifact.enflame.cn/enflame_docker_images/ubuntu/test_2404_vllm:1.0.1",
-                    "COVERAGE": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2404_gcc13_codecov:0.0.1"
+                    "COVERAGE": "artifact.enflame.cn/enflame_docker_images/ubuntu/qic_ubuntu_2404_gcc13_codecov:1.0.0"
                 }
             }
         }
