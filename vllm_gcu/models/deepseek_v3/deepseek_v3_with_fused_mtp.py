@@ -1222,6 +1222,8 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
                    torch.empty((draft_tokens.shape[0]), dtype = torch.int32, device = draft_tokens.device), \
                    torch.empty_like(draft_tokens), \
                    torch.empty((draft_tokens.shape[0], 1), dtype = torch.int32, device = draft_tokens.device)
+                #    torch.empty((ds_hidden_states.shape[0],129280), device = draft_tokens.device)
+
         if isinstance(attn_metadata, dict):
             attn_metadata = attn_metadata[self.layer_name]
 
@@ -1581,6 +1583,8 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
             "next_draft_tokens": draft_tokens,
             # (num_decodes + num_prefills, spec_k + 1)
             "next_token_ids": next_token_ids,
+            "hidden_states": hidden_states,
+            "logist": torch.empty_like(hidden_states)
         })
 
     def compute_logits(
@@ -1819,7 +1823,8 @@ def fused_mtp_fake(ds_hidden_states: torch.Tensor,
                    torch.empty((draft_tokens.shape[0], draft_tokens.shape[-1] + 1), dtype = torch.int32, device = draft_tokens.device),\
                    torch.empty((draft_tokens.shape[0]), dtype = torch.int32, device = draft_tokens.device), \
                    torch.empty_like(draft_tokens), \
-                   torch.empty((draft_tokens.shape[0], 1), dtype = torch.int32, device = draft_tokens.device)
+                   torch.empty((draft_tokens.shape[0], 1), dtype = torch.int32, device = draft_tokens.device), \
+                #    torch.empty((ds_hidden_states.shape[0],129280), device = draft_tokens.device)
 
 
 direct_register_custom_op(

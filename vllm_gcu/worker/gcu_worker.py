@@ -47,7 +47,11 @@ class GCUWorker(Worker):
                 os.dup2(f.fileno(), 2)
         if vllm_config.additional_config.get('set_cpu_affinity', False):
             current_platform.set_cpu_affinity(local_rank)
+        
         self.use_async_scheduling = vllm_config.additional_config.get('async_scheduling', None)
+        
+        self.enable_fuse_mtp = vllm_config.additional_config.get('deepseek_fused_mtp', False)
+
         super().__init__(vllm_config=vllm_config,
                          local_rank=local_rank,
                          rank=rank,
@@ -90,8 +94,13 @@ class GCUWorker(Worker):
         set_random_seed(self.model_config.seed)
 
         # Construct the model runner
-        self.model_runner: GCUModelRunner = GCUModelRunner(
-            self.vllm_config, self.device)
+        if self.enable_fuse_mtp:
+            from vllm_gcu.worker.gcu_fuse_mtp_model_runner import FuseMTPGCUModelRunner
+            self.model_runner: FuseMTPGCUModelRunner = FuseMTPGCUModelRunner(
+                self.vllm_config, self.device)
+        else:
+            self.model_runner: GCUModelRunner = GCUModelRunner(
+                self.vllm_config, self.device)
 
         if self.rank == 0:
             # If usage stat is enabled, collect relevant info.
