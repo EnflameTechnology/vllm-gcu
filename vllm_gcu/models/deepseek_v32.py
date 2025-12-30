@@ -759,8 +759,9 @@ class DeepseekV2MLAAttention(nn.Module):
         hidden_states: torch.Tensor,
         actual_seqlen = None,
     ) -> torch.Tensor:
-        if actual_seqlen is not None:
-            hidden_states = sp_to_tp(hidden_states, actual_seqlen)
+        if gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL:
+            if actual_seqlen is not None:
+                hidden_states = sp_to_tp(hidden_states, actual_seqlen)
 
         return self.mla_attn(positions, hidden_states)
 
