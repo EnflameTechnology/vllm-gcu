@@ -44,8 +44,11 @@ def register_custom_models():
 
     if gcu_envs.VLLM_GCU_ENABLE_DEEPSEEK_MTP_FUSION:
         ModelRegistry.register_model("DeepseekV3ForCausalLM", "vllm_gcu.models.deepseek_v3.deepseek_v3_with_fused_mtp:DeepseekV3ForCausalLM")
+        ModelRegistry.register_model("DeepseekV32ForCausalLM", "vllm_gcu.models.deepseek_v32_with_fused_mtp:DeepseekV3ForCausalLM")
+
     else:
         ModelRegistry.register_model("DeepseekV3ForCausalLM", "vllm_gcu.models.deepseek_v3.deepseek_v3:DeepseekV3ForCausalLM")
+        ModelRegistry.register_model("DeepseekV32ForCausalLM", "vllm_gcu.models.deepseek_v32:DeepseekV3ForCausalLM")
     ModelRegistry.register_model("DeepSeekMTPModel", "vllm_gcu.models.deepseek_mtp:DeepSeekMTP")
     ModelRegistry.register_model("GotOcr2ForConditionalGeneration", "vllm_gcu.models.got_ocr2:GotOcr2ForConditionalGeneration")
     ModelRegistry.register_model("Qwen2_5_VLForConditionalGeneration", "vllm_gcu.models.qwen2_5_vl:Qwen2_5_VLForConditionalGeneration")
@@ -58,6 +61,5 @@ def register_custom_models():
     ModelRegistry.register_model("Qwen2VLForConditionalGeneration", "vllm_gcu.models.qwen2_vl:Qwen2VLForConditionalGeneration")
     ModelRegistry.register_model("DeepseekOCRForCausalLM", "vllm_gcu.models.deepseek_ocr.deepseek_ocr:DeepseekOCRForCausalLM")
     ModelRegistry.register_model("DeepseekForCausalLM", "vllm_gcu.models.deepseek_ocr.deepseek:DeepseekForCausalLMGCU")
-    ModelRegistry.register_model("DeepseekV32ForCausalLM", "vllm_gcu.models.deepseek_v32:DeepseekV3ForCausalLM")
     ModelRegistry.register_model("MMGPTStep3vForCausalLM", "vllm_gcu.models.step3v.mm_step1o:MMGPTStep1oForCausalLM")
     ModelRegistry.register_model("Step2MiniForCausalLM", "vllm_gcu.models.step3v.step2_mini:Step2MiniForCausalLM")

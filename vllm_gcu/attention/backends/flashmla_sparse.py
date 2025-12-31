@@ -24,6 +24,7 @@ from vllm.v1.attention.backends.utils import (AttentionCGSupport,
                                               AttentionMetadataBuilder,
                                               CommonAttentionMetadata)
 from vllm.v1.kv_cache_interface import AttentionSpec
+import vllm_gcu.envs as gcu_envs
 
 if TYPE_CHECKING:
     from vllm.model_executor.models.deepseek_v2 import Indexer
@@ -147,6 +148,11 @@ class FlashMLASparseMetadata:
 
     fp8_extra_metadata: Optional[FP8KernelMetadata] = None
 
+    is_for_decode_gcu_graph: bool = False
+    num_prefills: int = 0
+    num_prefill_tokens: int = 0
+    num_decodes: int = 0
+    num_decode_tokens: int = 0
 
 @triton.jit
 def _convert_req_index_to_global_index_kernel(
@@ -357,7 +363,7 @@ class FlashMLASparseMetadataBuilder(
                 # to mark invalid indices
                 cache_lens=self.max_model_len_tensor,
                 dummy_block_table=self.dummy_block_table)
-
+            
         metadata = FlashMLASparseMetadata(
             num_reqs=common_attn_metadata.num_reqs,
             max_query_len=common_attn_metadata.max_query_len,
@@ -370,9 +376,25 @@ class FlashMLASparseMetadataBuilder(
             block_size=self.kv_cache_spec.block_size,
             topk_tokens=self.topk_tokens,
             fp8_extra_metadata=fp8_extra_metadata,
+            num_prefills=self._num_prefills if hasattr(self, "_num_prefills") else 0,
+            num_prefill_tokens=self._num_prefill_tokens if hasattr(self, "_num_prefill_tokens") else 0,
+            num_decodes=self._num_decodes if hasattr(self, "_num_decodes") else 0,
+            num_decode_tokens=self._num_decode_tokens if hasattr(self, "_num_decode_tokens") else 0,
         )
         return metadata
 
+    def build_for_cudagraph_capture(self, common_attn_metadata):
+        m = common_attn_metadata
+        if gcu_envs.VLLM_GCU_ENABLE_DEEPSEEK_MTP_FUSION:
+            self._num_decodes = m.num_reqs
+            self._num_decode_tokens = m.num_actual_tokens
+            self._num_prefills = 0
+            self._num_prefill_tokens = 0
+            metadata = self.build(0, m)
+            metadata.is_for_decode_gcu_graph = True
+        else:
+            metadata = super().build_for_cudagraph_capture(m)
+        return metadata            
 
 class FlashMLASparseImpl(MLACommonBaseImpl[FlashMLASparseMetadata]):
 

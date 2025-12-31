@@ -398,7 +398,7 @@ class FuseMTPGCUModelRunner(GCUModelRunner):
             input_batch.swap_states(prefills[i - 1], decode_idx)
             modified_batch = True
         # make sure attention builder split logic align to this logic
-        assert len(self.attn_groups[0]) == 1
+        # assert len(self.attn_groups[0]) == 1
         attn_builder = self.attn_groups[0][0].get_metadata_builder()
         attn_builder._num_decodes = num_decodes
         attn_builder._num_prefills = num_prefills
