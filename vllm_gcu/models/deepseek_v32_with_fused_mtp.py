@@ -889,6 +889,8 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts,
             "next_draft_tokens": draft_tokens,
             # (num_decodes + num_prefills, spec_k + 1)
             "next_token_ids": next_token_ids,
+            "hidden_states": hidden_states,
+            "logist": torch.empty_like(hidden_states)
         })
 
     def compute_logits(
