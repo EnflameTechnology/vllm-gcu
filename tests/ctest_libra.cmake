@@ -19,7 +19,7 @@ add_py_test (PROJECT libra
              OS ubuntu
              MODULE vllm_dev
              ID 1
-             NAME test_gcu_models
+             NAME test_routing_strategy
              COMMAND "cd tests && python -m pytest -sv kernels/test_routing_strategy.py"
             )
 add_py_test (PROJECT libra
