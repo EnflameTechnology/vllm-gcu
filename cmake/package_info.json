@@ -84,9 +84,11 @@
     },
     "flash_attn": {
         "type":["whl"],
-        "3.8_package_name": "flash_attn-*torch*{version}*-[cp][py]3*8-*.whl",
-        "3.10_package_name": "flash_attn-*torch*{version}*-[cp][py]3*10-*.whl",
-        "3.12_package_name": "flash_attn-*torch*{version}*-[cp][py]3*12-*.whl"
+        "framework":"torch",
+        "3.8_package_name": "flash_attn-*{version}*-[cp][py]3*8-*.whl",
+        "3.10_package_name": "flash_attn-*{version}*-[cp][py]3*10-*.whl",
+        "3.11_package_name": "flash_attn-*{version}*-[cp][py]3*11-*.whl",
+        "3.12_package_name": "flash_attn-*{version}*-[cp][py]3*12-*.whl"
     },
     "deep_gemm": {
         "type":["whl"],
