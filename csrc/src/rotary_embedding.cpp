@@ -31,12 +31,12 @@ void rotary_embedding(const at::Tensor &positions, at::Tensor &query,
 
   if (query.numel() == 0) return;
 
-  auto view_query = query.view({-1, query.size(-1)});
-  auto view_key = key.view({-1, key.size(-1)});
-  auto view_positions = positions.view({-1});
+  assert(query.dim() == key.dim());
+  assert(query.dim() == 3 || query.dim() == 2);
+  assert(positions.dim() == 1);
 
   ATEN_ATENOP_CHECK(ATEN_ATENOP_CALL(topsvllm::topsvllmRotaryEmbedding)(
-      view_query, view_key, view_positions, cos_sin_cache, (int)head_size,
+      query, key, positions, cos_sin_cache, static_cast<int>(head_size),
       is_neox, stream));
 }
 

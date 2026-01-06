@@ -570,11 +570,16 @@ class Indexer(nn.Module):
             k = indexer_k
         k = self.k_norm(k)
         k_pe, k_nope = torch.split(
-            k, [self.rope_dim, self.head_dim - self.rope_dim], dim=-1)
+            k.unsqueeze(1), [self.rope_dim, self.head_dim - self.rope_dim], dim=-1)
 
-        q_pe, k_pe = rotary_emb(positions, q_pe, k_pe.unsqueeze(1))
-        q = torch.cat([q_pe, q_nope], dim=-1)
-        k = torch.cat([k_pe.squeeze(1), k_nope], dim=-1)
+        ops.rotary_embedding(
+            positions,
+            q_pe,
+            k_pe,
+            rotary_emb.head_size,
+            rotary_emb.cos_sin_cache,
+            rotary_emb.is_neox_style,
+        )
 
         # we only quant q here since k quant is fused with cache insertion
         q = q.view(-1, self.head_dim)
