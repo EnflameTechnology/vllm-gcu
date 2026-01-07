@@ -969,7 +969,7 @@ class GCUModelRunner(GPUModelRunner):
         logits_indices = extra_args['logits_indices']
         num_input_tokens = extra_args['num_input_tokens']
 
-        with record_function_or_nullcontext("Postprocess"), get_tx_ctx("Postprocess", "green", "VLLM"):
+        with record_function_or_nullcontext("Postprocess"), get_tx_ctx("Postprocess", "green", "VLLM", "execute"):
             if not self.broadcast_pp_output:
                 sample_hidden_states = hidden_states[logits_indices]
                 logits = self.model.compute_logits(sample_hidden_states)
@@ -1018,7 +1018,7 @@ class GCUModelRunner(GPUModelRunner):
         
         def propose_draft_token_ids(sampled_token_ids):
             assert spec_decode_common_attn_metadata is not None
-            with record_function_or_nullcontext("Draft"), get_tx_ctx("Draft", "green", "VLLM"):
+            with record_function_or_nullcontext("Draft"), get_tx_ctx("Draft", "green", "VLLM", "execute"):
                 self._draft_token_ids = self.propose_draft_token_ids(
                     scheduler_output,
                     sampled_token_ids,
@@ -1065,7 +1065,7 @@ class GCUModelRunner(GPUModelRunner):
         scheduler_output: "SchedulerOutput",
         intermediate_tensors: Optional[IntermediateTensors] = None,
     ) -> Union[ModelRunnerOutput, IntermediateTensors]:
-        with record_function_or_nullcontext("Preprocess"), get_tx_ctx("Preprocess", "green", "VLLM"):
+        with record_function_or_nullcontext("Preprocess"), get_tx_ctx("Preprocess", "green", "VLLM", "execute"):
             with self.synchronize_input_prep():
                 # Update persistent batch states.
                 self._update_states(scheduler_output)
@@ -1136,7 +1136,7 @@ class GCUModelRunner(GPUModelRunner):
                 cudagraph_runtime_mode=cudagraph_runtime_mode,
                 batch_descriptor=batch_descriptor,
                 ubatch_slices=ubatch_slices
-            ), record_function_or_nullcontext("Forward"), get_tx_ctx("Forward", "green", "VLLM"),
+            ), record_function_or_nullcontext("Forward"), get_tx_ctx("Forward", "green", "VLLM", "execute"),
               self.maybe_get_kv_connector_output(scheduler_output) as
               kv_connector_output):
                 hidden_states, aux_hidden_states = self._model_forward(input_ids, positions, intermediate_tensors, inputs_embeds, model_kwargs, extra_args)
@@ -1166,7 +1166,7 @@ class GCUModelRunner(GPUModelRunner):
 
         sampler_output = self._compute_sampler_output(logist, spec_decode_metadata, extra_args)
 
-        with record_function_or_nullcontext("Bookkeep"), get_tx_ctx("Bookkeep", "green", "VLLM"):
+        with record_function_or_nullcontext("Bookkeep"), get_tx_ctx("Bookkeep", "green", "VLLM", "execute"):
             (
                 num_nans_in_logits,
                 logprobs_lists,

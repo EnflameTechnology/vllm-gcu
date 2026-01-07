@@ -116,7 +116,7 @@ class GCUWorker(Worker):
         message = f"execute_{num_scheduled_tokens}"
         color = "green"
         domain = "VLLM"
-        category = "execute_model"
+        category = "execute"
         payload_str = None
 
         if envs.VLLM_NVTX_SCOPES_FOR_PROFILING:
@@ -148,21 +148,8 @@ class GCUWorker(Worker):
             payload_str = orjson.dumps(payload)
 
         tx_ctx = get_tx_ctx(message, color, domain, category, payload_str)
-        if self.use_async_scheduling and \
-                not isinstance(tx_ctx, contextlib.nullcontext):
-            self.tx_ctx_start(tx_ctx)
-            model_output = super().execute_model(scheduler_output)
-            self.tx_ctx_stop(tx_ctx)
-            return model_output
-        else:
-            with tx_ctx:
-                return super().execute_model(scheduler_output)
-
-    def tx_ctx_start(self, tx_ctx):
-        torch_gcu.launch_host_func(tx_ctx.__enter__)
-
-    def tx_ctx_stop(self, tx_ctx):
-        torch_gcu.launch_host_func(tx_ctx.__exit__, args=(None, None, None))
+        with tx_ctx:
+            return super().execute_model(scheduler_output)
 
     def execute_dummy_batch(self) -> None:
         self.model_runner._dummy_run(0, uniform_decode = True)
