@@ -621,7 +621,7 @@ class Indexer(nn.Module):
 
         weights, _ = self.weights_proj(hidden_states)
         weights = weights.unsqueeze(
-            -1) * q_scale * self.softmax_scale * self.n_head**-0.5
+            -1) * q_scale
         weights = weights.squeeze(-1)
 
         return torch.ops.vllm.sparse_attn_indexer_gcu(
@@ -1288,6 +1288,14 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts,
 
                     if name not in params_dict:
                         continue
+
+                    if hasattr(self.config, "index_topk") \
+                        and 'indexer.weights_proj' in name:
+                        n_head = self.config.index_n_heads  # 64
+                        head_dim = self.config.index_head_dim  # 128
+                        softmax_scale = head_dim**-0.5
+                        loaded_weight = loaded_weight * softmax_scale * n_head**-0.5
+
                     param = params_dict[name]
                     weight_loader = getattr(param, "weight_loader",
                                             default_weight_loader)
