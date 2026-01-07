@@ -216,12 +216,13 @@ def nixl_handshake(
         p_remote_rank = self.tp_rank // tp_ratio
         remote_ranks_to_connect = [p_remote_rank]
     else:
+        p_workers_range = list(range(
+            self.tp_rank * (remote_tp_size // local_tp_size),
+            self.tp_rank * (remote_tp_size // local_tp_size) + (remote_tp_size // local_tp_size)
+        ))
         logger.info(
             f"D_tp < P_tp mode: D_worker_{self.tp_rank} will connect to "
-            f"P_workers {list(range(
-                self.tp_rank * (remote_tp_size // local_tp_size), 
-                self.tp_rank * (remote_tp_size // local_tp_size) + (remote_tp_size // local_tp_size)
-            ))}"
+            f"P_workers {p_workers_range}"
         )
         # D_tp < P_tp: Each D worker connects to multiple P workers
         if remote_tp_size % local_tp_size != 0:
