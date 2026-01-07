@@ -7,3 +7,4 @@ import vllm_gcu.kernels.quantization  # noqa: F401
 import vllm_gcu.kernels.rotary_embedding  # noqa: F401
 import vllm_gcu.kernels.vocab_parallel_embedding # noqa: F401
 import vllm_gcu.kernels.routing_strategy  # noqa: F401
+import vllm_gcu.kernels.mla  # noqa: F401

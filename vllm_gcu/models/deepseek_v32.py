@@ -305,6 +305,48 @@ def cp_gather_indexer_k_quant_cache(
     dst_scale.copy_(gather_scale)
 
 
+def top_k_per_row_prefill(logits, row_starts, row_ends, indices, num_rows, stride0, stride1, topk):
+    topk_indices = logits.topk(min(topk, logits.shape[-1]),
+                                dim=-1)[1]
+    topk_indices -= row_starts[:, None]
+    mask_lo = topk_indices >= 0
+    mask_hi = topk_indices - (row_ends -
+                                row_starts)[:, None] < 0
+    mask = torch.full_like(topk_indices,
+                            False,
+                            dtype=torch.bool,
+                            device=topk_indices.device)
+    mask = mask_lo & mask_hi
+    topk_indices = topk_indices.masked_fill(~mask, -1)
+    indices[:, :topk_indices.shape[1]] = topk_indices.to(dtype=torch.int32)
+
+def top_k_per_row_decode(logits, next_n, seq_lens, indices, num_rows, stride0, stride1, topk, max_model_len):
+    # padded query len
+    current_device = logits.device
+    batch_size = logits.shape[0]
+    padded_num_tokens = batch_size * next_n
+    positions = torch.arange(max_model_len,
+                                device=current_device).unsqueeze(0).expand(
+                                    batch_size * next_n, -1)
+    row_indices = torch.arange(padded_num_tokens,
+                                device=current_device) // next_n
+    next_n_offset = torch.arange(
+        padded_num_tokens,
+        device=current_device) % next_n
+    index_end_pos = (seq_lens[row_indices] - next_n +
+                        next_n_offset).unsqueeze(1)
+    # index_end_pos: [B * N, 1]
+    mask = positions <= index_end_pos
+    # mask: [B * N, L]
+    logits = logits.masked_fill(~mask, float('-inf'))
+    topk_indices = logits.topk(topk,
+                                dim=-1)[1].to(torch.int32)  # [B * N, K]
+    # ensure we don't set indices for the top k
+    # that is out of range(masked already)
+    # this will happen if context length is shorter than K
+    topk_indices[topk_indices > index_end_pos] = -1
+    indices[:] = topk_indices
+
 def sparse_attn_indexer_gcu(
     hidden_states: torch.Tensor,
     k_cache_prefix: str,
@@ -380,21 +422,20 @@ def sparse_attn_indexer_gcu(
                 chunk.cu_seqlen_ks,
                 chunk.cu_seqlen_ke,
             )
-            topk_indices = logits.topk(min(topk_tokens, logits.shape[-1]),
-                                       dim=-1)[1]
-            topk_indices -= chunk.cu_seqlen_ks[:, None]
-            mask_lo = topk_indices >= 0
-            mask_hi = topk_indices - (chunk.cu_seqlen_ke -
-                                      chunk.cu_seqlen_ks)[:, None] < 0
-            mask = torch.full_like(topk_indices,
-                                   False,
-                                   dtype=torch.bool,
-                                   device=topk_indices.device)
-            mask = mask_lo & mask_hi
-            topk_indices = topk_indices.masked_fill(~mask, -1)
-            topk_indices_buffer[
-                chunk.token_start:chunk.token_end, :topk_indices.
-                shape[-1]] = topk_indices.to(dtype=torch.int32)
+            num_rows = logits.shape[0]
+            topk_indices = topk_indices_buffer[
+                chunk.token_start : chunk.token_end, :topk_tokens
+            ]
+            top_k_per_row_prefill(
+                logits,
+                chunk.cu_seqlen_ks,
+                chunk.cu_seqlen_ke,
+                topk_indices,
+                num_rows,
+                logits.stride(0),
+                logits.stride(1),
+                topk_tokens,
+            )
 
     if has_decode:
         decode_metadata = attn_metadata.decode
@@ -426,37 +467,30 @@ def sparse_attn_indexer_gcu(
             decode_metadata.schedule_metadata,
             max_model_len=max_model_len,
         )
-        # padded query len
-        current_device = padded_q_fp8_decode_tokens.device
-        padded_num_tokens = batch_size * next_n
-        positions = torch.arange(max_model_len,
-                                 device=current_device).unsqueeze(0).expand(
-                                     batch_size * next_n, -1)
-        row_indices = torch.arange(padded_num_tokens,
-                                   device=current_device) // next_n
-        next_n_offset = torch.arange(
-            padded_num_tokens,
-            device=padded_q_fp8_decode_tokens.device) % next_n
-        index_end_pos = (decode_metadata.seq_lens[row_indices] - next_n +
-                         next_n_offset).unsqueeze(1)
-        # index_end_pos: [B * N, 1]
-        mask = positions <= index_end_pos
-        # mask: [B * N, L]
-        logits = logits.masked_fill(~mask, float('-inf'))
-        topk_indices = logits.topk(topk_tokens,
-                                   dim=-1)[1].to(torch.int32)  # [B * N, K]
-        # ensure we don't set indices for the top k
-        # that is out of range(masked already)
-        # this will happen if context length is shorter than K
-        topk_indices[topk_indices > index_end_pos] = -1
+        num_rows = logits.shape[0]
+        topk_indices = topk_indices_buffer[:num_decode_tokens, :topk_tokens]
+
+        top_k_per_row_decode(
+            logits,
+            next_n,
+            decode_metadata.seq_lens,
+            topk_indices,
+            num_rows,
+            logits.stride(0),
+            logits.stride(1),
+            topk_tokens,
+            max_model_len,
+        )
         if decode_metadata.requires_padding:
             # if padded, we need to unpack
             # the topk indices removing padded tokens
             topk_indices = unpack_seq_triton(
                 topk_indices.reshape(batch_size, -1, topk_indices.shape[-1]),
-                decode_lens)
-        topk_indices_buffer[:num_decode_tokens, :topk_indices.
-                            shape[-1]] = topk_indices.to(dtype=torch.int32)
+                decode_lens,
+            )
+            topk_indices_buffer[:num_decode_tokens, : topk_indices.shape[-1]] = (
+                topk_indices
+            )
 
     return topk_indices_buffer
 
@@ -523,11 +557,12 @@ class Indexer(nn.Module):
                                      bias=False,
                                      quant_config=quant_config,
                                      prefix=f"{prefix}.wq_b")
-        self.wk = ReplicatedLinear(hidden_size,
-                                   self.head_dim,
-                                   bias=False,
-                                   quant_config=quant_config,
-                                   prefix=f"{prefix}.wk")
+        if not gcu_envs.VLLM_GCU_DEEPSEEK_FUSION:
+            self.wk = ReplicatedLinear(hidden_size,
+                                    self.head_dim,
+                                    bias=False,
+                                    quant_config=quant_config,
+                                    prefix=f"{prefix}.wk")
         self.k_norm = LayerNorm(self.head_dim, eps=1e-6)
         self.weights_proj = ReplicatedLinear(hidden_size,
                                              self.n_head,
@@ -556,13 +591,16 @@ class Indexer(nn.Module):
         self.max_total_seq_len = get_max_prefill_buffer_size(vllm_config)
 
     def forward(self, hidden_states: torch.Tensor, qr: torch.Tensor, positions,
-                rotary_emb) -> torch.Tensor:
+                rotary_emb, indexer_k: Optional[torch.Tensor]=None) -> torch.Tensor:
         q, _ = self.wq_b(qr)
         q = q.view(-1, self.n_head, self.head_dim)
         q_pe, q_nope = torch.split(
             q, [self.rope_dim, self.head_dim - self.rope_dim], dim=-1)
 
-        k, _ = self.wk(hidden_states)
+        if indexer_k is None:
+            k, _ = self.wk(hidden_states)
+        else:
+            k = indexer_k
         k = self.k_norm(k)
         k_pe, k_nope = torch.split(
             k, [self.rope_dim, self.head_dim - self.rope_dim], dim=-1)
@@ -651,9 +689,12 @@ class DeepseekV2MLAAttention(nn.Module):
         self.max_position_embeddings = max_position_embeddings
 
         if self.q_lora_rank is not None:
+            dims = [self.q_lora_rank, self.kv_lora_rank + self.qk_rope_head_dim]
+            if gcu_envs.VLLM_GCU_DEEPSEEK_FUSION:
+                dims.insert(0, config.index_head_dim)
             self.fused_qkv_a_proj = MergedColumnParallelLinear(
                 self.hidden_size,
-                [self.q_lora_rank, self.kv_lora_rank + self.qk_rope_head_dim],
+                dims,
                 bias=False,
                 quant_config=quant_config,
                 prefix=f"{prefix}.fused_qkv_a_proj",
@@ -1117,9 +1158,18 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts,
             # (param_name, shard_name, shard_id)
             ("gate_up_proj", "gate_proj", 0),
             ("gate_up_proj", "up_proj", 1),
-            ("fused_qkv_a_proj", "q_a_proj", 0),
-            ("fused_qkv_a_proj", "kv_a_proj_with_mqa", 1),
         ]
+        if gcu_envs.VLLM_GCU_DEEPSEEK_FUSION:
+            stacked_params_mapping+=[
+                ("fused_qkv_a_proj", "q_a_proj", 1),
+                ("fused_qkv_a_proj", "kv_a_proj_with_mqa", 2),
+                ("fused_qkv_a_proj", "indexer.wk", 0),
+            ]
+        else:
+            stacked_params_mapping+=[
+                ("fused_qkv_a_proj", "q_a_proj", 0),
+                ("fused_qkv_a_proj", "kv_a_proj_with_mqa", 1),
+            ]
 
         # Params for weights, fp8 weight scales, fp8 activation scales
         # (param_name, weight_name, expert_id, shard_id)
