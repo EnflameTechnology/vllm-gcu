@@ -56,6 +56,27 @@ class FlashMLASparseFusionImpl(FlashMLASparseImpl):
                                                  self.qk_rope_head_dim,
                                                  kv_cache_dtype)
 
+    def _k_up_proj(self, out, q_nope):
+        B, N, P = q_nope.shape
+        # Multiply (B, N, P) x (N, P, L) -> (B, N, L)
+        torch.bmm(q_nope.transpose(0, 1), self.W_UK_T, out=out.transpose(0, 1))
+
+    def _v_up_proj(self, x, out=None):
+        x = x.view(-1, self.num_heads, self.kv_lora_rank)
+        B = x.shape[0]
+        # Multiply (B, N, L) x (N, L, V) -> (B, N, V)
+        out_shape = (B, self.num_heads, self.W_UV.shape[-1])
+        if out is None:
+            out = torch.empty(out_shape, device=x.device, dtype=x.dtype)
+        else:
+            out = out.reshape(out_shape)
+
+        # Multiply (N, B, L) x (N, L, V) -> (N, B, V)
+        # maybe linear_copy when B is not contiguous
+        torch.bmm(x.transpose(0, 1), self.W_UV, out=out.transpose(0, 1))
+        # Convert from (B, N, V) to (B, N * V)
+        return out.view(-1, self.num_heads * self.v_head_dim)
+
     def forward(
         self,
         layer: AttentionLayer,
@@ -70,18 +91,6 @@ class FlashMLASparseFusionImpl(FlashMLASparseImpl):
     ) -> torch.Tensor:
         # NOTE(lucas): for the sparse FlashMLA kernels the kernels want to use
         # MQA 576/512 approach for both prefill and decode
-
-        kv_c, k_pe = kv_lora.split(
-            [self.kv_lora_rank, self.qk_rope_head_dim], dim=-1
-        )
-        k_c_normed = self.kv_a_layernorm(kv_c)
-
-        k_pe = k_pe.unsqueeze(1)
-
-        if self.rotary_emb is not None:
-            q[..., self.qk_nope_head_dim :], k_pe = self.rotary_emb(
-                positions, q[..., self.qk_nope_head_dim :], k_pe
-            )
 
         assert output is not None, "Output tensor must be provided."
 
@@ -101,35 +110,37 @@ class FlashMLASparseFusionImpl(FlashMLASparseImpl):
         # Inputs and outputs may be padded for CUDA graphs
 
         q = q[:num_actual_toks, ...]
-        k_c_normed = k_c_normed[:num_actual_toks, ...]
-        k_pe = k_pe[:num_actual_toks, ...]
+        kv_lora = kv_lora[:num_actual_toks, ...]
+        positions = positions[:num_actual_toks, ...]
 
         q_nope, q_pe = q.split([self.qk_nope_head_dim, self.qk_rope_head_dim],
                                dim=-1)
-        # Convert from (B, N, P) to (N, B, P)
-        q_nope = q_nope.transpose(0, 1)
-        # Multiply (N, B, P) x (N, P, L) -> (N, B, L)
-        ql_nope = torch.bmm(q_nope, self.W_UK_T)
-        # Convert from (N, B, L) to (B, N, L)
-        ql_nope = ql_nope.transpose(0, 1)
+        q_concat = torch.empty(
+            (q.shape[0], self.num_heads,
+                self.kv_lora_rank + self.qk_rope_head_dim),
+            dtype=q.dtype,
+            device=q.device,
+        )
+        self._k_up_proj(q_concat[..., :self.kv_lora_rank],
+                        q_nope)
 
         topk_indices = self.topk_indices_buffer[:num_actual_toks]
 
         # TODO: handle index / kv_cache correctly
         topk_indices_global = None
 
-        q = torch.cat([ql_nope, q_pe], dim=-1)
-
         # write the latent and rope to kv cache
-        if kv_cache.numel() > 0:
-            ops.concat_and_cache_mla(
-                k_c_normed,
-                k_pe.squeeze(1),
-                kv_cache,
-                attn_metadata.slot_mapping.flatten(),
-                kv_cache_dtype=self.kv_cache_dtype,
-                scale=layer._k_scale,
-            )
+        self.rope_with_kvcache.forward_native(
+            q_concat[..., self.kv_lora_rank:],
+            None,
+            q_pe,
+            kv_lora,
+            kv_cache,
+            attn_metadata.slot_mapping.flatten(),
+            positions,
+            layer._k_scale,
+        )
+        q = q_concat
 
         if self.kv_cache_dtype != "fp8_ds_mla":
             attn_out = self._forward_bf16_kv(q, kv_cache, topk_indices_global,
