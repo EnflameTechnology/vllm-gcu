@@ -12,7 +12,7 @@
 将上述url设定的路径下的内容全部下载到`Qwen3-32B`文件夹中。
 
 注：需要安装以下依赖：
-
+#### requirements
 ```shell
 python3 -m pip install transformers==4.57.1
 ```
@@ -108,7 +108,7 @@ vllm bench serve \
 
 将上述url设定的路径下的内容全部下载到`Qwen2-72B-Instruct`文件夹中。
 注：需要安装以下依赖：
-
+#### requirements
 ```shell
 python3 -m pip install transformers==4.57.1
 ```
