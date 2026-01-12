@@ -36,6 +36,53 @@ def get_default_config(
     }
     return config
 
+def vllm_topk_softmax(topk_weights: torch.Tensor, topk_indices: torch.Tensor,
+                      token_expert_indices: torch.Tensor,
+                      gating_output: torch.Tensor,
+                      renormalize: bool) -> tuple[torch.Tensor, ...]:
+    ops.topk_softmax_renormalize(
+        topk_weights,
+        topk_indices,
+        token_expert_indices,
+        gating_output,
+        renormalize
+    )
+
+    return topk_weights, topk_indices
+
+def fused_topk(
+    hidden_states: torch.Tensor,
+    gating_output: torch.Tensor,
+    topk: int,
+    renormalize: bool
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    assert hidden_states.size(0) == gating_output.size(0), (
+        "Number of tokens mismatch")
+
+    M, _ = hidden_states.size()
+
+    topk_weights = torch.empty(M,
+                               topk,
+                               dtype=torch.float32,
+                               device=hidden_states.device)
+    topk_ids = torch.empty(
+        M,
+        topk,
+        dtype=torch.int32,
+        device=hidden_states.device)
+    token_expert_indices = torch.empty(M,
+                                       topk,
+                                       dtype=torch.int32,
+                                       device=hidden_states.device)
+
+    gating_output_float = gating_output.float()
+
+    # use vllm_topk_softmax for gcu
+    topk_weights, topk_ids = vllm_topk_softmax(topk_weights, topk_ids,
+                                       token_expert_indices,
+                                       gating_output_float, renormalize)
+
+    return topk_weights, topk_ids
 
 def moe_align_block_size(
     topk_ids: torch.Tensor,

@@ -86,6 +86,7 @@
 #include "src/static_scaled_int8_dequant.h"
 #include "src/static_scaled_int8_quant.h"
 #include "src/topk_softmax.h"
+#include "src/topk_softmax_renormalize.h"
 #include "src/weak_ref_tensor.h"
 #include "src/mha_fwd_kvcache_mla.h"
 #include "src/topk_topp_random_sampler_from_logits.h"
@@ -1400,6 +1401,18 @@ TORCH_LIBRARY_FRAGMENT(CONCAT(_moe, TORCH_EXTENSION_NAME), moe_ops) {
         "token_expert_indices, Tensor gating_output) -> ()");
   }
   moe_ops.impl("topk_softmax", torch::kPrivateUse1, &topk_softmax);
+
+  // Apply topk softmax to the gating outputs with renormalization.
+  handle = c10::Dispatcher::singleton().findSchema(
+      {"_moe_C::topk_softmax_renormalize", ""});
+  if (!handle.has_value()) {
+    moe_ops.def(
+        "topk_softmax_renormalize(Tensor! topk_weights, Tensor! "
+        "topk_indices, Tensor! token_expert_indices, Tensor "
+        "gating_output, bool renormalize) -> ()");
+  }
+  moe_ops.impl("topk_softmax_renormalize", torch::kPrivateUse1,
+               &topk_softmax_renormalize);
 
   // Calculate the result of moe by summing up the partial results
   // from all selected experts.

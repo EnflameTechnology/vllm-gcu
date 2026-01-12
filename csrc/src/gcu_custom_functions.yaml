@@ -61,6 +61,9 @@
 - func: topk_softmax(Tensor(a!) topk_weights, Tensor(a!) topk_indices, Tensor(a!) token_expert_indices, Tensor(a!) gating_output) -> ()
   variants: function
 
+- func: topk_softmax_renormalize(Tensor(a!) topk_weights, Tensor(a!) topk_indices, Tensor(a!) token_expert_indices, Tensor(a!) gating_output, bool renormalize) -> ()
+  variants: function
+
 - func: context_attention_forward(Tensor q, Tensor k, Tensor v, Tensor(a!) o, Tensor key_cache, Tensor value_cache, Tensor block_tables, Tensor subquery_start_loc, Tensor seq_lens_tensor, Tensor context_lens, int max_query_len, Tensor? alibi_slopes, int? sliding_window) -> ()
   variants: function
 

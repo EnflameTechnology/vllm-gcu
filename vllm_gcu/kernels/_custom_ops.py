@@ -627,3 +627,9 @@ def get_token_bin_counts_and_mask(
                                                         vocab_size,
                                                         num_seqs)
         return bin_counts, mask
+
+def topk_softmax_renormalize(topk_weights: torch.Tensor, topk_ids: torch.Tensor,
+                 token_expert_indices: torch.Tensor, gating_output: torch.Tensor,
+                 renormalize: bool) -> None:
+    torch.ops._moe_C.topk_softmax_renormalize(topk_weights, topk_ids, token_expert_indices,
+                                  gating_output, renormalize)

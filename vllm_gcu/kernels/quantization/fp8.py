@@ -7,6 +7,7 @@ from vllm.model_executor.layers.quantization.fp8 import Fp8Config, Fp8LinearMeth
 from vllm.model_executor.layers.quantization.utils.quant_utils import is_layer_skipped
 from vllm.model_executor.layers.fused_moe.modular_kernel import FusedMoEActivationFormat
 from vllm_gcu.kernels.batched_deep_gemm_moe import BatchedDeepGemmExpertsGCU
+from vllm_gcu.kernels.fused_moe import fused_topk
 from vllm.platforms import current_platform
 
 from vllm.utils import vllm_lib
@@ -121,6 +122,10 @@ class Fp8GCUMoEMethod(Fp8MoEMethod):
 
         zero_expert_num = getattr(layer, 'zero_expert_num', 0)
         zero_expert_type = getattr(layer, 'zero_expert_type', None)
+
+        # use fused_topk with renormalize, no need in future versions
+        if not use_grouped_topk and e_score_correction_bias is None and custom_routing_function is None:
+            custom_routing_function = fused_topk
 
         select_result = FusedMoE.select_experts(
             hidden_states=x,
