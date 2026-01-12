@@ -1352,7 +1352,7 @@ TORCH_LIBRARY_FRAGMENT(CONCAT(TORCH_EXTENSION_NAME, _cache_ops),
         "convert_fp8(Tensor! dst_cache, Tensor src_cache, float scale, "
         "str kv_cache_dtype) -> ()");
   }
-  // cache_ops.impl("convert_fp8", torch::kPrivateUse1, &convert_fp8);
+  cache_ops.impl("convert_fp8", torch::kPrivateUse1, &convert_fp8);
 
   handle = c10::Dispatcher::singleton().findSchema(
       {"_C_cache_ops::gather_cache", ""});
