@@ -106,8 +106,8 @@ export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 
 ```shell
 # 启动服务器
-vllm serve "[GLM-4.5-Air]" \
- --tokenizer="[GLM-4.5-Air]"  \
+vllm serve "[path of GLM-4.5-Air]" \
+ --tokenizer="[path of GLM-4.5-Air]"  \
  --dtype=bfloat16 \
  --max-model-len=131072 \
  --tensor-parallel-size=8 \
@@ -117,13 +117,13 @@ vllm serve "[GLM-4.5-Air]" \
  --trust-remote-code \
  --no-enable-prefix-caching
 
-# 客户端
+# 启动客户端
 curl "http://127.0.0.1:8000/v1/completions" \
 -H "Content-Type: application/json" \
 -d '{
     "max_tokens": 500,
     "prompt":["请介绍北京的旅游景点"],
-    "model": "[GLM-4.5-Air]" ,
+    "model": "[path of GLM-4.5-Air]" ,
     "stop": null,
     "stream": false
     }'
@@ -133,8 +133,8 @@ curl "http://127.0.0.1:8000/v1/completions" \
 
 ```shell
 # 启动服务端
-vllm serve "[GLM-4.5-Air]" \
- --tokenizer="[GLM-4.5-Air]" \
+vllm serve "[path of GLM-4.5-Air]" \
+ --tokenizer=GLM-4.5-Air \
  --dtype=bfloat16 \
  --max-model-len=131072 \
  --tensor-parallel-size=8 \
@@ -145,7 +145,7 @@ vllm serve "[GLM-4.5-Air]" \
 
 
 # 启动客户端
-vllm bench serve --model "[GLM-4.5-Air]"  \
+vllm bench serve --model "[path of GLM-4.5-Air]"  \
  --base-url http://127.0.0.1:8000 \
  --dataset-name random \
  --random-input-len 1024 \
