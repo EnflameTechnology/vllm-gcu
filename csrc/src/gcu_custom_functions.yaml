@@ -64,6 +64,12 @@
 - func: topk_softmax(Tensor(a!) topk_weights, Tensor(a!) topk_indices, Tensor(a!) token_expert_indices, Tensor(a!) gating_output) -> ()
   variants: function
 
+- func: top_k_per_row_decode(Tensor logits, int next_n, Tensor seq_lens, Tensor(a!) indices, int numRows, int stride0, int stride1, int topK) -> ()
+  variants: function
+
+- func: top_k_per_row_prefill(Tensor logits, Tensor rowStarts, Tensor rowEnds, Tensor(a!) indices, int numRows, int stride0, int stride1, int topK) -> ()
+  variants: function
+  
 - func: topk_softmax_renormalize(Tensor(a!) topk_weights, Tensor(a!) topk_indices, Tensor(a!) token_expert_indices, Tensor(a!) gating_output, bool renormalize) -> ()
   variants: function
 

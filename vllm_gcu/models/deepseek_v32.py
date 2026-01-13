@@ -426,7 +426,7 @@ def sparse_attn_indexer(
             topk_indices = topk_indices_buffer[
                 chunk.token_start : chunk.token_end, :topk_tokens
             ]
-            top_k_per_row_prefill(
+            torch.ops._C.top_k_per_row_prefill(
                 logits,
                 chunk.cu_seqlen_ks,
                 chunk.cu_seqlen_ke,
@@ -470,7 +470,7 @@ def sparse_attn_indexer(
         num_rows = logits.shape[0]
         topk_indices = topk_indices_buffer[:num_decode_tokens, :topk_tokens]
 
-        top_k_per_row_decode(
+        torch.ops._C.top_k_per_row_decode(
             logits,
             next_n,
             decode_metadata.seq_lens,
@@ -479,7 +479,6 @@ def sparse_attn_indexer(
             logits.stride(0),
             logits.stride(1),
             topk_tokens,
-            max_model_len,
         )
         if decode_metadata.requires_padding:
             # if padded, we need to unpack

@@ -90,6 +90,8 @@
 #include "src/topk_softmax_renormalize.h"
 #include "src/weak_ref_tensor.h"
 #include "src/mha_fwd_kvcache_mla.h"
+#include "src/top_k_per_row_decode.h"
+#include "src/top_k_per_row_prefill.h"
 #include "src/topk_topp_random_sampler_from_logits.h"
 #include "src/top_k_top_p.h"
 #include "src/apply_repetition_penalties.h"
@@ -1278,6 +1280,18 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
   }
   ops.impl("get_token_bin_counts_and_mask", torch::kPrivateUse1,
            get_token_bin_counts_and_mask);
+  ops.def(
+      "top_k_per_row_prefill(Tensor logits, Tensor rowStarts, Tensor rowEnds, "
+      "Tensor! indices, int numRows, int stride0, "
+      "int stride1, int topK) -> ()");
+  ops.impl("top_k_per_row_prefill", torch::kPrivateUse1,
+           &top_k_per_row_prefill);
+
+  ops.def(
+      "top_k_per_row_decode(Tensor logits, int next_n, "
+      "Tensor seq_lens, Tensor! indices, "
+      "int numRows, int stride0, int stride1, int topK) -> ()");
+  ops.impl("top_k_per_row_decode", torch::kPrivateUse1, &top_k_per_row_decode);
 }
 
 // TORCH_LIBRARY_FRAGMENT(CONCAT(_cache_ops, TORCH_EXTENSION_NAME), cache_ops) {
