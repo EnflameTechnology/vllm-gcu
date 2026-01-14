@@ -105,4 +105,5 @@ torch.gcu.set_stream = _patched_set_stream
 patch("vllm.v1.worker.gpu_model_runner.bind_kv_cache", bind_kv_cache).start()
 patch("vllm.v1.worker.gpu_model_runner.record_function_or_nullcontext", record_function_or_nullcontext).start()
 patch("vllm_gcu.worker.gcu_model_runner.record_function_or_nullcontext", record_function_or_nullcontext).start()
+patch("vllm_gcu.worker.gcu_fuse_mtp_model_runner.record_function_or_nullcontext", record_function_or_nullcontext).start()
 patch("vllm.model_executor.layers.utils.get_token_bin_counts_and_mask", get_token_bin_counts_and_mask).start()
