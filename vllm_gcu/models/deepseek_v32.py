@@ -77,7 +77,7 @@ from vllm.model_executor.models.interfaces import MixtureOfExperts, SupportsLoRA
 from vllm.model_executor.models.utils import (PPMissingLayer, is_pp_missing_parameter,
                     make_empty_intermediate_tensors_factory, make_layers,
                     maybe_prefix)
-from vllm.model_executor.models.deepseek_v2 import DeepseekV32IndexerCache
+from vllm.model_executor.models.deepseek_v2 import DeepseekV32IndexerCache, sparse_attn_indexer_fake
 import vllm_gcu.envs as gcu_envs
 from vllm_gcu.models.deepseek_v3.deepseek_v3 import DeepseekV2MLP, DeepseekV2MoE
 from vllm_gcu.distributed.sp import sp_to_tp, slice_tensor_sp, tp_to_sp
@@ -347,7 +347,7 @@ def top_k_per_row_decode(logits, next_n, seq_lens, indices, num_rows, stride0, s
     topk_indices[topk_indices > index_end_pos] = -1
     indices[:] = topk_indices
 
-def sparse_attn_indexer_gcu(
+def sparse_attn_indexer(
     hidden_states: torch.Tensor,
     k_cache_prefix: str,
     kv_cache: torch.Tensor,
@@ -367,7 +367,7 @@ def sparse_attn_indexer_gcu(
     attn_metadata = get_forward_context().attn_metadata
     # assert isinstance(attn_metadata, dict)
     if not isinstance(attn_metadata, dict):
-        return sparse_attn_indexer_gcu_fake(
+        return sparse_attn_indexer_fake(
             hidden_states,
             k_cache_prefix,
             kv_cache,
@@ -494,41 +494,9 @@ def sparse_attn_indexer_gcu(
 
     return topk_indices_buffer
 
-
-def sparse_attn_indexer_gcu_fake(
-    hidden_states: torch.Tensor,
-    k_cache_prefix: str,
-    kv_cache: torch.Tensor,
-    q_fp8: torch.Tensor,
-    k: torch.Tensor,
-    weights: torch.Tensor,
-    quant_block_size: int,
-    scale_fmt: Optional[str],
-    topk_tokens: int,
-    head_dim: int,
-    max_model_len: int,
-    total_seq_lens: int,
-    topk_indices_buffer: Optional[torch.Tensor],
-) -> torch.Tensor:
-    # profile run
-    # NOTE(Chen): create the max possible flattened_kv. So that
-    # profile_run can get correct memory usage.
-    _flattened_kv = torch.empty([total_seq_lens, head_dim + 4],
-                                device=k.device,
-                                dtype=torch.uint8)
-    _k_fp8 = _flattened_kv[..., :head_dim].view(
-        torch.float8_e4m3fn).contiguous()
-    _k_scale = _flattened_kv[..., head_dim:].view(torch.float32).contiguous()
-    return topk_indices_buffer
-
-
-direct_register_custom_op(
-    op_name="sparse_attn_indexer_gcu",
-    op_func=sparse_attn_indexer_gcu,
-    mutates_args=["topk_indices_buffer"],
-    fake_impl=sparse_attn_indexer_gcu_fake,
-    dispatch_key=current_platform.dispatch_key,
-)
+vllm_lib_impl = torch.library.Library("vllm", "IMPL")
+vllm_lib_impl.impl('vllm::sparse_attn_indexer', sparse_attn_indexer,
+                   current_platform.dispatch_key, allow_override=True)
 
 
 class Indexer(nn.Module):
@@ -624,7 +592,7 @@ class Indexer(nn.Module):
             -1) * q_scale
         weights = weights.squeeze(-1)
 
-        return torch.ops.vllm.sparse_attn_indexer_gcu(
+        return torch.ops.vllm.sparse_attn_indexer(
             hidden_states,
             self.k_cache.prefix,
             self.k_cache.kv_cache[0],
