@@ -60,8 +60,8 @@ def chunk_gated_delta_rule_fwd_kernel_h_blockdim64(
     SAVE_NEW_VALUE: tl.constexpr,
     IS_VARLEN: tl.constexpr,
 ):
-    i_v, i_nh = tl.program_id(0), tl.program_id(1)
-    i_n, i_h = i_nh // H, i_nh % H
+    i_v, i_n, i_h = tl.program_id(0), tl.program_id(1), tl.program_id(2)
+    i_nh = i_n * H + i_h
     if IS_VARLEN:
         bos, eos = tl.load(cu_seqlens + i_n).to(
             tl.int32), tl.load(cu_seqlens + i_n + 1).to(tl.int32)
@@ -268,7 +268,7 @@ def chunk_gated_delta_rule_fwd_h(
     v_new = torch.empty_like(u) if save_new_value else None
 
     def grid(meta):
-        return (triton.cdiv(V, meta['BV']), N * H)
+        return (triton.cdiv(V, meta['BV']), N, H)
 
     chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
         k=k,
@@ -279,8 +279,8 @@ def chunk_gated_delta_rule_fwd_h(
         h=h,
         h0=initial_state,
         ht=final_state,
-        cu_seqlens=cu_seqlens.to(torch.int32),
-        chunk_offsets=chunk_offsets.to(torch.int32),
+        cu_seqlens=cu_seqlens.to(torch.int32) if cu_seqlens is not None else None,
+        chunk_offsets=chunk_offsets.to(torch.int32) if chunk_offsets is not None else None,
         T=T,
         H=H,
         Hg=Hg,
