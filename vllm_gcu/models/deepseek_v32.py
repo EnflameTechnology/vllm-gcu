@@ -323,7 +323,7 @@ def top_k_per_row_prefill(logits, row_starts, row_ends, indices, num_rows, strid
 def top_k_per_row_decode(logits, next_n, seq_lens, indices, num_rows, stride0, stride1, topk, max_model_len):
     # padded query len
     current_device = logits.device
-    batch_size = logits.shape[0]
+    batch_size = seq_lens.shape[0]
     padded_num_tokens = batch_size * next_n
     positions = torch.arange(max_model_len,
                                 device=current_device).unsqueeze(0).expand(

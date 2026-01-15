@@ -96,7 +96,6 @@ from vllm.utils import direct_register_custom_op
 from vllm_gcu.attention.backends.mla_v1 import GCUMLADecodeMetadata
 from vllm_gcu.models.deepseek_v3.deepseek_v3 import DeepseekV2MLP, DeepseekV2MoE
 from vllm_gcu.models.deepseek_v32 import DeepseekV2Attention, DeepseekV2MLAAttention, DeepseekV2DecoderLayer, Indexer
-from vllm_gcu.models.deepseek_v32 import cp_gather_indexer_k_quant_cache, sparse_attn_indexer_gcu, sparse_attn_indexer_gcu_fake 
 
 
 def custom_pass(graph: torch.fx.Graph) -> torch.fx.Graph:

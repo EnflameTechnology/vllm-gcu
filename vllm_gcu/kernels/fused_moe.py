@@ -104,7 +104,7 @@ def moe_align_block_size(
     num_tokens_post_pad = torch.empty((1), dtype=torch.int32, device=topk_ids.device)
 
     if topk_ids_size is not None:
-        if not gcu_envs.VLLM_GCU_DEEPSEEK_FUSION or expert_map is None:
+        if expert_map is None:
             ops.moe_align_block_size_pad(
                 topk_ids,
                 topk_ids_size,
@@ -114,8 +114,6 @@ def moe_align_block_size(
                 expert_ids,
                 num_tokens_post_pad,
             )
-            if expert_map is not None:
-                expert_ids = torch_gcu.gcu.efficient.gcu_index(expert_map, [expert_ids])
         else:
             torch.ops._C.exts_moe_align_block_size(
                 sorted_ids,

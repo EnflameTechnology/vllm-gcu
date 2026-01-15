@@ -207,15 +207,22 @@ class DeepSeekMTP(nn.Module):
             ("gate_up_proj", "up_proj", 1),
         ]
 
-        if getattr(self.model.layers[str(self.model.mtp_start_layer_idx)].mtp_block.self_attn, 'qkv_fuse', False):
+        if hasattr(self.config, "index_topk"):
+            if gcu_envs.VLLM_GCU_DEEPSEEK_FUSION:
+                stacked_params_mapping+=[
+                    ("fused_qkv_a_proj", "q_a_proj", 1),
+                    ("fused_qkv_a_proj", "kv_a_proj_with_mqa", 2),
+                    ("fused_qkv_a_proj", "indexer.wk", 0),
+                ]
+            else:
+                stacked_params_mapping+=[
+                    ("fused_qkv_a_proj", "q_a_proj", 0),
+                    ("fused_qkv_a_proj", "kv_a_proj_with_mqa", 1),
+                ]
+        elif getattr(self.model.layers[str(self.model.mtp_start_layer_idx)].mtp_block.self_attn, 'qkv_fuse', False):
             stacked_params_mapping += [
                 ("qkv_a_proj_with_mqa", "q_a_proj", 0),
                 ("qkv_a_proj_with_mqa", "kv_a_proj_with_mqa", 1),
-            ]
-        else:
-            stacked_params_mapping += [
-                ("fused_qkv_a_proj", "q_a_proj", 0),
-                ("fused_qkv_a_proj", "kv_a_proj_with_mqa", 1),
             ]
 
         expert_params_mapping = FusedMoE.make_expert_params_mapping(

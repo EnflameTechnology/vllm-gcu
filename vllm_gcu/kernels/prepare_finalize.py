@@ -130,21 +130,13 @@ class AlltoAllPrepareAndFinalize(FusedMoEPrepareAndFinalize):
             ) for width in width_as_dtype
         ]
 
-        if gcu_envs.VLLM_GCU_DEEPSEEK_FUSION:
-            torch.ops._C.fused_dispatch_decode(
-                buffers,
-                recv_packed,
-                sp_split_size,
-                width_as_dtype,
-            )
-        else:
-            torch.ops._C.dynamic_split(
-                buffers,
-                recv_packed,
-                recv_token_total,
-                width_as_dtype,
-                1,
-            )
+        torch.ops._C.fused_dispatch_decode(
+            buffers,
+            recv_packed,
+            sp_split_size,
+            width_as_dtype,
+        )
+
         for i in range(len(buffers)):
             buffers[i] = buffers[i].view(dtypes[i])
         return buffers

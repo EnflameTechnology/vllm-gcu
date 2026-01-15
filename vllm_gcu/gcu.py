@@ -304,6 +304,13 @@ class GCUPlatform(Platform):
             model_config and model_config.hf_text_config.model_type in \
                     ('deepseek_v3', 'deepseek_mtp'):
             os.environ["VLLM_GCU_DEEPSEEK_FUSION"] = "1"
+        if (
+            enable_deepseek_fused_mtp
+            and model_config
+            and model_config.hf_text_config.model_type == "deepseek_v32"
+        ):
+            logger.warning('Disable deepseek fusion ops as not support deepseek_v32 with deepseek_fused_mtp')
+            os.environ["VLLM_GCU_DEEPSEEK_FUSION"] = "0"
 
         # Disable usage status for security
         envs.VLLM_NO_USAGE_STATS = "1"
