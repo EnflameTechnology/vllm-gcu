@@ -70,6 +70,7 @@
 #include "src/mul_static_fp8_quant.h"
 #include "src/rms_norm_static_int8_quant.h"
 #include "src/rotary_embedding.h"
+#include "src/mrotary_embedding.h"
 #include "src/rotary_embedding_with_kv_cache.h"
 #include "src/sgl_moe_align_block_size.h"
 #include "src/silu_and_mul.h"
@@ -314,6 +315,18 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
         "                 Tensor cos_sin_cache, bool is_neox) -> ()");
   }
   ops.impl("rotary_embedding", torch::kPrivateUse1, &rotary_embedding);
+
+   // MRotary embedding
+  handle =
+      c10::Dispatcher::singleton().findSchema({"_C::mrotary_embedding", ""});
+  if (!handle.has_value()) {
+    ops.def(
+        "mrotary_embedding(Tensor positions, Tensor! query,"
+        "                 Tensor! key, int head_size,"
+        "                 Tensor cos_sin_cache, bool is_neox,"
+        "                 int[] mrope_section) -> ()");
+  }
+  ops.impl("mrotary_embedding", torch::kPrivateUse1, &mrotary_embedding);
 
   // Quantization ops
 

@@ -34,6 +34,9 @@
 - func: rotary_embedding(Tensor positions, Tensor(a!) query, Tensor(a!) key, int head_size, Tensor cos_sin_cache, bool is_neox) -> ()
   variants: function
 
+- func: mrotary_embedding(Tensor positions, Tensor(a!) query, Tensor(a!) key, int head_size, Tensor cos_sin_cache, bool is_neox, int[] mrope_section) -> ()
+  variants: function
+
 - func: awq_gemm_gcu(Tensor(a!) _in_feats, Tensor(a!) _kernel, Tensor(a!) _scaling_factors, Tensor(a!) _zeros, int split_k_iters, Tensor? bias, int group_size) -> Tensor
   variants: function
 

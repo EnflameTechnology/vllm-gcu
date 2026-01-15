@@ -166,6 +166,22 @@ def rotary_embedding(
         positions, query, key, head_size, cos_sin_cache, is_neox
     )
 
+# mrope-interleave ops
+def mrotary_embedding(
+    positions: torch.Tensor,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    head_size: int,
+    cos_sin_cache: torch.Tensor,
+    is_neox: bool,
+    mrope_section: List[int],
+) -> None:
+    if query.numel() == 0:
+        return
+
+    torch.ops._C.mrotary_embedding(
+        positions, query, key, head_size, cos_sin_cache, is_neox, mrope_section
+    )
 
 # layer norm ops
 def rms_norm(

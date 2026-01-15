@@ -10,6 +10,7 @@ from vllm.model_executor.layers.rotary_embedding import (
     MRotaryEmbedding,
 )
 from vllm.model_executor.layers.rotary_embedding.mrope import apply_interleaved_rope
+from vllm.platforms import current_platform
 from vllm_gcu.kernels import _custom_ops as ops
 
 
@@ -116,8 +117,21 @@ def m_forward_oot(
         assert self.mrope_section
 
         if self.mrope_interleaved:
-            cos = apply_interleaved_rope(cos, self.mrope_section)
-            sin = apply_interleaved_rope(sin, self.mrope_section)
+            if not current_platform.has_device_capability(140):
+                positions = torch.arange(num_tokens, device=query.device, dtype=torch.long)
+                ops.mrotary_embedding(
+                    positions,
+                    query,
+                    key,
+                    self.head_size,
+                    cos_sin,
+                    self.is_neox_style,
+                    self.mrope_section,
+                )
+                return query, key
+            else:
+                cos = apply_interleaved_rope(cos, self.mrope_section)
+                sin = apply_interleaved_rope(sin, self.mrope_section)
         else:
             cos = torch.cat([
                 m[i]
@@ -159,6 +173,7 @@ def m_forward_oot(
     query = torch.cat((query_rot, query_pass), dim=-1).reshape(query_shape)
     key = torch.cat((key_rot, key_pass), dim=-1).reshape(key_shape)
     return query, key
+
 
 RotaryEmbedding.forward_oot = forward_oot
 DeepseekScalingRotaryEmbedding.forward = deepseek_oot
