@@ -459,15 +459,14 @@ class FlashMLASparseImpl(MLACommonBaseImpl[FlashMLASparseMetadata]):
         _attn_out, _ = flash_mla_with_kvcache_sparse(
             q=q.unsqueeze(0),  # unsqueeze to add batch_dim
             k_cache=kv_c_and_k_pe_cache.view(torch.float8_e4m3fn).unsqueeze(-2),
-            block_table=attn_metadata.block_table,
+            block_table=extra_metadata.dummy_block_table,
             head_dim_v=512,
             cache_seqlens=extra_metadata.cache_lens,
             tile_scheduler_metadata=extra_metadata.scheduler_metadata,
             num_splits=extra_metadata.num_splits,
             is_fp8_kvcache=True,
-            indices=self.topk_indices_buffer[:attn_metadata.num_actual_tokens].unsqueeze(0),
+            indices=topk_indices.unsqueeze(0),
             softmax_scale=self.softmax_scale,
-            req_id=attn_metadata.req_id_per_token,
         )
 
         return _attn_out
@@ -519,8 +518,20 @@ class FlashMLASparseImpl(MLACommonBaseImpl[FlashMLASparseMetadata]):
 
         topk_indices = self.topk_indices_buffer[:num_actual_toks]
 
-        # TODO: handle index / kv_cache correctly
-        topk_indices_global = None
+        topk_indices_global = torch.empty_like(topk_indices)
+        torch.ops._C_cache_ops.convert_req_index_to_global_index(
+            topk_indices_global,
+            attn_metadata.req_id_per_token,
+            attn_metadata.block_table,
+            topk_indices,
+            None,
+            None,
+            attn_metadata.block_size,
+            topk_indices.shape[1],
+            128,
+            False,
+            None
+        )
 
         q = torch.cat([ql_nope, q_pe], dim=-1)
 

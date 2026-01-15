@@ -126,8 +126,20 @@ class FlashMLASparseFusionImpl(FlashMLASparseImpl):
 
         topk_indices = self.topk_indices_buffer[:num_actual_toks]
 
-        # TODO: handle index / kv_cache correctly
-        topk_indices_global = None
+        topk_indices_global = torch.empty_like(topk_indices)
+        torch.ops._C_cache_ops.convert_req_index_to_global_index(
+            topk_indices_global,
+            attn_metadata.req_id_per_token,
+            attn_metadata.block_table,
+            topk_indices,
+            None,
+            None,
+            attn_metadata.block_size,
+            topk_indices.shape[1],
+            128,
+            False,
+            None,
+        )
 
         # write the latent and rope to kv cache
         self.rope_with_kvcache(

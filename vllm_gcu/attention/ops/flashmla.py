@@ -67,7 +67,6 @@ def flash_mla_with_kvcache_sparse(
     descale_k: Optional[torch.Tensor] = None,
     is_fp8_kvcache: bool = False,
     indices: Optional[torch.Tensor] = None,
-    req_id: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Arguments:
@@ -121,7 +120,7 @@ def flash_mla_with_kvcache_sparse(
     else:
         out, softmax_lse = torch.ops._flashmla_C.fwd_kvcache_mla_sparse(
             q, k_cache, head_dim_v, cache_seqlens, block_table, softmax_scale,
-            causal, tile_scheduler_metadata, num_splits, is_fp8_kvcache, indices, req_id)
+            causal, tile_scheduler_metadata, num_splits, is_fp8_kvcache, indices)
     return out, softmax_lse
 
 # GCU version of get_mla_metadata. Not exactly the same as the original one.

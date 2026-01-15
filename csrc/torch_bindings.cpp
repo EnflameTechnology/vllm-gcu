@@ -5,6 +5,7 @@
 #include "src/awq_gemm_gcu.h"
 #include "src/cache_ops.h"
 #include "src/concat_and_cache_mla.h"
+#include "src/convert_req_index_to_global_index.h"
 #include "src/context_attention_forward.h"
 #include "src/cutlass_scaled_mm.h"
 #include "src/dispatch_bgmv.h"
@@ -1405,6 +1406,23 @@ TORCH_LIBRARY_FRAGMENT(CONCAT(TORCH_EXTENSION_NAME, _cache_ops),
                  &gather_and_maybe_dequant_cache);
 
   handle = c10::Dispatcher::singleton().findSchema(
+      {"_C_cache_ops::convert_req_index_to_global_index", ""});
+  if (!handle.has_value()) {
+    cache_ops.def(
+      "convert_req_index_to_global_index(Tensor(a!) output, Tensor req_id, "
+      "                                 Tensor block_table, "
+      "                                 Tensor token_indices, "
+      "                                 Tensor? prefill_workspace_request_ids, "
+      "                                 Tensor? prefill_workspace_starts, "
+      "                                 int block_size, int num_topk_tokens, "
+      "                                 int block_n, "
+      "                                 bool has_prefill_workspace, "
+      "                                 Tensor? seq_lens) -> ()");
+  }
+  cache_ops.impl("convert_req_index_to_global_index", torch::kPrivateUse1,
+                 &convert_req_index_to_global_index);
+
+  handle = c10::Dispatcher::singleton().findSchema(
       {"_C_cache_ops::indexer_k_quant_and_cache", ""});
   if (!handle.has_value()) {
     cache_ops.def(
@@ -1533,11 +1551,11 @@ TORCH_LIBRARY_FRAGMENT(CONCAT(_flashmla, TORCH_EXTENSION_NAME), _flashmla_ops) {
         "    int head_size_v, Tensor seqlens_k, Tensor block_table, "
         "    float softmax_scale, bool is_causal, "
         "    Tensor tile_scheduler_metadata, "
-        "    Tensor num_splits, bool is_fp8_kvcache, Tensor indices, "
-        "    Tensor req_id) -> (Tensor, Tensor)");
+        "    Tensor num_splits, bool is_fp8_kvcache, Tensor indices) -> "
+        "(Tensor, Tensor)");
   }
   _flashmla_ops.impl("fwd_kvcache_mla_sparse", torch::kPrivateUse1,
-                 &mha_fwd_kvcache_mla_sparse);
+                     &mha_fwd_kvcache_mla_sparse);
 }
 
 REGISTER_EXTENSION(TORCH_EXTENSION_NAME)

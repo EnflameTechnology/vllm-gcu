@@ -25,16 +25,14 @@
 #include "tops_extension/torch/GCUAten.h"
 #include "torch_gcu.h"
 
-
 namespace vllm_gcu::llm_ops {
 
 std::tuple<at::Tensor, at::Tensor> mha_fwd_kvcache_mla_sparse(
-    at::Tensor &q, const at::Tensor &kcache, const int64_t head_size_v,
-    const at::Tensor &seqlens_k, const at::Tensor &block_table,
+    at::Tensor& q, const at::Tensor& kcache, const int64_t head_size_v,
+    const at::Tensor& seqlens_k, const at::Tensor& block_table,
     const double softmax_scale, bool is_causal,
-    const at::Tensor &tile_scheduler_metadata, const at::Tensor &num_splits,
-    bool is_fp8_kvcache,
-    const at::Tensor &indices, const at::Tensor &req_id) {
+    const at::Tensor& tile_scheduler_metadata, const at::Tensor& num_splits,
+    bool is_fp8_kvcache, const at::Tensor& indices) {
   const torch_gcu::OptionalGCUGuard device_guard(device_of(q));
   const topsStream_t stream = torch_gcu::getCurrentGCUStream();
 
@@ -67,12 +65,10 @@ std::tuple<at::Tensor, at::Tensor> mha_fwd_kvcache_mla_sparse(
 
   std::vector<at::Tensor> out_vector = {out, softmax_lse};
 
-  ATEN_ATENOP_CHECK(ATEN_ATENOP_CALL(topsvllm::topsvllmSparseFwdKvcacheMla)(
-        out_vector, q, kcache, head_size_v_scalar, seqlens_k, block_table,
-        softmax_scale_scalar, is_causal, tile_scheduler_metadata, num_splits,
-        is_fp8_kvcache, indices, req_id,
-        stream));
-
+  ATEN_ATENOP_CHECK(ATEN_ATENOP_CALL(topsvllm::topsvllmFwdKvcacheMla)(
+      out_vector, q, kcache, head_size_v_scalar, seqlens_k, block_table,
+      softmax_scale_scalar, is_causal, tile_scheduler_metadata, num_splits,
+      is_fp8_kvcache, indices, stream));
 
   return {out, softmax_lse};
 }
