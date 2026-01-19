@@ -6,6 +6,7 @@ import warnings as _warnings
 import contextlib
 from transformers import AutoConfig
 import vllm_gcu.envs as gcu_envs
+from vllm_gcu import reasoning
 
 def _try_register_config(name, module_name, class_name):
     try:
@@ -17,7 +18,6 @@ def _try_register_config(name, module_name, class_name):
         _warnings.warn(f"Failed to import {name}: {_e}")
     except AttributeError as _e:
         _warnings.warn(f"Failed to import {name}: {_e}")
-
 
 def _try_register_chat_template(model_type, chat_template_path):
     from pathlib import Path

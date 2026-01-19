@@ -27,3 +27,4 @@ import vllm_gcu.patch.patch_0_11_0.rotary_embedding  # noqa
 import vllm_gcu.patch.patch_0_11_0.rotary_embedding_base  # noqa
 import vllm_gcu.patch.patch_0_11_0.w8a8_utils  # noqa
 import vllm_gcu.patch.patch_0_11_0.mla  # noqa
+import vllm_gcu.patch.patch_0_11_0.serving_chat  # noqa
