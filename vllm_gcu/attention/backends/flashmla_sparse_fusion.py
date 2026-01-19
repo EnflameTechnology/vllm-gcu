@@ -130,7 +130,7 @@ class FlashMLASparseFusionImpl(FlashMLASparseImpl):
         topk_indices_global = None
 
         # write the latent and rope to kv cache
-        self.rope_with_kvcache.forward_native(
+        self.rope_with_kvcache(
             q_concat[..., self.kv_lora_rank:],
             None,
             q_pe,

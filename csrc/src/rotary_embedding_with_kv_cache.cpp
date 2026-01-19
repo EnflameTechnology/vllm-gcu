@@ -4,6 +4,7 @@
 #include "rotary_embedding_with_kv_cache.h"
 
 #include <topsaten/topsaten_extensions.h>
+#include <torch/all.h>
 
 #include <tuple>
 
@@ -28,6 +29,9 @@ void rotary_embedding_with_kv_cache_gcu(
   auto view_q = q.view({-1, q.size(-1)});
   auto view_q_out = q_out.view({-1, q_out.size(-1)});
   auto view_positions = positions.view({-1});
+  kv_cache = std::string(kv_dtype) == "fp8_ds_mla"
+                 ? kv_cache.view(torch::kFloat8_e4m3fn)
+                 : kv_cache;
 
   if (k_pe_out.has_value()) {
     assert(k_c_normed.has_value());
