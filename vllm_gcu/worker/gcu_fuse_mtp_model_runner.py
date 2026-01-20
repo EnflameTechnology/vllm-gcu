@@ -126,27 +126,27 @@ class FuseMTPGCUModelRunner(GCUModelRunner):
                                                     pin_memory=True)
         self.draft_tokens_cpu = self.draft_tokens_cpu_tensor.numpy()
 
-        self.repetition_penalties = torch.ones(self.expand_max_num_reqs,
+        self.repetition_penalties = torch.ones(self.max_num_reqs,
                                                 dtype=torch.float32,
                                                 device=self.device)
-        self.repetition_penalties_cpu_tensor = torch.ones(self.expand_max_num_reqs,
+        self.repetition_penalties_cpu_tensor = torch.ones(self.max_num_reqs,
                                                             dtype=torch.float32,
                                                             device="cpu",
                                                             pin_memory=True)
         self.repetition_penalties_cpu = self.repetition_penalties_cpu_tensor.numpy()
 
-        self.frequency_penalties = torch.zeros(self.expand_max_num_reqs,
+        self.frequency_penalties = torch.zeros(self.max_num_reqs,
                                                 dtype=torch.float32,
                                                 device=self.device)
-        self.frequency_penalties_cpu_tensor = torch.zeros(self.expand_max_num_reqs,
+        self.frequency_penalties_cpu_tensor = torch.zeros(self.max_num_reqs,
                                                             dtype=torch.float32,
                                                             device="cpu",
                                                             pin_memory=True)
         self.frequency_penalties_cpu = self.frequency_penalties_cpu_tensor.numpy()
-        self.presence_penalties = torch.zeros(self.expand_max_num_reqs,
+        self.presence_penalties = torch.zeros(self.max_num_reqs,
                                                 dtype=torch.float32,
                                                 device=self.device)
-        self.presence_penalties_cpu_tensor = torch.zeros(self.expand_max_num_reqs,
+        self.presence_penalties_cpu_tensor = torch.zeros(self.max_num_reqs,
                                                             dtype=torch.float32,
                                                             device="cpu",
                                                             pin_memory=True)
@@ -155,21 +155,21 @@ class FuseMTPGCUModelRunner(GCUModelRunner):
         self.max_penalty_prompt_len = self.vllm_config.additional_config.get("deepseek_fused_mtp_penalty_max_prompt_len", 1)
         self.max_penalty_output_len = self.vllm_config.additional_config.get("deepseek_fused_mtp_penalty_max_output_len", 1)
         vocab_size = self.model_config.get_vocab_size()
-        self.output_token_ids = torch.full((self.expand_max_num_reqs, self.max_penalty_output_len),
+        self.output_token_ids = torch.full((self.max_num_reqs, self.max_penalty_output_len),
                                             fill_value = vocab_size,
                                             dtype=torch.int64,
                                             device=self.device)
-        self.output_token_ids_cpu_tensor = torch.full((self.expand_max_num_reqs, self.max_penalty_output_len),
+        self.output_token_ids_cpu_tensor = torch.full((self.max_num_reqs, self.max_penalty_output_len),
                                             fill_value = vocab_size,
                                             dtype=torch.int64,
                                             device="cpu",
                                             pin_memory=True)
         self.output_token_ids_cpu = self.output_token_ids_cpu_tensor.numpy()
-        self.prompt_token_ids = torch.full((self.expand_max_num_reqs, self.max_penalty_prompt_len),
+        self.prompt_token_ids = torch.full((self.max_num_reqs, self.max_penalty_prompt_len),
                                             fill_value = vocab_size,
                                             dtype=torch.int64,
                                             device=self.device)
-        self.prompt_token_ids_cpu_tensor = torch.full((self.expand_max_num_reqs, self.max_penalty_prompt_len),
+        self.prompt_token_ids_cpu_tensor = torch.full((self.max_num_reqs, self.max_penalty_prompt_len),
                                             fill_value = vocab_size,
                                             dtype=torch.int64,
                                             device="cpu",
@@ -253,23 +253,23 @@ class FuseMTPGCUModelRunner(GCUModelRunner):
         self.top_k[:expand_reqs].copy_(self.top_k_cpu_tensor[:expand_reqs], non_blocking=True)
 
         if self.vllm_config.additional_config.get("deepseek_fused_mtp_use_penalty", True):
-            self.repetition_penalties_cpu[:expand_reqs] = np.concatenate((repetition_penalties_cpu[:num_decodes].repeat(expand_cnt),
+            num_reqs = self.input_batch.num_reqs
+            self.repetition_penalties_cpu[:num_reqs] = np.concatenate((repetition_penalties_cpu[:num_decodes],
                                                                             repetition_penalties_cpu[num_decodes:]))
-            self.repetition_penalties[:expand_reqs].copy_(self.repetition_penalties_cpu_tensor[:expand_reqs], non_blocking=True)
+            self.repetition_penalties[:num_reqs].copy_(self.repetition_penalties_cpu_tensor[:num_reqs], non_blocking=True)
 
-            self.frequency_penalties_cpu[:expand_reqs] = np.concatenate((frequency_penalties_cpu[:num_decodes].repeat(expand_cnt),
+            self.frequency_penalties_cpu[:num_reqs] = np.concatenate((frequency_penalties_cpu[:num_decodes],
                                                                             frequency_penalties_cpu[num_decodes:]))
-            self.frequency_penalties[:expand_reqs].copy_(self.frequency_penalties_cpu_tensor[:expand_reqs], non_blocking=True)
-            self.presence_penalties_cpu[:expand_reqs] = np.concatenate((presence_penalties_cpu[:num_decodes].repeat(expand_cnt),
+            self.frequency_penalties[:num_reqs].copy_(self.frequency_penalties_cpu_tensor[:num_reqs], non_blocking=True)
+            self.presence_penalties_cpu[:num_reqs] = np.concatenate((presence_penalties_cpu[:num_decodes],
                                                                            presence_penalties_cpu[num_decodes:]))
-            self.presence_penalties[:expand_reqs].copy_(self.presence_penalties_cpu_tensor[:expand_reqs], non_blocking=True)
-            self.output_token_ids_cpu[:expand_reqs,:output_token_ids.shape[1]] = np.concatenate((output_token_ids[:num_decodes].repeat(expand_cnt, axis=0),
+            self.presence_penalties[:num_reqs].copy_(self.presence_penalties_cpu_tensor[:num_reqs], non_blocking=True)
+            self.output_token_ids_cpu[:num_reqs,:output_token_ids.shape[1]] = np.concatenate((output_token_ids[:num_decodes],
                                                                       output_token_ids[num_decodes:]),axis=0)
-            self.output_token_ids[:expand_reqs].copy_(self.output_token_ids_cpu_tensor[:expand_reqs], non_blocking=True)
-            self.prompt_token_ids_cpu[:expand_reqs,:prompt_token_ids.shape[1]] = np.concatenate((prompt_token_ids[:num_decodes].repeat(expand_cnt, axis=0),
+            self.output_token_ids[:num_reqs].copy_(self.output_token_ids_cpu_tensor[:num_reqs], non_blocking=True)
+            self.prompt_token_ids_cpu[:num_reqs,:prompt_token_ids.shape[1]] = np.concatenate((prompt_token_ids[:num_decodes],
                                                                       prompt_token_ids[num_decodes:]),axis=0)
-            self.prompt_token_ids[:expand_reqs].copy_(self.prompt_token_ids_cpu_tensor[:expand_reqs], non_blocking=True)
-            
+            self.prompt_token_ids[:num_reqs].copy_(self.prompt_token_ids_cpu_tensor[:num_reqs], non_blocking=True)            
 
 
         for i, req_id in enumerate(self.input_batch.req_ids[:num_decodes]):
@@ -1066,11 +1066,11 @@ class FuseMTPGCUModelRunner(GCUModelRunner):
             top_p=self.top_p[:expand_reqs],
             top_k=self.top_k[:expand_reqs],
             temperature=self.temperature[:expand_reqs],
-            repetition_penalty=self.repetition_penalties[:expand_reqs],
-            frequency_penalty=self.frequency_penalties[:expand_reqs],
-            presence_penalty=self.presence_penalties[:expand_reqs],
-            prompt_token_ids=self.prompt_token_ids[:expand_reqs],
-            output_token_ids=self.output_token_ids[:expand_reqs],
+            repetition_penalty=self.repetition_penalties[:batch_size],
+            frequency_penalty=self.frequency_penalties[:batch_size],
+            presence_penalty=self.presence_penalties[:batch_size],
+            prompt_token_ids=self.prompt_token_ids[:batch_size],
+            output_token_ids=self.output_token_ids[:batch_size],
         )
         sampled_token_ids = model_output["accepted_tokens"]
         accepted_lens = model_output["accepted_lens"]

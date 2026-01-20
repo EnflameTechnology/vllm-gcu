@@ -86,7 +86,7 @@ from vllm_gcu.kernels.linear import MergedReplicatedLinear, CustomMergedColumnPa
 from vllm_gcu.models.deepseek_v3.deepseek_v3_fusion import DeepseekV2MLAAttentionFusion
 from vllm_gcu.distributed.sp import slice_tensor_sp, sp_to_tp, tp_to_sp
 from vllm.v1.sample.metadata import SamplingMetadata as SamplingMetadataDs
-from vllm_gcu.kernels.sampler import GCUSampler as SamplerDS
+from vllm_gcu.kernels.sampler_fusedmtp import FusedMTPSampler as SamplerDS
 from vllm_gcu.kernels.sampler import ParallelTopKTopPSampler
 from vllm_gcu.kernels.rejection_sampler import GCURejectionSampler as RejectionSamplerDS
 #from vllm.v1.sample.rejection_sampler import RejectionSampler as RejectionSamplerDS
@@ -451,7 +451,7 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts,
         else:
             self.num_redundant_experts = 0
 
-        self.sampler = SamplerDS()
+        self.sampler = SamplerDS(spec_k=self.num_speculative_tokens)
         logprobs_mode = self.sampler.topk_topp_sampler.logprobs_mode
         self.sampler.topk_topp_sampler = ParallelTopKTopPSampler(logprobs_mode)
         self.rejection_sampler = RejectionSamplerDS()
