@@ -25,8 +25,9 @@ class GCUDeepseekV32IndexerMetadataBuilder(DeepseekV32IndexerMetadataBuilder):
         self.num_speculative_tokens = (
             self.vllm_config.speculative_config.num_speculative_tokens
             if self.vllm_config.speculative_config else 0)
-        # Now deepgemm fp8_paged_mqa_logits does not support next_n > 2
-        self.reorder_batch_threshold += min(self.num_speculative_tokens, 1)
+
+        # topsdeepgemmFp8PagedMqaLogits op support next_n=1/2/3/4
+        self.reorder_batch_threshold = 4
 
         props = torch.cuda.get_device_properties(self.device)
         # patch start
