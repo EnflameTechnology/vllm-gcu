@@ -26,8 +26,12 @@ from vllm_gcu.kernels.quantization.utils import register_gcu_quantization_config
 from vllm_gcu.kernels.modular_experts import TritonExpertsPad
 from vllm.distributed import get_tensor_model_parallel_rank, get_tensor_model_parallel_world_size
 from vllm.model_executor.layers.fused_moe.config import int8_w8a8_moe_quant_config, FusedMoEQuantConfig
-from vllm.model_executor.layers.fused_moe.layer import FusedMoEConfig 
+from vllm.model_executor.layers.fused_moe.layer import FusedMoEConfig
 
+from vllm_gcu.kernels.quantization.kv_cache import (
+                    GCUInt8KVCachePerTensorMethod,
+                    GCUInt8KVCachePerHeadMethod
+)
 
 @register_gcu_quantization_config("w8a8")
 class W8A8Config(QuantizationConfig):
@@ -71,6 +75,33 @@ class W8A8Config(QuantizationConfig):
     def get_linear_method(self) -> "W8A8LinearMethod":
         return W8A8LinearMethod(self)
 
+    def get_cache_scale(self, name: str) -> Optional[str]:
+        """
+        Map int8 KV cache scale/zero names from checkpoint to model parameter names.
+
+        Checkpoint format:  layers.X.self_attn.{k_scale,v_scale,k_zero,v_zero}
+        Model format:       layers.X.self_attn.attn.{k_scale,v_scale,k_zero,v_zero}
+
+        :param name: weight name from checkpoint
+        :return: mapped parameter name in model, or None if not a KV cache param
+        """
+        # Only process KV cache quantization parameters
+        kv_cache_suffixes = (".k_scale", ".v_scale", ".k_zero", ".v_zero")
+        if not name.endswith(kv_cache_suffixes):
+            return None
+
+        # Skip if already contains .attn. (already in correct format)
+        if ".attn." in name:
+            return None
+
+        # Map: self_attn.{k_scale,...} -> self_attn.attn.{k_scale,...}
+        for suffix in kv_cache_suffixes:
+            if name.endswith(suffix):
+                base = name[:-len(suffix)]  # e.g., "layers.0.self_attn"
+                return f"{base}.attn{suffix}"  # e.g., "layers.0.self_attn.attn.k_scale"
+
+        return None
+
     def get_quant_method(
         self, layer: torch.nn.Module, prefix: str
     ) -> Optional["W8A8LinearMethod"]:
@@ -84,7 +115,10 @@ class W8A8Config(QuantizationConfig):
         elif isinstance(layer, FusedMoE):
             return FusedW8A8MoEMethod(self, layer.moe_config)
         elif isinstance(layer, Attention):
-            return Int8KVCacheMethod(self)
+            if layer.kv_cache_dtype == "int8":
+                return GCUInt8KVCachePerTensorMethod(self)
+            else:
+                return Int8KVCacheMethod(self)
         return None
 
     def get_scaled_act_names(self) -> List[str]:

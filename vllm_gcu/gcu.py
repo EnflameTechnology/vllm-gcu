@@ -105,6 +105,15 @@ class GCUPlatform(Platform):
             else:
                 return "vllm_gcu.attention.backends.mla_v1.GCUMLABackend"
 
+        if cls.get_device_capability().to_int() == 130:
+            if kv_cache_dtype.startswith("fp8"):
+                raise ValueError("FP8 kv is not supported on Scorpio!")
+            elif kv_cache_dtype.startswith("int8"):
+                return "vllm_gcu.attention.backends.flash_attn_int8kv.GCUFlashAttentionInt8KVBackend"
+
+        if cls.get_device_capability().to_int() == 140 and kv_cache_dtype.startswith("int8"):
+            raise ValueError("INT8 kv is not supported on Libra!")
+
         return "vllm.v1.attention.backends.flash_attn.FlashAttentionBackend"
 
 

@@ -26,7 +26,10 @@ from vllm_gcu.kernels.quantization.utils import (
     register_gcu_quantization_config,
     register_weight_loader_v2_supported,
 )
-
+from vllm_gcu.kernels.quantization.kv_cache import (
+                    GCUInt8KVCachePerTensorMethod,
+                    GCUInt8KVCachePerHeadMethod
+)
 
 @register_gcu_quantization_config("gptq")
 class GPTQGCUConfig(GPTQConfig):
@@ -88,7 +91,10 @@ class GPTQGCUConfig(GPTQConfig):
         ):
             return GPTQGCULinearMethod(self)
         elif isinstance(layer, Attention):
-            return BaseKVCacheMethod(self)
+            if layer.kv_cache_dtype == "int8":
+                return GCUInt8KVCachePerTensorMethod(self)
+            else:
+                return BaseKVCacheMethod(self)
         return None
 
     @classmethod
@@ -99,6 +105,33 @@ class GPTQGCUConfig(GPTQConfig):
             and user_quant in ["gptq", "gptq_gcu", None]
         ):
             return cls.get_name()
+        return None
+
+    def get_cache_scale(self, name: str) -> Optional[str]:
+        """
+        Map int8 KV cache scale/zero names from checkpoint to model parameter names.
+
+        Checkpoint format:  layers.X.self_attn.{k_scale,v_scale,k_zero,v_zero}
+        Model format:       layers.X.self_attn.attn.{k_scale,v_scale,k_zero,v_zero}
+
+        :param name: weight name from checkpoint
+        :return: mapped parameter name in model, or None if not a KV cache param
+        """
+        # Only process KV cache quantization parameters
+        kv_cache_suffixes = (".k_scale", ".v_scale", ".k_zero", ".v_zero")
+        if not name.endswith(kv_cache_suffixes):
+            return None
+
+        # Skip if already contains .attn. (already in correct format)
+        if ".attn." in name:
+            return None
+
+        # Map: self_attn.{k_scale,...} -> self_attn.attn.{k_scale,...}
+        for suffix in kv_cache_suffixes:
+            if name.endswith(suffix):
+                base = name[:-len(suffix)]  # e.g., "layers.0.self_attn"
+                return f"{base}.attn{suffix}"  # e.g., "layers.0.self_attn.attn.k_scale"
+
         return None
 
 

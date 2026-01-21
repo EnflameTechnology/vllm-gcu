@@ -232,6 +232,9 @@
 - func: reshape_and_cache_flash(Tensor key, Tensor value, Tensor(a!) key_cache, Tensor(a!) value_cache, Tensor slot_mapping, str kv_cache_dtype, Tensor k_scale, Tensor v_scale) -> ()
   variants: function
 
+- func: reshape_and_cache_flash_int8kv(Tensor key, Tensor value, Tensor(a!) key_cache, Tensor(a!) value_cache, Tensor slot_mapping, str kv_cache_dtype, Tensor k_scale, Tensor v_scale, Tensor k_zp, Tensor v_zp) -> ()
+  variants: function
+
 - func: fused_qkv_gemm_quant(Tensor(a!) q, Tensor(a!) kv, Tensor x, Tensor weight, Tensor scale, Tensor zeros, int group_size) -> ()
   variants: function
 
@@ -307,4 +310,7 @@
   variants: function
 
 - func: fp8_paged_mqa_logits_v1(Tensor q, Tensor fused_kv_cache, Tensor weights, Tensor context_lens, Tensor block_table, Tensor schedule_meta, int max_context_len, bool clean_logits, int threshold) -> Tensor
+  variants: function
+
+- func: mha_fwd_int8kv(Tensor q, Tensor k, Tensor v, Tensor? k_new, Tensor? v_new, Tensor? q_v, Tensor? out, Tensor? cu_seqlens_q, Tensor? cu_seqlens_k, Tensor? cu_seqlens_k_new, Tensor? seqused_q, Tensor? seqused_k, int? max_seqlen_q, int? max_seqlen_k, Tensor? page_table, Tensor? kv_batch_idx, Tensor? leftpad_k, Tensor? rotary_cos, Tensor? rotary_sin, Tensor? seqlens_rotary, Tensor? q_descale, Tensor? k_descale, Tensor? v_descale, Tensor? k_zp, Tensor? v_zp, float? softmax_scale, bool is_causal, int window_size_left, int window_size_right, float softcap, bool is_rotary_interleaved, Tensor? scheduler_metadata, int num_splits, bool? pack_gqa, int sm_margin, Tensor? s_aux) -> (Tensor, Tensor, Tensor, Tensor)
   variants: function

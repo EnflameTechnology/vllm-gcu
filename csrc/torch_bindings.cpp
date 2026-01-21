@@ -64,6 +64,7 @@
 #include "src/rejection_greedy_sample.h"
 #include "src/rejection_random_sample.h"
 #include "src/reshape_and_cache_flash.h"
+#include "src/reshape_and_cache_flash_int8kv.h"
 #include "src/sample_recovered_tokens.h"
 #include "src/rms_norm.h"
 #include "src/rms_norm_per_token_group_quant_fp8.h"
@@ -91,6 +92,7 @@
 #include "src/topk_softmax.h"
 #include "src/topk_softmax_renormalize.h"
 #include "src/weak_ref_tensor.h"
+#include "src/mha_fwd_int8kv.h"
 #include "src/mha_fwd_kvcache_mla.h"
 #include "src/top_k_per_row_decode.h"
 #include "src/top_k_per_row_prefill.h"
@@ -1311,6 +1313,33 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
       "Tensor seq_lens, Tensor! indices, "
       "int numRows, int stride0, int stride1, int topK, int threshold) -> ()");
   ops.impl("top_k_per_row_decode", torch::kPrivateUse1, &top_k_per_row_decode);
+
+  // MHA forward with int8 KV cache
+  handle = c10::Dispatcher::singleton().findSchema({"_C::mha_fwd_int8kv", ""});
+  if (!handle.has_value()) {
+    ops.def(
+        "mha_fwd_int8kv("
+        "    Tensor q, Tensor k, Tensor v,"
+        "    Tensor? k_new, Tensor? v_new, Tensor? q_v, Tensor? out,"
+        "    Tensor? cu_seqlens_q, Tensor? cu_seqlens_k,"
+        "    Tensor? cu_seqlens_k_new,"
+        "    Tensor? seqused_q, Tensor? seqused_k,"
+        "    int? max_seqlen_q, int? max_seqlen_k,"
+        "    Tensor? page_table, Tensor? kv_batch_idx, Tensor? leftpad_k,"
+        "    Tensor? rotary_cos, Tensor? rotary_sin, Tensor? seqlens_rotary,"
+        "    Tensor? q_descale, Tensor? k_descale, Tensor? v_descale,"
+        "    Tensor? k_zp, Tensor? v_zp,"
+        "    float? softmax_scale,"
+        "    bool is_causal,"
+        "    int window_size_left, int window_size_right,"
+        "    float softcap,"
+        "    bool is_rotary_interleaved,"
+        "    Tensor? scheduler_metadata,"
+        "    int num_splits, bool? pack_gqa, int sm_margin,"
+        "    Tensor? s_aux"
+        ") -> (Tensor, Tensor, Tensor, Tensor)");
+  }
+  ops.impl("mha_fwd_int8kv", torch::kPrivateUse1, &mha_fwd_int8kv);
 }
 
 // TORCH_LIBRARY_FRAGMENT(CONCAT(_cache_ops, TORCH_EXTENSION_NAME), cache_ops) {
@@ -1376,6 +1405,24 @@ TORCH_LIBRARY_FRAGMENT(CONCAT(TORCH_EXTENSION_NAME, _cache_ops),
   }
   cache_ops.impl("reshape_and_cache_flash", torch::kPrivateUse1,
                  &reshape_and_cache_flash);
+
+  // Reshape the key and value tensors and cache them with int8kv.
+  handle = c10::Dispatcher::singleton().findSchema(
+      {"_C_cache_ops::reshape_and_cache_flash_int8kv", ""});
+  if (!handle.has_value()) {
+    cache_ops.def(
+        "reshape_and_cache_flash_int8kv(Tensor key, Tensor value,"
+        "Tensor! key_cache,"
+        "Tensor! value_cache,"
+        "Tensor slot_mapping,"
+        "str kv_cache_dtype,"
+        "Tensor k_scale,"
+        "Tensor v_scale,"
+        "Tensor k_zp,"
+        "Tensor v_zp) -> ()");
+  }
+  cache_ops.impl("reshape_and_cache_flash_int8kv", torch::kPrivateUse1,
+                 &reshape_and_cache_flash_int8kv);
 
   // Concat kv_c and k_pe and cache them.
   handle = c10::Dispatcher::singleton().findSchema(
