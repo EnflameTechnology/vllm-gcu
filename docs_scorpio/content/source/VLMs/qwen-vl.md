@@ -120,7 +120,7 @@ export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 
 #### serving模式
 ```shell
-# 启动服务器
+# 启动服务端
 vllm serve "[path of Qwen3-VL-30B-A3B-Thinking]" \
  --max-model-len 262144 \
  --tensor-parallel-size 4 \
@@ -205,7 +205,7 @@ evalscope perf \
 
 ```shell
 python3 -m pip install transformers==4.57.3
-
+python3 -m pip install evalscope[perf]==1.1.0
 ```
 #### 环境变量
 
@@ -213,17 +213,15 @@ python3 -m pip install transformers==4.57.3
 export TORCHGCU_INDUCTOR_ENABLE=0
 export PYTORCH_EFML_BASED_GCU_CHECK=1
 export TORCH_ECCL_AVOID_RECORD_STREAMS=1
-export VLLM_USE_V1=1
-export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 ```
 
 #### 在线测试
 ```shell
-# 启动服务器
+# 启动服务端
 vllm serve "[path of Qwen3-VL-8B-Instruct]" \
   --served-model-name Qwen3-VL-8B-Instruct \
-  --max-model-len 128000 \
+  --max-model-len 32768 \
   --disable-log-requests \
   --gpu-memory-utilization 0.9 \
   --dtype=bfloat16 \
@@ -264,7 +262,7 @@ EOF
 ```shell
 # 启动服务端
 vllm serve "[path of Qwen3-VL-8B-Instruct]" \
-  --max-model-len 128000 \
+  --max-model-len 32768 \
   --disable-log-requests \
   --gpu-memory-utilization 0.9 \
   --dtype=bfloat16 \
@@ -279,8 +277,8 @@ vllm serve "[path of Qwen3-VL-8B-Instruct]" \
 
 # 启动客户端
 evalscope perf \
-  --parallel 4 \
-  --number 40 \
+  --parallel 8 \
+  --number 80 \
   --model [path of Qwen3-VL-8B-Instruct] \
   --tokenizer-path [path of Qwen3-VL-8B-Instruct] \
   --url http://localhost:8990/v1/chat/completions \
@@ -297,5 +295,5 @@ evalscope perf \
   --image-num 1
 ```
 注：
-*  本模型在 S60 上推荐的`max-model-len`为128000；
+*  本模型支持的`max-model-len`为262144；
 *  `input-len`、`output-len`和`num-prompts`可按需调整；
