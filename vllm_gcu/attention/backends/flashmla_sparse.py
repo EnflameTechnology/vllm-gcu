@@ -295,7 +295,10 @@ class FlashMLASparseMetadataBuilder(
             parallel_config)
         self.mla_dims = get_mla_dims(self.model_config)
         self.topk_tokens = vllm_config.model_config.hf_config.index_topk
-        self.use_fp8_kv_cache = cache_config.cache_dtype == "fp8_ds_mla"
+        self.use_fp8_kv_cache = (
+            cache_config.cache_dtype == "fp8_ds_mla"
+            or cache_config.cache_dtype == "fp8"
+        )
         self.topk_tokens_tensor = torch.tensor([self.topk_tokens],
                                                device=device,
                                                dtype=torch.int32)
@@ -315,19 +318,8 @@ class FlashMLASparseMetadataBuilder(
             max((sm_count // 2) / h_k // (cdiv(h_q // h_k, 2 * 64) * s_q), 1))
         if current_platform.is_device_capability(100):
             max_num_sm_parts *= 2
-        self.tile_scheduler_metadata_buffer = torch.empty(
-            # TileSchedulerMetaDataSize = 8
-            # see: FlashMLA/csrc/params.h
-            (max_num_sm_parts, 8),
-            dtype=torch.int32,
-            device=device)
-        self.num_splits_buffer = torch.empty(
-            # We pack all the tokens into one batch for sparse attention.
-            # Otherwise, we can exceed the sm of `get_mla_metadata`.
-            (
-                2, ),
-            dtype=torch.int32,
-            device=device)
+        self.tile_scheduler_metadata_buffer = None
+        self.num_splits_buffer = None
         self.req_id_per_token_buffer = torch.empty(
             (vllm_config.scheduler_config.max_num_batched_tokens, ),
             dtype=torch.int32,
@@ -451,7 +443,8 @@ class FlashMLASparseImpl(MLACommonBaseImpl[FlashMLASparseMetadata]):
     def _forward_fp8_kv(self, q: torch.Tensor,
                         kv_c_and_k_pe_cache: torch.Tensor,
                         topk_indices: torch.Tensor,
-                        attn_metadata: FlashMLASparseMetadata) -> torch.Tensor:
+                        attn_metadata: FlashMLASparseMetadata,
+                        descale_k: Optional[torch.Tensor] = None,) -> torch.Tensor:
 
         assert attn_metadata.fp8_extra_metadata is not None
         extra_metadata = attn_metadata.fp8_extra_metadata
@@ -467,6 +460,7 @@ class FlashMLASparseImpl(MLACommonBaseImpl[FlashMLASparseMetadata]):
             is_fp8_kvcache=True,
             indices=topk_indices.unsqueeze(0),
             softmax_scale=self.softmax_scale,
+            descale_k=descale_k,
         )
 
         return _attn_out
@@ -546,7 +540,10 @@ class FlashMLASparseImpl(MLACommonBaseImpl[FlashMLASparseMetadata]):
                 scale=layer._k_scale,
             )
 
-        if self.kv_cache_dtype != "fp8_ds_mla":
+        if self.kv_cache_dtype == "fp8":
+            attn_out = self._forward_fp8_kv(q, kv_cache, topk_indices_global,
+                                            attn_metadata, layer._k_scale)
+        elif self.kv_cache_dtype != "fp8_ds_mla":
             attn_out = self._forward_bf16_kv(q, kv_cache, topk_indices_global,
                                              attn_metadata)
         else:

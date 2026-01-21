@@ -1551,8 +1551,8 @@ TORCH_LIBRARY_FRAGMENT(CONCAT(_flashmla, TORCH_EXTENSION_NAME), _flashmla_ops) {
         "    int head_size_v, Tensor seqlens_k, Tensor block_table, "
         "    float softmax_scale, bool is_causal, "
         "    Tensor tile_scheduler_metadata, "
-        "    Tensor num_splits, bool is_fp8_kvcache, Tensor indices) -> "
-        "(Tensor, Tensor)");
+        "    Tensor num_splits, bool is_fp8_kvcache, Tensor indices, Tensor? "
+        "descale_k) -> (Tensor, Tensor)");
   }
   _flashmla_ops.impl("fwd_kvcache_mla_sparse", torch::kPrivateUse1,
                      &mha_fwd_kvcache_mla_sparse);

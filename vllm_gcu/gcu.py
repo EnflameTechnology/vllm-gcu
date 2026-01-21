@@ -180,6 +180,10 @@ class GCUPlatform(Platform):
             if key in parser._option_string_actions:
                 parser._option_string_actions[key].choices += [256]
 
+            key = "--kv-cache-dtype"
+            if key in parser._option_string_actions:
+                parser._option_string_actions[key].choices += ['fp8_ds_mla', 'int8']
+
             # key = "--disable-async-output-proc"
             # if key in parser._option_string_actions:
             #     # set disable_async_output_proc default True
@@ -222,13 +226,6 @@ class GCUPlatform(Platform):
             if cache_config.block_size is None:
                 # set block size to 64 for gcu if not specific
                 cache_config.block_size = 64
-
-            if (
-                cache_config.cache_dtype.startswith("fp8")
-                and cls.get_device_capability().to_int() == 130
-            ):
-                cache_config.cache_dtype = "int8"
-
 
         enable_deepseek_fused_mtp = gcu_envs.VLLM_GCU_ENABLE_DEEPSEEK_MTP_FUSION
         if not enable_deepseek_fused_mtp and \

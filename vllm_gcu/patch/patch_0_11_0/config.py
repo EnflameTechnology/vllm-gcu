@@ -2,6 +2,8 @@ import inspect
 import ast
 import os
 import textwrap
+from pydantic.dataclasses import dataclass
+from typing import Literal, get_args
 import torch
 from unittest.mock import patch
 
@@ -10,6 +12,7 @@ from vllm.utils import random_uuid
 from vllm.multimodal import MULTIMODAL_REGISTRY
 from vllm.config.compilation import (CompilationConfig, CompilationLevel,
                                      CUDAGraphMode, PassConfig)
+from vllm.config.cache import CacheConfig as OldCacheConfig, CacheDType
 import vllm.envs as envs
 
 
@@ -45,3 +48,23 @@ new_init = remove_if_from_function(VllmConfig.__post_init__,
                                    'self.parallel_config.enable_dbo')
 
 patch("vllm.config.VllmConfig.__post_init__", new_init).start()
+
+CacheDTypeExt = Literal[CacheDType, Literal["fp8_ds_mla", "int8"]]
+@dataclass
+class CacheConfig(OldCacheConfig):
+    cache_dtype: CacheDTypeExt = "auto"
+    def _verify_cache_dtype(self) -> None:
+        if self.cache_dtype == "auto":
+            pass
+        elif self.cache_dtype in get_args(CacheDTypeExt):
+            if self.cache_dtype.startswith("fp8"):
+                logger.info(
+                    "Using fp8 data type to store kv cache. It reduces the GPU "
+                    "memory footprint and boosts the performance. "
+                    "Meanwhile, it may cause accuracy drop without a proper "
+                    "scaling factor.")
+        else:
+            raise ValueError(f"Unknown kv cache dtype: {self.cache_dtype}")
+patch("vllm.config.cache.CacheConfig", CacheConfig).start()
+patch("vllm.config.CacheConfig", CacheConfig).start()
+patch("vllm.engine.arg_utils.CacheConfig", CacheConfig).start()

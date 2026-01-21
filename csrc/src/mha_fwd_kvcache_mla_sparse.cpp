@@ -32,7 +32,8 @@ std::tuple<at::Tensor, at::Tensor> mha_fwd_kvcache_mla_sparse(
     const at::Tensor& seqlens_k, const at::Tensor& block_table,
     const double softmax_scale, bool is_causal,
     const at::Tensor& tile_scheduler_metadata, const at::Tensor& num_splits,
-    bool is_fp8_kvcache, const at::Tensor& indices) {
+    bool is_fp8_kvcache, const at::Tensor& indices,
+    const c10::optional<at::Tensor>& descale_k) {
   const torch_gcu::OptionalGCUGuard device_guard(device_of(q));
   const topsStream_t stream = torch_gcu::getCurrentGCUStream();
 
@@ -65,10 +66,21 @@ std::tuple<at::Tensor, at::Tensor> mha_fwd_kvcache_mla_sparse(
 
   std::vector<at::Tensor> out_vector = {out, softmax_lse};
 
-  ATEN_ATENOP_CHECK(ATEN_ATENOP_CALL(topsvllm::topsvllmFwdKvcacheMla)(
-      out_vector, q, kcache, head_size_v_scalar, seqlens_k, block_table,
-      softmax_scale_scalar, is_causal, tile_scheduler_metadata, num_splits,
-      is_fp8_kvcache, indices, stream));
+  if (descale_k.has_value()) {
+    at::Tensor descale_k_tensor = descale_k.value();
+    if (descale_k_tensor.dim() == 0) {
+      descale_k_tensor = descale_k_tensor.unsqueeze(0);
+    }
+    ATEN_ATENOP_CHECK(ATEN_ATENOP_CALL(topsvllm::topsvllmFwdKvcacheMla)(
+        out_vector, q, kcache, head_size_v_scalar, seqlens_k, block_table,
+        softmax_scale_scalar, is_causal, tile_scheduler_metadata, num_splits,
+        is_fp8_kvcache, descale_k_tensor, indices, stream));
+  } else {
+    ATEN_ATENOP_CHECK(ATEN_ATENOP_CALL(topsvllm::topsvllmFwdKvcacheMla)(
+        out_vector, q, kcache, head_size_v_scalar, seqlens_k, block_table,
+        softmax_scale_scalar, is_causal, tile_scheduler_metadata, num_splits,
+        is_fp8_kvcache, indices, stream));
+  }
 
   return {out, softmax_lse};
 }

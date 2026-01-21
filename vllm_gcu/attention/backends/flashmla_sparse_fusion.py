@@ -6,6 +6,7 @@ import torch
 from vllm import _custom_ops as ops
 from vllm.attention.backends.abstract import AttentionLayer
 from vllm.logger import init_logger
+from vllm.platforms import current_platform
 from vllm.model_executor.layers.rotary_embedding import RotaryEmbedding
 from vllm_gcu.attention.backends.flashmla_sparse import FlashMLASparseImpl, FlashMLASparseBackend, FlashMLASparseMetadata
 from vllm_gcu.attention.backends.mla_v1_fusion import RopeWithKVCache
@@ -141,6 +142,10 @@ class FlashMLASparseFusionImpl(FlashMLASparseImpl):
             None,
         )
 
+        fp8_attention = self.kv_cache_dtype.startswith("fp8")
+        if fp8_attention:
+            kv_cache = kv_cache.view(current_platform.fp8_dtype())
+
         # write the latent and rope to kv cache
         self.rope_with_kvcache(
             q_concat[..., self.kv_lora_rank:],
@@ -154,7 +159,10 @@ class FlashMLASparseFusionImpl(FlashMLASparseImpl):
         )
         q = q_concat
 
-        if self.kv_cache_dtype != "fp8_ds_mla":
+        if self.kv_cache_dtype == "fp8":
+            attn_out = self._forward_fp8_kv(q, kv_cache, topk_indices_global,
+                                            attn_metadata, layer._k_scale)
+        elif self.kv_cache_dtype != "fp8_ds_mla":
             attn_out = self._forward_bf16_kv(q, kv_cache, topk_indices_global,
                                              attn_metadata)
         else:

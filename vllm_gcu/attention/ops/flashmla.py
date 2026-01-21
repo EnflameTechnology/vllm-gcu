@@ -109,9 +109,10 @@ def flash_mla_with_kvcache_sparse(
         # but here `causal` should not be specified
         assert not causal, \
             "causal must be `false` if sparse attention is enabled."
-    assert (descale_q is None) == (
-        descale_k is None
-    ), "descale_q and descale_k should be both None or both not None"
+    else:
+        assert (descale_q is None) == (
+            descale_k is None
+        ), "descale_q and descale_k should be both None or both not None"
 
     if indices is None and q.element_size() == 1:
         out, softmax_lse = torch.ops._flashmla_extension_C.fwd_kvcache_mla_fp8(
@@ -120,7 +121,7 @@ def flash_mla_with_kvcache_sparse(
     else:
         out, softmax_lse = torch.ops._flashmla_C.fwd_kvcache_mla_sparse(
             q, k_cache, head_dim_v, cache_seqlens, block_table, softmax_scale,
-            causal, tile_scheduler_metadata, num_splits, is_fp8_kvcache, indices)
+            causal, tile_scheduler_metadata, num_splits, is_fp8_kvcache, indices, descale_k)
     return out, softmax_lse
 
 # GCU version of get_mla_metadata. Not exactly the same as the original one.

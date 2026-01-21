@@ -288,7 +288,7 @@
 - func: dynamic_per_token_group_fp8_quant_with_ue8m0(Tensor(a!) output, Tensor(a!) scale, Tensor input, int group_size, bool scale_to_ue8m0) -> ()
   variants: function
 
-- func: mha_fwd_kvcache_mla_sparse(Tensor(a!) q, Tensor kcache, int head_size_v, Tensor seqlens_k, Tensor block_table, float softmax_scale, bool is_causal, Tensor tile_scheduler_metadata, Tensor num_splits, bool is_fp8_kvcache, Tensor indices) -> (Tensor, Tensor)
+- func: mha_fwd_kvcache_mla_sparse(Tensor(a!) q, Tensor kcache, int head_size_v, Tensor seqlens_k, Tensor block_table, float softmax_scale, bool is_causal, Tensor tile_scheduler_metadata, Tensor num_splits, bool is_fp8_kvcache, Tensor indices, Tensor? descale_k) -> (Tensor, Tensor)
   variants: function
 
 - func: get_token_bin_counts_and_mask(Tensor(a!) bin_counts, Tensor(a!) mask, Tensor tokens, int vocab_size, int num_seqs) -> ()
