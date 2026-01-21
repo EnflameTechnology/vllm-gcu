@@ -9,12 +9,13 @@
    =======================  =========== =========== ============ ============ =========== =========== ===========
    模型                      FP16        BF16        W4A16 GPTQ   W8A16 GPTQ   W4A16 AWQ   W4A8 FP8    W8A8 FP8
    =======================  =========== =========== ============ ============ =========== =========== ===========
-   DeepSeek-R1              .           .           .            .            .           Y           Y   
-   Deepseek-V3.1-Terminus   .           .           .            .            .           .           Y   
-   internlm3-8b-instruct    .           Y           .            .            .           .           .   
-   Meta-Llama-3-70B         .           Y           .            .            .           .           .   
-   Meta-Llama-3-8B          .           Y           .            .            .           .           .   
-   Qwen3-32B                .           Y           .            .            .           .           .   
-   Qwen2-72B-Instruct       .           Y           .            .            .           .           .   
+   DeepSeek-R1                   .           .           .            .            .           Y           Y   
+   Deepseek-V3.1-Terminus        .           .           .            .            .           .           Y   
+   internlm3-8b-instruct         .           Y           .            .            .           .           .   
+   Meta-Llama-3-70B              .           Y           .            .            .           .           .   
+   Meta-Llama-3-8B               .           Y           .            .            .           .           .   
+   Qwen3-32B                     .           Y           .            .            .           .           .   
+   Qwen2-72B-Instruct            .           Y           .            .            .           .           .   
+   Qwen3-30B-A3B-Instruct        .           .           .            .            .           .           Y   
    =======================  =========== =========== ============ ============ =========== =========== ===========
 
