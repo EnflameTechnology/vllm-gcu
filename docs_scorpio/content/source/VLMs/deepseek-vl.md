@@ -201,7 +201,7 @@ vllm bench serve \
  --max-concurrency 32 \
  --ignore-eos \
  --percentile-metrics ttft,tpot,itl,e2el \
- --metric-percentiles 25,50,75,90,95,99,10
+ --metric-percentiles 25,50,75,90,95,99,100
 
 ```
 注：

@@ -21,6 +21,7 @@ vLLM-gcu用户使用手册(L600)
    install/index
    .. usage/index
    LLMs/index
+   VLMs/index
 
 .. Comments: not used
    Indices and tables
