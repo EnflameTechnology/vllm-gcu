@@ -207,6 +207,10 @@ evalscope perf \
 python3 -m pip install transformers==4.57.3
 python3 -m pip install evalscope[perf]==1.1.0
 ```
+
+### 测试图片下载
+* url: [demo.jpeg](https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg)
+
 #### 环境变量
 
 ```
@@ -234,10 +238,6 @@ vllm serve "[path of Qwen3-VL-8B-Instruct]" \
   --port 8990
 
 # 启动客户端
-IMAGE_PATH="demo.jpeg"
-curl -L -O https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/$IMAGE_PATH
-IMAGE_BASE64=$(base64 -w 0 "$IMAGE_PATH")
-
 curl -X POST http://localhost:8990/v1/chat/completions   -H "Content-Type: application/json"  \
 -d @- <<EOF
 {
@@ -247,7 +247,7 @@ curl -X POST http://localhost:8990/v1/chat/completions   -H "Content-Type: appli
          "role": "user",
           "content": [
             {"type": "text", "text": "Describe this image."},
-            {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,$IMAGE_BASE64"}}
+            {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,$(base64 -w0 demo.jpeg)"}}
           ]
         }
     ],
@@ -277,8 +277,8 @@ vllm serve "[path of Qwen3-VL-8B-Instruct]" \
 
 # 启动客户端
 evalscope perf \
-  --parallel 8 \
-  --number 80 \
+  --parallel 1 \
+  --number 10 \
   --model [path of Qwen3-VL-8B-Instruct] \
   --tokenizer-path [path of Qwen3-VL-8B-Instruct] \
   --url http://localhost:8990/v1/chat/completions \
