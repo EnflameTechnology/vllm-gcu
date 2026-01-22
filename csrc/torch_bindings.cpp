@@ -28,6 +28,7 @@
 #include "src/fused_moe_kernel.h"
 #include "src/fused_moe_quant_kernel.h"
 #include "src/fused_moe_quant_kernel_ex.h"
+#include "src/fused_qk_norm_rope.h"
 #include "src/fused_qkv_gemm_quant.h"
 #include "src/fused_qkv_proj.h"
 #include "src/gather_and_maybe_dequant_cache.h"
@@ -826,6 +827,18 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
   }
   ops.impl("rms_norm_static_int8_quant", c10::kPrivateUse1,
            &rms_norm_static_int8_quant);
+
+  handle = c10::Dispatcher::singleton().findSchema(
+      {"_C::fused_qk_norm_rope", ""});
+  if (!handle.has_value()) {
+    ops.def(
+        "fused_qk_norm_rope(Tensor(a!) qkv, int num_heads_q,"
+        "int num_heads_k, int num_heads_v, int head_dim, "
+        "float eps, Tensor(a!) q_weight, Tensor(a!) k_weight, "
+        "Tensor(a!) cos_sin_cache,"
+        "bool is_neox, Tensor(a!) position_ids) -> ()");
+  }
+  ops.impl("fused_qk_norm_rope", c10::kPrivateUse1, &fused_qk_norm_rope);
 
   handle = c10::Dispatcher::singleton().findSchema(
       {"_C::fused_add_rms_norm_static_int8_quant", ""});

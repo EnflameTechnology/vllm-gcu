@@ -31,6 +31,9 @@
 - func: fused_add_rms_norm(Tensor(a!) input, Tensor(a!) residual, Tensor weight, float epsilon) -> ()
   variants: function
 
+- func: fused_qk_norm_rope(Tensor(a!) qkv, int num_heads_q, int num_heads_k, int num_heads_v, int head_dim, float eps, Tensor(a!) q_weight, Tensor(a!) k_weight, Tensor(a!) cos_sin_cache, bool is_neox, Tensor(a!) position_ids) -> ()
+  variants: function
+
 - func: rotary_embedding(Tensor positions, Tensor(a!) query, Tensor(a!) key, int head_size, Tensor cos_sin_cache, bool is_neox) -> ()
   variants: function
 

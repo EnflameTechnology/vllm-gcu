@@ -309,6 +309,10 @@ class GCUPlatform(Platform):
             logger.warning('Disable deepseek fusion ops as not support deepseek_v32 with deepseek_fused_mtp')
             os.environ["VLLM_GCU_DEEPSEEK_FUSION"] = "0"
 
+        # for torch native op
+        from vllm_gcu.kernels.native_op.torch_native_op import register_native_overrides
+        register_native_overrides(additional_config)
+        
         # Disable usage status for security
         envs.VLLM_NO_USAGE_STATS = "1"
         if gcu_envs.VLLM_GCU_DEEPSEEK_FUSION:
