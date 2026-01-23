@@ -4,7 +4,8 @@
 from typing import Optional, Tuple, Union
 
 import torch
-from vllm.model_executor.layers.layernorm import RMSNorm
+import torch.nn.functional as F
+from vllm.model_executor.layers.layernorm import RMSNorm, LayerNorm
 from vllm_gcu.kernels import _custom_ops as ops
 
 def forward_oot(
@@ -39,3 +40,8 @@ def forward_oot(
 
 
 RMSNorm.forward_oot = forward_oot
+
+def layernorm_forward(self, x: torch.Tensor):
+    return F.layer_norm(x, (self.dim,), self.weight, self.bias, self.eps)
+
+LayerNorm.forward = layernorm_forward

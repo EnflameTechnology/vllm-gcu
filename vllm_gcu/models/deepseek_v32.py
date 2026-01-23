@@ -397,7 +397,8 @@ def sparse_attn_indexer(
         scale_fmt,
     )
 
-    topk_indices_buffer[:hidden_states.shape[0]] = -1
+    # NOTE: everyone reads valid range, set -INTMAX to verify
+    # topk_indices_buffer[:hidden_states.shape[0]].fill_(-1)
     if has_prefill:
         prefill_metadata = attn_metadata.prefill
         for chunk in prefill_metadata.chunks:
