@@ -63,6 +63,7 @@ def register_custom_models():
     ModelRegistry.register_model("DeepseekForCausalLM", "vllm_gcu.models.deepseek_ocr.deepseek:DeepseekForCausalLMGCU")
     ModelRegistry.register_model("MMGPTStep3vForCausalLM", "vllm_gcu.models.step3v.mm_step1o:MMGPTStep1oForCausalLM")
     ModelRegistry.register_model("Step2MiniForCausalLM", "vllm_gcu.models.step3v.step2_mini:Step2MiniForCausalLM")
+    ModelRegistry.register_model("StepVLForConditionalGeneration", "vllm_gcu.models.step3_vl.step_vl:StepVLForConditionalGeneration")
     from vllm.model_executor.models.config import MODELS_CONFIG_MAP
     from vllm_gcu.models.config import DeepseekV32ForCausalLM
     MODELS_CONFIG_MAP['DeepseekV32ForCausalLM'] = DeepseekV32ForCausalLM
