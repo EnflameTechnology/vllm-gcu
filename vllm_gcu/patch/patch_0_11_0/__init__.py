@@ -24,3 +24,4 @@ import vllm_gcu.patch.patch_0_11_0.serving_engine  # noqa
 import vllm_gcu.patch.patch_0_11_0.tokenizer  # noqa
 import vllm_gcu.patch.patch_0_11_0.attention_layer  # noqa
 import vllm_gcu.patch.patch_0_11_0.rotary_embedding  # noqa
+import vllm_gcu.patch.patch_0_11_0.rotary_embedding_base  # noqa

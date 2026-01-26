@@ -356,6 +356,9 @@ class Qwen2_5_VisionAttention(nn.Module):
         q, k, v = (rearrange(x, "s b ... -> b s ...").contiguous()
                    for x in (q, k, v))
         if rotary_pos_emb is not None:
+            if rotary_dim is None:
+                rotary_dim = rotary_pos_emb.shape[0]
+            
             q_shape = q.shape
             k_shape = k.shape
             head_size = q_shape[-1]
