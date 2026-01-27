@@ -36,8 +36,10 @@ void convert_req_index_to_global_index(
   at::Tensor prefill_workspace_request_ids_tensor;
   at::Tensor prefill_workspace_starts_tensor;
   if (has_prefill_workspace) {
-    assert(prefill_workspace_request_ids.has_value());
-    assert(prefill_workspace_starts.has_value());
+    TORCH_CHECK(prefill_workspace_request_ids.has_value(),
+      "prefill_workspace_request_ids must be provided");
+    TORCH_CHECK(prefill_workspace_starts.has_value(),
+      "prefill_workspace_starts must be provided");
     prefill_workspace_request_ids_tensor =
         prefill_workspace_request_ids.value();
     prefill_workspace_starts_tensor = prefill_workspace_starts.value();

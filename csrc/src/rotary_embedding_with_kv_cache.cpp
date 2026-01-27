@@ -34,7 +34,7 @@ void rotary_embedding_with_kv_cache_gcu(
                  : kv_cache;
 
   if (k_pe_out.has_value()) {
-    assert(k_c_normed.has_value());
+    TORCH_CHECK(k_c_normed.has_value(), "k_c_normed must be provided");
     at::Tensor k_pe_out_tensor;
     at::Tensor k_c_normed_tensor;
     k_pe_out_tensor = k_pe_out.value();
