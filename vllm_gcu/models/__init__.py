@@ -57,6 +57,7 @@ def register_custom_models():
     ModelRegistry.register_model("HunYuanDenseV1ForCausalLM", "vllm_gcu.models.hunyuan_v1:HunYuanDenseV1ForCausalLM")
     ModelRegistry.register_model("HunYuanMoEV1ForCausalLM", "vllm_gcu.models.hunyuan_v1:HunYuanMoEV1ForCausalLM")
     ModelRegistry.register_model("HunYuanVLForConditionalGeneration", "vllm_gcu.models.hunyuan_vl.hunyuan_vision:HunYuanVLForConditionalGeneration")
+    ModelRegistry.register_model("PaddleOCRVLForConditionalGeneration", "vllm_gcu.models.paddleocr_vl:PaddleOCRVLForConditionalGeneration")
 
     ModelRegistry.register_model("KeyeVL1_5ForConditionalGeneration", "vllm_gcu.models.keye_vl:KeyeVL1_5ForConditionalGeneration")#gitleaks:allow
     ModelRegistry.register_model("Qwen2VLForConditionalGeneration", "vllm_gcu.models.qwen2_vl:Qwen2VLForConditionalGeneration")
