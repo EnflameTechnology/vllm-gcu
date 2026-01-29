@@ -581,10 +581,11 @@ class CustomRMSNormQuantFusionPass(VllmPatternMatcherPass):
             pass_name="custom_rmsnorm_quant_fusion_pass")
 
         for epsilon in [1e-5, 1e-6]:
-            RMSNormStaticQuantPattern(epsilon,
-                                      FP8_DTYPE).register(self.patterns)
-            FusedAddRMSNormStaticQuantPattern(
-                epsilon, FP8_DTYPE).register(self.patterns)
+            # fusion op not supported, uncomment following patterns if supported
+            # RMSNormStaticQuantPattern(epsilon,
+            #                           FP8_DTYPE).register(self.patterns)
+            # FusedAddRMSNormStaticQuantPattern(
+            #     epsilon, FP8_DTYPE).register(self.patterns)
             RMSNormDynamicQuantPattern(epsilon,
                                        FP8_DTYPE).register(self.patterns)
             FusedAddRMSNormDynamicQuantPattern(

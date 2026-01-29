@@ -17,10 +17,15 @@ void silu_mul_static_fp8_quant(at::Tensor &out, const at::Tensor &input,
   const topsStream_t stream = torch_gcu::getCurrentGCUStream();
   int group_size = -1;
 
+  at::Tensor scale_modified;
+  if (scale.dim() == 0) {
+    scale_modified = scale.unsqueeze(0);
+  }
+
   at::Tensor smooth_scale;
   ATEN_ATENOP_CHECK(ATEN_ATENOP_CALL(topsvllm::topsvllmSiluMulStaticFp8Quant)(
-      out, input, scale, real_num_tokens, smooth_scale, static_cast<int>(0),
-      group_size, stream));
+      out, input, scale_modified, real_num_tokens, smooth_scale,
+      static_cast<int>(0), group_size, stream));
 }
 
 } // namespace vllm_gcu::llm_ops

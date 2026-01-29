@@ -197,7 +197,10 @@ def invoke_fused_moe_kernel(
         if use_fp8_w8a8:
             B_zp = None
             if B.dtype != torch.int8:
-                group_size = block_shape[1]
+                if block_shape is None:
+                    group_size = -1
+                else:
+                    group_size = block_shape[1]
         elif use_int8_w8a8:
             B_zp = None
             group_size = 1
@@ -236,6 +239,27 @@ def invoke_fused_moe_kernel(
                 top_k,
                 block_size,
                 128,
+                -1,
+            )
+        elif use_fp8_w8a8 and B.dtype == torch.float8_e4m3fn and block_shape is None:
+            torch.ops._C.fused_moe_quant_kernel_ex(
+                C,
+                A,
+                B,
+                A_scale_rec, # GCU FP8 per-tensor: w13_input_scale_rec / w2_input_scale_rec stores original scale
+                B_scale,
+                B_zp,
+                bias,
+                topk_weights,
+                topk_ids,
+                sorted_token_ids,
+                expert_ids,
+                num_tokens_post_padded,
+                real_token_num,
+                mul_routed_weight,
+                top_k,
+                block_size,
+                -1,
                 -1,
             )
         else:

@@ -182,7 +182,7 @@ class TritonExpertsPad(mk.FusedMoEPermuteExpertsUnpermute):
 
         if activation == "silu":
             if self.quant_config.use_fp8_w8a8:
-                if w1.dtype == torch.int8:
+                if w1.dtype == torch.int8 or self.block_shape is None:
                     # shape = (
                     #     *intermediate_cache2.shape[:-1],
                     #     N // 2 // self.quant_config.block_shape[1],
