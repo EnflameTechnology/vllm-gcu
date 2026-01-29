@@ -324,6 +324,8 @@ class FlashMLASparseMetadataBuilder(
             (vllm_config.scheduler_config.max_num_batched_tokens, ),
             dtype=torch.int32,
             device=device)
+        self.topk_threshold = -1#int(self.vllm_config.additional_config.get("ds32_topk_threshold", -1))
+
 
     def build(self,
               common_prefix_len: int,
@@ -355,6 +357,9 @@ class FlashMLASparseMetadataBuilder(
                 # to mark invalid indices
                 cache_lens=self.max_model_len_tensor,
                 dummy_block_table=self.dummy_block_table)
+            if self.topk_threshold != -1:
+                fp8_extra_metadata.cache_lens = common_attn_metadata.seq_lens
+            fp8_extra_metadata.topk_threshold = self.topk_threshold
             
         metadata = FlashMLASparseMetadata(
             num_reqs=common_attn_metadata.num_reqs,
@@ -449,19 +454,40 @@ class FlashMLASparseImpl(MLACommonBaseImpl[FlashMLASparseMetadata]):
         assert attn_metadata.fp8_extra_metadata is not None
         extra_metadata = attn_metadata.fp8_extra_metadata
         from vllm_gcu.attention.ops.flashmla import flash_mla_with_kvcache_sparse
-        _attn_out, _ = flash_mla_with_kvcache_sparse(
-            q=q.unsqueeze(0),  # unsqueeze to add batch_dim
-            k_cache=kv_c_and_k_pe_cache.view(torch.float8_e4m3fn).unsqueeze(-2),
-            block_table=extra_metadata.dummy_block_table,
-            head_dim_v=512,
-            cache_seqlens=extra_metadata.cache_lens,
-            tile_scheduler_metadata=extra_metadata.scheduler_metadata,
-            num_splits=extra_metadata.num_splits,
-            is_fp8_kvcache=True,
-            indices=topk_indices.unsqueeze(0),
-            softmax_scale=self.softmax_scale,
-            descale_k=descale_k,
-        )
+        topk_threshold = attn_metadata.fp8_extra_metadata.topk_threshold
+        if topk_threshold == -1:
+            _attn_out, _ = flash_mla_with_kvcache_sparse(
+                q=q.unsqueeze(0),  # unsqueeze to add batch_dim
+                k_cache=kv_c_and_k_pe_cache.view(torch.float8_e4m3fn).unsqueeze(-2),
+                block_table=extra_metadata.dummy_block_table,
+                head_dim_v=512,
+                cache_seqlens=extra_metadata.cache_lens,
+                tile_scheduler_metadata=extra_metadata.scheduler_metadata,
+                num_splits=extra_metadata.num_splits,
+                is_fp8_kvcache=True,
+                indices=topk_indices.unsqueeze(0),
+                softmax_scale=self.softmax_scale,
+                descale_k=descale_k,
+            )
+        else:
+            _attn_out, _ = torch.ops._flashmla_C.fwd_kvcache_mla_mixed(
+                q=q,
+                kcache=kv_c_and_k_pe_cache.view(torch.float8_e4m3fn).unsqueeze(-2),
+                block_table=attn_metadata.block_table,
+                head_size_v=512,
+                seqlens_k=extra_metadata.cache_lens,
+                tile_scheduler_metadata=extra_metadata.scheduler_metadata,
+                num_splits=extra_metadata.num_splits,
+                is_fp8_kvcache=True,
+                indices=topk_indices,
+                softmax_scale=self.softmax_scale,
+                is_causal=True,
+                descale_k=descale_k,
+                threshold=topk_threshold,
+                cu_seq_q=attn_metadata.query_start_loc,
+            )
+            # unsqueeze to add batch_dim
+            _attn_out = _attn_out.unsqueeze(0)
 
         return _attn_out
 

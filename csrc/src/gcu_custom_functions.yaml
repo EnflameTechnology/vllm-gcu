@@ -282,7 +282,7 @@
 - func: silu_mul_fp8_quant_deep_gemm(Tensor input, Tensor counts, Tensor(a!) y_q, Tensor(a!) y_s, int group_size, bool use_ue8m0, int num_parallel_tokens) -> ()
   variants: function
 
-- func: get_mla_decoding_metadata(Tensor(a!) out, Tensor seqlens_k) -> ()
+- func: get_mla_decoding_metadata(Tensor(a!) out, Tensor seqlens_k, int num_q_tokens_per_head_k, int h_k, int? h_q, bool is_fp8_kvcache, int? topk, int? threshold, Tensor? cu_seq_q) -> ()
   variants: function
 
 - func: indexer_k_quant_and_cache(Tensor k, Tensor(a!) kv_cache, Tensor slot_mapping, int quant_block_size, str scale_fmt) -> ()
@@ -292,6 +292,9 @@
   variants: function
 
 - func: mha_fwd_kvcache_mla_sparse(Tensor(a!) q, Tensor kcache, int head_size_v, Tensor seqlens_k, Tensor block_table, float softmax_scale, bool is_causal, Tensor tile_scheduler_metadata, Tensor num_splits, bool is_fp8_kvcache, Tensor indices, Tensor? descale_k) -> (Tensor, Tensor)
+  variants: function
+
+- func: mha_fwd_kvcache_mla_mixed(Tensor(a!) q, Tensor kcache, int head_size_v, Tensor seqlens_k, Tensor block_table, float softmax_scale, bool is_causal, Tensor tile_scheduler_metadata, Tensor num_splits, bool is_fp8_kvcache, Tensor indices, Tensor? descale_k, int threshold, Tensor cu_seq_q) -> (Tensor, Tensor)
   variants: function
 
 - func: get_token_bin_counts_and_mask(Tensor(a!) bin_counts, Tensor(a!) mask, Tensor tokens, int vocab_size, int num_seqs) -> ()

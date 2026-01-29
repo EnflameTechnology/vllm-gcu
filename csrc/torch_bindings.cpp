@@ -102,6 +102,7 @@
 #include "src/indexer_k_quant_and_cache.h"
 #include "src/dynamic_per_token_group_fp8_quant_with_ue8m0.h"
 #include "src/mha_fwd_kvcache_mla_sparse.h"
+#include "src/mha_fwd_kvcache_mla_mixed.h"
 #include "src/get_token_bin_counts_and_mask.h"
 #include "src/cp_gather_indexer_k_quant_cache.h"
 
@@ -1560,9 +1561,9 @@ TORCH_LIBRARY_FRAGMENT(CONCAT(_flashmla, TORCH_EXTENSION_NAME), _flashmla_ops) {
     {"_C::get_mla_decoding_metadata", ""});
   if (!handle.has_value()) {
     _flashmla_ops.def(
-        "get_mla_decoding_metadata("
-        "    Tensor! output, Tensor seqlens_k"
-        "    ) -> ()");
+        "get_mla_decoding_metadata(Tensor(a!) out, Tensor seqlens_k, int "
+        "num_q_tokens_per_head_k, int h_k, int? h_q, bool is_fp8_kvcache, int? "
+        "topk, int? threshold, Tensor? cu_seq_q) -> ()");
   }
   _flashmla_ops.impl("get_mla_decoding_metadata", torch::kPrivateUse1,
                     &get_mla_decoding_metadata);
@@ -1581,6 +1582,18 @@ TORCH_LIBRARY_FRAGMENT(CONCAT(_flashmla, TORCH_EXTENSION_NAME), _flashmla_ops) {
   }
   _flashmla_ops.impl("fwd_kvcache_mla_sparse", torch::kPrivateUse1,
                      &mha_fwd_kvcache_mla_sparse);
+
+  _flashmla_ops.def(
+      "fwd_kvcache_mla_mixed("
+      "    Tensor! q, Tensor kcache, "
+      "    int head_size_v, Tensor seqlens_k, Tensor block_table, "
+      "    float softmax_scale, bool is_causal, "
+      "    Tensor tile_scheduler_metadata, "
+      "    Tensor num_splits, bool is_fp8_kvcache, Tensor indices, Tensor? "
+      "descale_k, int threshold, Tensor cu_seq_q) -> (Tensor, Tensor)");
+
+  _flashmla_ops.impl("fwd_kvcache_mla_mixed", torch::kPrivateUse1,
+                     &mha_fwd_kvcache_mla_mixed);
 }
 
 REGISTER_EXTENSION(TORCH_EXTENSION_NAME)

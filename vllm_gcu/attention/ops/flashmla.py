@@ -128,12 +128,40 @@ def flash_mla_with_kvcache_sparse(
 def get_mla_metadata(
     tile_scheduler_metadata: torch.Tensor,
     cache_seqlens: torch.Tensor,
-) -> Tuple[torch.Tensor, None]:
+    num_q_tokens_per_head_k: int,
+    num_heads_k: int,
+    num_heads_q: Optional[int] = None,
+    is_fp8_kvcache: bool = False,
+    topk: Optional[int] = None,
+    threshold: Optional[int] = None,
+    cu_seq_q: Optional[torch.Tensor] = None,
+) -> None:
     """
     Arguments:
     - tile_scheduler_metadata for GCU:
             (24 * 1024 * 1024), dtype torch.int8.
     - cache_seqlens: (batch_size), dtype torch.int32.
+    - num_q_tokens_per_head_k:
+            Equals to num_q_tokens_per_q_seq * num_heads_q // num_heads_k.
+    - num_heads_k: The number of k heads.
+    - num_heads_q:
+            The number of q heads.
+            This argument is optional when sparse attention is not enabled
+    - is_fp8_kvcache: Whether the k_cache and v_cache are in fp8 format.
+    - topk: If not None, sparse attention will be enabled,
+            and only tokens in the `indices` array
+            passed to `flash_mla_with_kvcache_sm90` will be attended to.
+    - threshold: for shortcut optimization
+    - cu_seq_q: for shortcut optimization
     """
-    torch.ops._flashmla_C.get_mla_decoding_metadata(tile_scheduler_metadata,
-                                                    cache_seqlens)
+    torch.ops._flashmla_C.get_mla_decoding_metadata(
+        tile_scheduler_metadata,
+        cache_seqlens,
+        num_q_tokens_per_head_k,
+        num_heads_k,
+        num_heads_q,
+        is_fp8_kvcache,
+        topk,
+        threshold,
+        cu_seq_q,
+    )

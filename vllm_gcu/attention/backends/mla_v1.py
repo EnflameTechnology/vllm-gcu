@@ -146,7 +146,12 @@ class GCUMLAMetadataBuilder(MLACommonMetadataBuilder[GCUMLAMetadata]):
             max_seq_len = seq_lens_device.max().item()
 
         if self.use_tile_scheduler_metadata:
-            get_mla_metadata(self.cg_buf_tile_scheduler_metadata, seq_lens_device)
+            get_mla_metadata(
+                self.cg_buf_tile_scheduler_metadata,
+                seq_lens_device,
+                self.num_q_heads,
+                1, # MQA for the decode path
+            )
 
         return GCUMLADecodeMetadata(
             block_table=block_table_tensor,
