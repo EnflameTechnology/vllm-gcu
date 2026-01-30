@@ -404,17 +404,31 @@ def sparse_attn_indexer(
         next_n = padded_q_fp8_decode_tokens.shape[1]
         assert batch_size == decode_metadata.seq_lens.shape[0]
         num_padded_tokens = batch_size * next_n
-        import deep_gemm
-        logits = deep_gemm.fp8_paged_mqa_logits(
-            padded_q_fp8_decode_tokens,
-            kv_cache,
-            weights[:num_padded_tokens],
-            decode_metadata.seq_lens,
-            decode_metadata.block_table,
-            decode_metadata.schedule_metadata,
-            max_model_len,
-            False,
-        )
+        topk_threshold = getattr(attn_metadata, 'topk_threshold', -1)
+        if topk_threshold != -1:
+            logits = torch.ops._deepgemm_C.fp8_paged_mqa_logits_v1(
+                padded_q_fp8_decode_tokens,
+                kv_cache,
+                weights[:num_padded_tokens],
+                decode_metadata.seq_lens,
+                decode_metadata.block_table,
+                decode_metadata.schedule_metadata,
+                max_model_len,
+                False,
+                topk_threshold,
+            )
+        else:
+            import deep_gemm
+            logits = deep_gemm.fp8_paged_mqa_logits(
+                padded_q_fp8_decode_tokens,
+                kv_cache,
+                weights[:num_padded_tokens],
+                decode_metadata.seq_lens,
+                decode_metadata.block_table,
+                decode_metadata.schedule_metadata,
+                max_model_len,
+                False,
+            )
         num_rows = logits.shape[0]
         topk_indices = topk_indices_buffer[:num_decode_tokens, :topk_tokens]
 

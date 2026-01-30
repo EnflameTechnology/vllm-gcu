@@ -105,6 +105,8 @@
 #include "src/mha_fwd_kvcache_mla_mixed.h"
 #include "src/get_token_bin_counts_and_mask.h"
 #include "src/cp_gather_indexer_k_quant_cache.h"
+#include "src/get_paged_mqa_logits_metadata_v1.h"
+#include "src/fp8_paged_mqa_logits_v1.h"
 
 // Note on op signatures:
 // The X_meta signatures are for the meta functions corresponding to op X.
@@ -1594,6 +1596,22 @@ TORCH_LIBRARY_FRAGMENT(CONCAT(_flashmla, TORCH_EXTENSION_NAME), _flashmla_ops) {
 
   _flashmla_ops.impl("fwd_kvcache_mla_mixed", torch::kPrivateUse1,
                      &mha_fwd_kvcache_mla_mixed);
+}
+
+TORCH_LIBRARY_FRAGMENT(CONCAT(_deepgemm, TORCH_EXTENSION_NAME), _deepgemm_ops) {
+  _deepgemm_ops.def(
+      "get_paged_mqa_logits_metadata_v1(Tensor context_lens, int block_kv, int "
+      "num_sms, int threshold) -> Tensor");
+
+  _deepgemm_ops.impl("get_paged_mqa_logits_metadata_v1", torch::kPrivateUse1,
+                     &get_paged_mqa_logits_metadata_v1);
+  _deepgemm_ops.def(
+      "fp8_paged_mqa_logits_v1(Tensor q, Tensor fused_kv_cache, Tensor "
+      "weights, Tensor context_lens, Tensor block_table, Tensor schedule_meta, "
+      "int max_context_len, bool clean_logits, int threshold) -> Tensor");
+
+  _deepgemm_ops.impl("fp8_paged_mqa_logits_v1", torch::kPrivateUse1,
+                     &fp8_paged_mqa_logits_v1);
 }
 
 REGISTER_EXTENSION(TORCH_EXTENSION_NAME)

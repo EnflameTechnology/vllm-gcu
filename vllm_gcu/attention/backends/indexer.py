@@ -1,3 +1,4 @@
+from contextlib import nullcontext
 from unittest.mock import patch
 from functools import partial
 import torch
@@ -51,6 +52,8 @@ class GCUDeepseekV32IndexerMetadataBuilder(DeepseekV32IndexerMetadataBuilder):
                                                      device=self.device)
         indexer_parallel = self.vllm_config.additional_config.get("indexer_parallel", '')
         self.indexer_use_sp_q = indexer_parallel == 'sp_q'
+        self.topk_threshold = -1
+        # self.topk_threshold = int(self.vllm_config.additional_config.get("ds32_topk_threshold", -1))
 
     def chunk_sequence_parallel(
         self,
@@ -88,10 +91,26 @@ class GCUDeepseekV32IndexerMetadataBuilder(DeepseekV32IndexerMetadataBuilder):
               common_prefix_len: int,
               common_attn_metadata: CommonAttentionMetadata,
               fast_build: bool = False) -> DeepseekV32IndexerMetadata:
-        with patch(
-                'vllm.v1.attention.backends.mla.indexer.split_decodes_and_prefills',
-                partial(customized_split_decodes_and_prefills, builder = self, \
-                         require_uniform=True)):
+        split_ctx = patch(
+            "vllm.v1.attention.backends.mla.indexer.split_decodes_and_prefills",
+            partial(
+                customized_split_decodes_and_prefills,
+                builder=self,
+                require_uniform=True,
+            ),
+        )
+        mqa_metadata_ctx = (
+            patch(
+                "vllm.v1.attention.backends.mla.indexer.get_paged_mqa_logits_metadata",
+                partial(
+                    torch.ops._deepgemm_C.get_paged_mqa_logits_metadata_v1,
+                    threshold=self.topk_threshold,
+                ),
+            )
+            if self.topk_threshold != -1
+            else nullcontext()
+        )
+        with split_ctx, mqa_metadata_ctx:
             r = super().build(common_prefix_len, common_attn_metadata,
                               fast_build)
             if self.indexer_use_sp_q and r.prefill:
@@ -101,7 +120,7 @@ class GCUDeepseekV32IndexerMetadataBuilder(DeepseekV32IndexerMetadataBuilder):
                     )
                     for chunk in r.prefill.chunks
                 ]
-
+            r.topk_threshold = self.topk_threshold
             return r
 
 @staticmethod

@@ -72,7 +72,7 @@
 
 - func: top_k_per_row_prefill(Tensor logits, Tensor rowStarts, Tensor rowEnds, Tensor(a!) indices, int numRows, int stride0, int stride1, int topK) -> ()
   variants: function
-  
+
 - func: topk_softmax_renormalize(Tensor(a!) topk_weights, Tensor(a!) topk_indices, Tensor(a!) token_expert_indices, Tensor(a!) gating_output, bool renormalize) -> ()
   variants: function
 
@@ -301,4 +301,10 @@
   variants: function
 
 - func: cp_gather_indexer_k_quant_cache(Tensor kv_cache, Tensor(a!) dst_value, Tensor(a!) dst_scale, Tensor block_table, Tensor cu_seq_lens) -> ()
+  variants: function
+
+- func: get_paged_mqa_logits_metadata_v1(Tensor context_lens, int block_kv, int num_sms, int threshold) -> Tensor
+  variants: function
+
+- func: fp8_paged_mqa_logits_v1(Tensor q, Tensor fused_kv_cache, Tensor weights, Tensor context_lens, Tensor block_table, Tensor schedule_meta, int max_context_len, bool clean_logits, int threshold) -> Tensor
   variants: function
