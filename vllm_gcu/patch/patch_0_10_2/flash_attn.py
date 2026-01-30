@@ -16,10 +16,6 @@ except ImportError:
     flash_attn_varlen_func = None
     flash_attn_with_kvcache = None
 
-# TODO: remove after FA supported
-def wrapped_flash_attn_varlen_func(*args, **kwargs):
-    kwargs.pop('s_aux', None)
-    return flash_attn_varlen_func(*args, **kwargs)
 
 def get_flash_attn_version(requires_alibi: bool = False):
     return 3
@@ -44,7 +40,7 @@ patch(
 ).start()
 
 import vllm.attention.backends.flash_attn # noqa
-setattr(vllm.attention.backends.flash_attn, 'flash_attn_varlen_func', wrapped_flash_attn_varlen_func)
+setattr(vllm.attention.backends.flash_attn, 'flash_attn_varlen_func', flash_attn_varlen_func)
 setattr(vllm.attention.backends.flash_attn, 'flash_attn_with_kvcache', flash_attn_with_kvcache)
 
 patch(
@@ -68,7 +64,7 @@ from vllm.v1.attention.backends.flash_attn import FlashAttentionMetadataBuilder
 setattr(
     vllm.v1.attention.backends.flash_attn,
     "flash_attn_varlen_func",
-    wrapped_flash_attn_varlen_func,
+    flash_attn_varlen_func,
 )
 setattr(
     vllm.v1.attention.backends.flash_attn,
