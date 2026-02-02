@@ -68,7 +68,6 @@ from vllm.model_executor.models.utils import sequence_parallel_chunk
 from vllm.platforms import current_platform
 from vllm.sequence import IntermediateTensors
 from vllm.utils import cdiv, direct_register_custom_op
-from vllm.utils.deep_gemm import fp8_mqa_logits, fp8_paged_mqa_logits
 from vllm.v1.attention.backends.mla.indexer import (DeepseekV32IndexerBackend,
                                                     DeepseekV32IndexerMetadata)
 from vllm.v1.kv_cache_interface import KVCacheSpec, MLAAttentionSpec
@@ -416,12 +415,14 @@ def sparse_attn_indexer(
                 chunk.cu_seq_lens,
                 chunk.num_reqs,
             )
-            logits = fp8_mqa_logits(
+            import deep_gemm
+            logits = deep_gemm.fp8_mqa_logits(
                 q_fp8[chunk.token_start:chunk.token_end],
                 (k_fp8, k_scale),
                 weights[chunk.token_start:chunk.token_end],
                 chunk.cu_seqlen_ks,
                 chunk.cu_seqlen_ke,
+                False,
             )
             num_rows = logits.shape[0]
             topk_indices = topk_indices_buffer[
@@ -459,14 +460,16 @@ def sparse_attn_indexer(
         next_n = padded_q_fp8_decode_tokens.shape[1]
         assert batch_size == decode_metadata.seq_lens.shape[0]
         num_padded_tokens = batch_size * next_n
-        logits = fp8_paged_mqa_logits(
+        import deep_gemm
+        logits = deep_gemm.fp8_paged_mqa_logits(
             padded_q_fp8_decode_tokens,
             kv_cache,
             weights[:num_padded_tokens],
             decode_metadata.seq_lens,
             decode_metadata.block_table,
             decode_metadata.schedule_metadata,
-            max_model_len=max_model_len,
+            max_model_len,
+            False,
         )
         num_rows = logits.shape[0]
         topk_indices = topk_indices_buffer[:num_decode_tokens, :topk_tokens]
