@@ -378,6 +378,10 @@ def sparse_attn_indexer(
                 logits.stride(1),
                 topk_tokens,
             )
+            if gathered_slice := getattr(chunk, "gathered_slice", None):
+                topk_indices_buffer[gathered_slice, :topk_tokens] = sp_to_tp(
+                    topk_indices, gathered_slice.stop - gathered_slice.start
+                )
 
     if has_decode:
         decode_metadata = attn_metadata.decode

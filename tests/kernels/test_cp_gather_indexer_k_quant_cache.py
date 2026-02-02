@@ -63,8 +63,8 @@ def cp_gather_indexer_k_quant_cache(
     gather_scale = torch.cat(expected_scale, dim=0).view(-1, 4)
     gather_value = gather_value.view(torch.float8_e4m3fn)
     gather_scale = gather_scale.view(torch.float32)
-    dst_value.copy_(gather_value)
-    dst_scale.copy_(gather_scale)
+    dst_value[cu_seq_lens[0]:cu_seq_lens[-1]].copy_(gather_value)
+    dst_scale[cu_seq_lens[0]:cu_seq_lens[-1]].copy_(gather_scale)
 
 
 @pytest.mark.parametrize("num_physical_blocks", [100, 12498])
