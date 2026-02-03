@@ -97,6 +97,952 @@ vllm bench serve \
 *  本模型支持的`max-model-len`为40960；
 *  `random-input-len`、`random-output-len`和`num-prompts`可按需调整；
 
+### Qwen3-32B-FP8
+
+#### 模型下载
+*  url: [Qwen3-32B-FP8](https://www.modelscope.cn/models/Qwen/Qwen3-32B-FP8)
+
+*  branch: `master`
+
+*  commit id: `8c192d01`
+
+将上述url设定的路径下的内容全部下载到`Qwen3-32B-FP8`文件夹中。
+
+注：需要安装以下依赖：
+#### requirements
+```shell
+python3 -m pip install transformers==4.57.1
+```
+
+#### 环境变量
+
+```
+export VLLM_USE_V1=1
+export TORCHGCU_INDUCTOR_ENABLE=0
+export PYTORCH_EFML_BASED_GCU_CHECK=1
+export TORCH_ECCL_AVOID_RECORD_STREAMS=1
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export VLLM_ATTENTION_BACKEND=FLASH_ATTN
+
+```
+
+#### 在线测试
+```shell
+# 启动服务端
+vllm serve "[path of Qwen3-32B-FP8]" \
+    --block-size=64 \
+    --no-enable-prefix-caching \
+    --async-scheduling \
+    --max-model-len 40960 \
+    --trust-remote-code
+
+# 启动客户端
+curl "http://127.0.0.1:8000/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "max_tokens": 500,
+        "messages": [
+                        {
+                            "role": "system",
+                             "content": "You are a helpful assistant."
+                         },
+                         {
+                             "role":"user",
+                             "content":"李白是谁？"
+                         }
+                     ],
+        "model":"[path of Qwen3-32B-FP8]",
+        "stop": null,
+        "stream": false
+      }'
+```
+
+#### 性能测试
+
+```shell
+# 启动服务端
+vllm serve "[path of Qwen3-32B-FP8]" \
+    --block-size=64 \
+    --no-enable-prefix-caching \
+    --async-scheduling \
+    --max-model-len 40960 \
+    --trust-remote-code
+
+# 启动客户端
+vllm bench serve \
+    --dataset-name random \
+    --model [path of Qwen3-32B-FP8] \
+    --num-prompts 40 \
+    --max-concurrency 4 \
+    --random-input-len 128 \
+    --random-output-len 4096 \
+    --trust-remote-code \
+    --ignore_eos
+```
+注：
+*  本模型支持的`max-model-len`为40960；
+*  `random-input-len`、`random-output-len`和`num-prompts`可按需调整；
+
+### Qwen3-14B
+
+#### 模型下载
+*  url: [Qwen3-14B](https://www.modelscope.cn/models/Qwen/Qwen3-14B)
+
+*  branch: `master`
+
+*  commit id: `6b837d17`
+
+将上述url设定的路径下的内容全部下载到`Qwen3-14B`文件夹中。
+
+注：需要安装以下依赖：
+#### requirements
+```shell
+python3 -m pip install transformers==4.57.1
+```
+
+#### 环境变量
+
+```
+export VLLM_USE_V1=1
+export TORCHGCU_INDUCTOR_ENABLE=0
+export PYTORCH_EFML_BASED_GCU_CHECK=1
+export TORCH_ECCL_AVOID_RECORD_STREAMS=1
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export VLLM_ATTENTION_BACKEND=FLASH_ATTN
+
+```
+
+#### 在线测试
+```shell
+# 启动服务端
+vllm serve "[path of Qwen3-14B]" \
+    --block-size=64 \
+    --no-enable-prefix-caching \
+    --async-scheduling \
+    --max-model-len 40960 \
+    --trust-remote-code
+
+# 启动客户端
+curl "http://127.0.0.1:8000/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "max_tokens": 500,
+        "messages": [
+                        {
+                            "role": "system",
+                             "content": "You are a helpful assistant."
+                         },
+                         {
+                             "role":"user",
+                             "content":"李白是谁？"
+                         }
+                     ],
+        "model":"[path of Qwen3-14B]",
+        "stop": null,
+        "stream": false
+      }'
+```
+
+#### 性能测试
+
+```shell
+# 启动服务端
+vllm serve "[path of Qwen3-14B]" \
+    --block-size=64 \
+    --async-scheduling \
+    --no-enable-prefix-caching \
+    --max-model-len 40960 \
+    --trust-remote-code
+
+# 启动客户端
+vllm bench serve \
+    --dataset-name random \
+    --model [path of Qwen3-14B] \
+    --num-prompts 40 \
+    --max-concurrency 4 \
+    --random-input-len 128 \
+    --random-output-len 4096 \
+    --trust-remote-code \
+    --ignore_eos
+```
+注：
+*  本模型支持的`max-model-len`为40960；
+*  `random-input-len`、`random-output-len`和`num-prompts`可按需调整；
+
+### Qwen3-14B-FP8
+
+#### 模型下载
+*  url: [Qwen3-14B-FP8](https://www.modelscope.cn/models/Qwen/Qwen3-14B-FP8)
+
+*  branch: `master`
+
+*  commit id: `67a1c549`
+
+将上述url设定的路径下的内容全部下载到`Qwen3-14B-FP8`文件夹中。
+
+注：需要安装以下依赖：
+#### requirements
+```shell
+python3 -m pip install transformers==4.57.1
+```
+
+#### 环境变量
+
+```
+export VLLM_USE_V1=1
+export TORCHGCU_INDUCTOR_ENABLE=0
+export PYTORCH_EFML_BASED_GCU_CHECK=1
+export TORCH_ECCL_AVOID_RECORD_STREAMS=1
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export VLLM_ATTENTION_BACKEND=FLASH_ATTN
+
+```
+
+#### 在线测试
+```shell
+# 启动服务端
+vllm serve "[path of Qwen3-14B-FP8]" \
+    --block-size=64 \
+    --trust-remote-code \
+    --async-scheduling \
+    --max-model-len 40960 \
+    --no-enable-prefix-caching
+
+# 启动客户端
+curl "http://127.0.0.1:8000/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "max_tokens": 500,
+        "messages": [
+                        {
+                            "role": "system",
+                             "content": "You are a helpful assistant."
+                         },
+                         {
+                             "role":"user",
+                             "content":"李白是谁？"
+                         }
+                     ],
+        "model":"[path of Qwen3-14B-FP8]",
+        "stop": null,
+        "stream": false
+      }'
+```
+
+#### 性能测试
+
+```shell
+# 启动服务端
+vllm serve "[path of Qwen3-14B-FP8]" \
+    --block-size=64 \
+    --async-scheduling \
+    --no-enable-prefix-caching \
+    --max-model-len 40960 \
+    --trust-remote-code 
+
+# 启动客户端
+vllm bench serve \
+    --dataset-name random \
+    --model [path of Qwen3-14B-FP8] \
+    --num-prompts 40 \
+    --max-concurrency 4 \
+    --random-input-len 128 \
+    --random-output-len 4096 \
+    --trust-remote-code \
+    --ignore_eos
+```
+注：
+*  本模型支持的`max-model-len`为40960；
+*  `random-input-len`、`random-output-len`和`num-prompts`可按需调整；
+
+### Qwen3-8B
+
+#### 模型下载
+*  url: [Qwen3-8B](https://www.modelscope.cn/models/Qwen/Qwen3-8B)
+
+*  branch: `master`
+
+*  commit id: `26028140`
+
+将上述url设定的路径下的内容全部下载到`Qwen3-8B`文件夹中。
+
+注：需要安装以下依赖：
+#### requirements
+```shell
+python3 -m pip install transformers==4.57.1
+```
+
+#### 环境变量
+
+```
+export VLLM_USE_V1=1
+export TORCHGCU_INDUCTOR_ENABLE=0
+export PYTORCH_EFML_BASED_GCU_CHECK=1
+export TORCH_ECCL_AVOID_RECORD_STREAMS=1
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export VLLM_ATTENTION_BACKEND=FLASH_ATTN
+
+```
+
+#### 在线测试
+```shell
+# 启动服务端
+vllm serve "[path of Qwen3-8B]" \
+    --block-size=64 \
+    --trust-remote-code \
+    --async-scheduling \
+    --max-model-len 40960 \
+    --no-enable-prefix-caching
+
+# 启动客户端
+curl "http://127.0.0.1:8000/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "max_tokens": 500,
+        "messages": [
+                        {
+                            "role": "system",
+                             "content": "You are a helpful assistant."
+                         },
+                         {
+                             "role":"user",
+                             "content":"李白是谁？"
+                         }
+                     ],
+        "model":"[path of Qwen3-8B]",
+        "stop": null,
+        "stream": false
+      }'
+```
+
+#### 性能测试
+
+```shell
+# 启动服务端
+vllm serve "[path of Qwen3-8B]" \
+    --block-size=64 \
+    --async-scheduling \
+    --no-enable-prefix-caching \
+    --max-model-len 40960 \
+    --trust-remote-code 
+
+# 启动客户端
+vllm bench serve \
+    --dataset-name random \
+    --model [path of Qwen3-8B] \
+    --num-prompts 40 \
+    --max-concurrency 4 \
+    --random-input-len 128 \
+    --random-output-len 4096 \
+    --trust-remote-code \
+    --ignore_eos
+```
+注：
+*  本模型支持的`max-model-len`为40960；
+*  `random-input-len`、`random-output-len`和`num-prompts`可按需调整；
+
+### Qwen3-8B-FP8
+
+#### 模型下载
+*  url: [Qwen3-8B-FP8](https://www.modelscope.cn/models/Qwen/Qwen3-8B-FP8)
+
+*  branch: `master`
+
+*  commit id: `82f329a8`
+
+将上述url设定的路径下的内容全部下载到`Qwen3-8B-FP8`文件夹中。
+
+注：需要安装以下依赖：
+#### requirements
+```shell
+python3 -m pip install transformers==4.57.1
+```
+
+#### 环境变量
+
+```
+export VLLM_USE_V1=1
+export TORCHGCU_INDUCTOR_ENABLE=0
+export PYTORCH_EFML_BASED_GCU_CHECK=1
+export TORCH_ECCL_AVOID_RECORD_STREAMS=1
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export VLLM_ATTENTION_BACKEND=FLASH_ATTN
+
+```
+
+#### 在线测试
+```shell
+# 启动服务端
+vllm serve "[path of Qwen3-8B-FP8]" \
+    --block-size=64 \
+    --trust-remote-code \
+    --async-scheduling \
+    --max-model-len 40960 \
+    --no-enable-prefix-caching
+
+# 启动客户端
+curl "http://127.0.0.1:8000/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "max_tokens": 500,
+        "messages": [
+                        {
+                            "role": "system",
+                             "content": "You are a helpful assistant."
+                         },
+                         {
+                             "role":"user",
+                             "content":"李白是谁？"
+                         }
+                     ],
+        "model":"[path of Qwen3-8B-FP8]",
+        "stop": null,
+        "stream": false
+      }'
+```
+
+#### 性能测试
+
+```shell
+# 启动服务端
+vllm serve "[path of Qwen3-8B-FP8]" \
+    --block-size=64 \
+    --async-scheduling \
+    --no-enable-prefix-caching \
+    --max-model-len 40960 \
+    --trust-remote-code 
+
+# 启动客户端
+vllm bench serve \
+    --dataset-name random \
+    --model [path of Qwen3-8B-FP8] \
+    --num-prompts 40 \
+    --max-concurrency 4 \
+    --random-input-len 128 \
+    --random-output-len 4096 \
+    --trust-remote-code \
+    --ignore_eos
+```
+注：
+*  本模型支持的`max-model-len`为40960；
+*  `random-input-len`、`random-output-len`和`num-prompts`可按需调整；
+
+### Qwen3-4B
+
+#### 模型下载
+*  url: [Qwen3-4B](https://www.modelscope.cn/models/Qwen/Qwen3-4B)
+
+*  branch: `master`
+
+*  commit id: `2c54d5a0`
+
+将上述url设定的路径下的内容全部下载到`Qwen3-4B`文件夹中。
+
+注：需要安装以下依赖：
+#### requirements
+```shell
+python3 -m pip install transformers==4.57.1
+```
+
+#### 环境变量
+
+```
+export VLLM_USE_V1=1
+export TORCHGCU_INDUCTOR_ENABLE=0
+export PYTORCH_EFML_BASED_GCU_CHECK=1
+export TORCH_ECCL_AVOID_RECORD_STREAMS=1
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export VLLM_ATTENTION_BACKEND=FLASH_ATTN
+
+```
+
+#### 在线测试
+```shell
+# 启动服务端
+vllm serve "[path of Qwen3-4B]" \
+    --block-size=64 \
+    --trust-remote-code \
+    --async-scheduling \
+    --max-model-len 40960 \
+    --no-enable-prefix-caching
+
+# 启动客户端
+curl "http://127.0.0.1:8000/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "max_tokens": 500,
+        "messages": [
+                        {
+                            "role": "system",
+                             "content": "You are a helpful assistant."
+                         },
+                         {
+                             "role":"user",
+                             "content":"李白是谁？"
+                         }
+                     ],
+        "model":"[path of Qwen3-4B]",
+        "stop": null,
+        "stream": false
+      }'
+```
+
+#### 性能测试
+
+```shell
+# 启动服务端
+vllm serve "[path of Qwen3-4B]" \
+    --block-size=64 \
+    --async-scheduling \
+    --no-enable-prefix-caching \
+    --max-model-len 40960 \
+    --trust-remote-code 
+
+# 启动客户端
+vllm bench serve \
+    --dataset-name random \
+    --model [path of Qwen3-4B] \
+    --num-prompts 40 \
+    --max-concurrency 4 \
+    --random-input-len 128 \
+    --random-output-len 4096 \
+    --trust-remote-code \
+    --ignore_eos
+```
+注：
+*  本模型支持的`max-model-len`为40960；
+*  `random-input-len`、`random-output-len`和`num-prompts`可按需调整；
+
+### Qwen3-4B-FP8
+
+#### 模型下载
+*  url: [Qwen3-4B-FP8](https://www.modelscope.cn/models/Qwen/Qwen3-4B-FP8)
+
+*  branch: `master`
+
+*  commit id: `dcfda577`
+
+将上述url设定的路径下的内容全部下载到`Qwen3-4B-FP8`文件夹中。
+
+注：需要安装以下依赖：
+#### requirements
+```shell
+python3 -m pip install transformers==4.57.1
+```
+
+#### 环境变量
+
+```
+export VLLM_USE_V1=1
+export TORCHGCU_INDUCTOR_ENABLE=0
+export PYTORCH_EFML_BASED_GCU_CHECK=1
+export TORCH_ECCL_AVOID_RECORD_STREAMS=1
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export VLLM_ATTENTION_BACKEND=FLASH_ATTN
+
+```
+
+#### 在线测试
+```shell
+# 启动服务端
+vllm serve "[path of Qwen3-4B-FP8]" \
+    --block-size=64 \
+    --trust-remote-code \
+    --async-scheduling \
+    --max-model-len 40960 \
+    --no-enable-prefix-caching
+
+# 启动客户端
+curl "http://127.0.0.1:8000/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "max_tokens": 500,
+        "messages": [
+                        {
+                            "role": "system",
+                             "content": "You are a helpful assistant."
+                         },
+                         {
+                             "role":"user",
+                             "content":"李白是谁？"
+                         }
+                     ],
+        "model":"[path of Qwen3-4B-FP8]",
+        "stop": null,
+        "stream": false
+      }'
+```
+
+#### 性能测试
+
+```shell
+# 启动服务端
+vllm serve "[path of Qwen3-4B-FP8]" \
+    --block-size=64 \
+    --no-enable-prefix-caching \
+    --async-scheduling \
+    --max-model-len 40960 \
+    --trust-remote-code 
+
+# 启动客户端
+vllm bench serve \
+    --dataset-name random \
+    --model [path of Qwen3-4B-FP8] \
+    --num-prompts 40 \
+    --max-concurrency 4 \
+    --random-input-len 128 \
+    --random-output-len 4096 \
+    --trust-remote-code \
+    --ignore_eos
+```
+注：
+*  本模型支持的`max-model-len`为40960；
+*  `random-input-len`、`random-output-len`和`num-prompts`可按需调整；
+
+### Qwen3-1.7B
+
+#### 模型下载
+*  url: [Qwen3-1.7B](https://www.modelscope.cn/models/Qwen/Qwen3-1.7B)
+
+*  branch: `master`
+
+*  commit id: `4855588e`
+
+将上述url设定的路径下的内容全部下载到`Qwen3-1.7B`文件夹中。
+
+注：需要安装以下依赖：
+#### requirements
+```shell
+python3 -m pip install transformers==4.57.1
+```
+
+#### 环境变量
+
+```
+export TORCHGCU_INDUCTOR_ENABLE=0
+export PYTORCH_EFML_BASED_GCU_CHECK=1
+export TORCH_ECCL_AVOID_RECORD_STREAMS=1
+export VLLM_USE_V1=1
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export VLLM_ATTENTION_BACKEND=FLASH_ATTN
+
+```
+
+#### 在线测试
+```shell
+# 启动服务端
+vllm serve "[path of Qwen3-1.7B]" \
+    --block-size=64 \
+    --trust-remote-code \
+    --async-scheduling \
+    --max-model-len 40960 \
+    --no-enable-prefix-caching
+
+# 启动客户端
+curl "http://127.0.0.1:8000/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "max_tokens": 500,
+        "messages": [
+                        {
+                            "role": "system",
+                             "content": "You are a helpful assistant."
+                         },
+                         {
+                             "role":"user",
+                             "content":"李白是谁？"
+                         }
+                     ],
+        "model":"[path of Qwen3-1.7B]",
+        "stop": null,
+        "stream": false
+      }'
+```
+
+#### 性能测试
+
+```shell
+# 启动服务端
+vllm serve "[path of Qwen3-1.7B]" \
+    --block-size=64 \
+    --trust-remote-code \
+    --async-scheduling \
+    --max-model-len 40960 \
+    --no-enable-prefix-caching
+
+# 启动客户端
+vllm bench serve \
+    --dataset-name random \
+    --model [path of Qwen3-1.7B] \
+    --num-prompts 40 \
+    --max-concurrency 4 \
+    --random-input-len 128 \
+    --random-output-len 4096 \
+    --trust-remote-code \
+    --ignore_eos
+```
+注：
+*  本模型支持的`max-model-len`为40960；
+*  `random-input-len`、`random-output-len`和`num-prompts`可按需调整；
+
+### Qwen3-1.7B-FP8
+
+#### 模型下载
+*  url: [Qwen3-1.7B-FP8](https://www.modelscope.cn/models/Qwen/Qwen3-1.7B-FP8)
+
+*  branch: `master`
+
+*  commit id: `a615075c`
+
+将上述url设定的路径下的内容全部下载到`Qwen3-1.7B-FP8`文件夹中。
+
+注：需要安装以下依赖：
+#### requirements
+```shell
+python3 -m pip install transformers==4.57.1
+```
+
+#### 环境变量
+
+```
+export VLLM_USE_V1=1
+export TORCHGCU_INDUCTOR_ENABLE=0
+export PYTORCH_EFML_BASED_GCU_CHECK=1
+export TORCH_ECCL_AVOID_RECORD_STREAMS=1
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export VLLM_ATTENTION_BACKEND=FLASH_ATTN
+
+```
+
+#### 在线测试
+```shell
+# 启动服务端
+vllm serve "[path of Qwen3-1.7B-FP8]" \
+    --block-size=64 \
+    --trust-remote-code \
+    --async-scheduling \
+    --max-model-len 40960 \
+    --no-enable-prefix-caching
+
+# 启动客户端
+curl "http://127.0.0.1:8000/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "max_tokens": 500,
+        "messages": [
+                        {
+                            "role": "system",
+                             "content": "You are a helpful assistant."
+                         },
+                         {
+                             "role":"user",
+                             "content":"李白是谁？"
+                         }
+                     ],
+        "model":"[path of Qwen3-1.7B-FP8]",
+        "stop": null,
+        "stream": false
+      }'
+```
+
+#### 性能测试
+
+```shell
+# 启动服务端
+vllm serve "[path of Qwen3-1.7B-FP8]" \
+    --trust-remote-code \
+    --block-size=64 \
+    --async-scheduling \
+    --max-model-len 40960 \
+    --no-enable-prefix-caching
+ 
+
+# 启动客户端
+vllm bench serve \
+    --dataset-name random \
+    --model [path of Qwen3-1.7B-FP8] \
+    --num-prompts 40 \
+    --max-concurrency 4 \
+    --random-input-len 128 \
+    --random-output-len 4096 \
+    --trust-remote-code \
+    --ignore_eos
+```
+注：
+*  本模型支持的`max-model-len`为40960；
+*  `random-input-len`、`random-output-len`和`num-prompts`可按需调整；
+
+### Qwen3-0.6B
+
+#### 模型下载
+*  url: [Qwen3-0.6B](https://www.modelscope.cn/models/Qwen/Qwen3-0.6B)
+
+*  branch: `master`
+
+*  commit id: `09b42cad`
+
+将上述url设定的路径下的内容全部下载到`Qwen3-0.6B`文件夹中。
+
+注：需要安装以下依赖：
+#### requirements
+```shell
+python3 -m pip install transformers==4.57.1
+```
+
+#### 环境变量
+
+```
+export TORCHGCU_INDUCTOR_ENABLE=0
+export PYTORCH_EFML_BASED_GCU_CHECK=1
+export TORCH_ECCL_AVOID_RECORD_STREAMS=1
+export VLLM_USE_V1=1
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export VLLM_ATTENTION_BACKEND=FLASH_ATTN
+
+```
+
+#### 在线测试
+```shell
+# 启动服务端
+vllm serve "[path of Qwen3-0.6B]" \
+    --block-size=64 \
+    --trust-remote-code \
+    --async-scheduling \
+    --max-model-len 40960 \
+    --no-enable-prefix-caching
+
+# 启动客户端
+curl "http://127.0.0.1:8000/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "max_tokens": 500,
+        "messages": [
+                        {
+                            "role": "system",
+                             "content": "You are a helpful assistant."
+                         },
+                         {
+                             "role":"user",
+                             "content":"李白是谁？"
+                         }
+                     ],
+        "model":"[path of Qwen3-0.6B]",
+        "stop": null,
+        "stream": false
+      }'
+```
+
+#### 性能测试
+
+```shell
+# 启动服务端
+vllm serve "[path of Qwen3-0.6B]" \
+    --trust-remote-code \
+    --block-size=64 \
+    --async-scheduling \
+    --max-model-len 40960 \
+    --no-enable-prefix-caching
+
+# 启动客户端
+vllm bench serve \
+    --dataset-name random \
+    --model [path of Qwen3-0.6B] \
+    --num-prompts 40 \
+    --max-concurrency 4 \
+    --random-input-len 128 \
+    --random-output-len 4096 \
+    --trust-remote-code \
+    --ignore_eos
+```
+注：
+*  本模型支持的`max-model-len`为40960；
+*  `random-input-len`、`random-output-len`和`num-prompts`可按需调整；
+
+### Qwen3-0.6B-FP8
+
+#### 模型下载
+*  url: [Qwen3-0.6B-FP8](https://www.modelscope.cn/models/Qwen/Qwen3-0.6B-FP8)
+
+*  branch: `master`
+
+*  commit id: `235c7885`
+
+将上述url设定的路径下的内容全部下载到`Qwen3-0.6B-FP8`文件夹中。
+
+注：需要安装以下依赖：
+#### requirements
+```shell
+python3 -m pip install transformers==4.57.1
+```
+
+#### 环境变量
+
+```
+export VLLM_USE_V1=1
+export TORCHGCU_INDUCTOR_ENABLE=0
+export PYTORCH_EFML_BASED_GCU_CHECK=1
+export TORCH_ECCL_AVOID_RECORD_STREAMS=1
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export VLLM_ATTENTION_BACKEND=FLASH_ATTN
+
+```
+
+#### 在线测试
+```shell
+# 启动服务端
+vllm serve "[path of Qwen3-0.6B-FP8]" \
+    --block-size=64 \
+    --trust-remote-code \
+    --async-scheduling \
+    --max-model-len 40960 \
+    --no-enable-prefix-caching
+
+# 启动客户端
+curl "http://127.0.0.1:8000/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "max_tokens": 500,
+        "messages": [
+                        {
+                            "role": "system",
+                             "content": "You are a helpful assistant."
+                         },
+                         {
+                             "role":"user",
+                             "content":"李白是谁？"
+                         }
+                     ],
+        "model":"[path of Qwen3-0.6B-FP8]",
+        "stop": null,
+        "stream": false
+      }'
+```
+
+#### 性能测试
+
+```shell
+# 启动服务端
+vllm serve "[path of Qwen3-0.6B-FP8]" \
+    --block-size=64 \
+    --trust-remote-code \
+    --async-scheduling \
+    --max-model-len 40960 \
+    --no-enable-prefix-caching
+
+# 启动客户端
+vllm bench serve \
+    --dataset-name random \
+    --model [path of Qwen3-0.6B-FP8] \
+    --num-prompts 40 \
+    --max-concurrency 4 \
+    --random-input-len 128 \
+    --random-output-len 4096 \
+    --trust-remote-code \
+    --ignore_eos
+```
+注：
+*  本模型支持的`max-model-len`为40960；
+*  `random-input-len`、`random-output-len`和`num-prompts`可按需调整；
 
 ### Qwen2-72B-Instruct
 #### 模型下载
