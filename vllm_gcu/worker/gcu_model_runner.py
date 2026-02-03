@@ -963,9 +963,7 @@ class GCUModelRunner(GPUModelRunner):
                                             uniform_decode=uniform_decode)
         return batch_descriptor
 
-    def _compute_logist(self, hidden_states, extra_args):
-        num_scheduled_tokens = extra_args['num_scheduled_tokens']
-        num_scheduled_tokens_np = extra_args['num_scheduled_tokens_np']
+    def _compute_logits(self, hidden_states, extra_args):
         logits_indices = extra_args['logits_indices']
         num_input_tokens = extra_args['num_input_tokens']
 
@@ -1003,11 +1001,14 @@ class GCUModelRunner(GPUModelRunner):
                 logits = model_output_broadcast_data["logits"]
             return logits
 
-    def _compute_sampler_output(self, logist, spec_decode_metadata, extra_args):
-        sampler_output = self._sample(logist, spec_decode_metadata)
+    def _compute_sampler_output(self, logits, spec_decode_metadata, extra_args):
+        sampler_output = self._sample(logits, spec_decode_metadata)
         return sampler_output
 
     def _compute_spect_tokens(self, hidden_states, aux_hidden_states, sampler_output, extra_args):
+        if not self.speculative_config:
+            return
+
         spec_decode_common_attn_metadata = extra_args['spec_decode_common_attn_metadata']
         spec_decode_metadata = extra_args['spec_decode_metadata']
         valid_sampled_token_ids = extra_args['valid_sampled_token_ids']
@@ -1156,15 +1157,15 @@ class GCUModelRunner(GPUModelRunner):
                 output.kv_connector_output = kv_connector_output
                 return output
 
-        logist = self._compute_logist(hidden_states, extra_args)
+        logits = self._compute_logits(hidden_states, extra_args)
         
         # Apply structured output bitmasks if present
         if scheduler_output.grammar_bitmask is not None:
             apply_grammar_bitmask(scheduler_output, self.input_batch,
-                                logist, self.device)
+                                logits, self.device)
 
 
-        sampler_output = self._compute_sampler_output(logist, spec_decode_metadata, extra_args)
+        sampler_output = self._compute_sampler_output(logits, spec_decode_metadata, extra_args)
 
         with record_function_or_nullcontext("Bookkeep"), get_tx_ctx("Bookkeep", "green", "VLLM", "execute"):
             (
@@ -1176,7 +1177,7 @@ class GCUModelRunner(GPUModelRunner):
                 req_id_to_index_output_copy,
                 invalid_req_indices
             ) = self._bookkeeping_sync(scheduler_output, sampler_output,
-                            logist, # logits
+                            logits, # logits
                             hidden_states, # hidden_states
                             num_scheduled_tokens)
 
@@ -1380,10 +1381,6 @@ class GCUModelRunner(GPUModelRunner):
         self.positions_tensor = self.positions.gpu[:total_num_scheduled_tokens].clone().to(torch.int32)
 
         num_scheduled_tokens = np.diff(cu_num_tokens, prepend=0)
-        num_scheduled_tokens_tensor = torch.tensor(
-            num_scheduled_tokens.tolist(),
-            dtype=torch.int64,
-            pin_memory=self.pin_memory).to(self.device, non_blocking=True)
         req_indices = np.repeat(self.arange_np[:len(cu_num_tokens)], num_scheduled_tokens)
         req_indices_tensor = torch.tensor(
             req_indices.tolist(),
