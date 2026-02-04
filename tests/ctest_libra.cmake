@@ -28,4 +28,73 @@ add_py_test (PROJECT libra
              NAME test_topk_softmax_renormalize
              COMMAND "cd tests && python -m pytest -sv kernels/test_topk_softmax_renormalize.py"
             )
- 
+add_py_test (PROJECT libra
+             PLATFORM silicon
+             REGRESSION daily
+             CATEGORY func
+             OS ubuntu
+             MODULE vllm_dev
+             ID 4
+             NAME test_chunk_delta_h
+             COMMAND "cd tests && python -m pytest -sv kernels/test_chunk_delta_h.py"
+            )
+add_py_test (PROJECT libra
+             PLATFORM silicon
+             REGRESSION daily
+             CATEGORY func
+             OS ubuntu
+             MODULE vllm_dev
+             ID 5
+             NAME test_top_k_per_row
+             COMMAND "cd tests && python -m pytest -sv kernels/test_top_k_per_row.py"
+            )
+add_py_test (PROJECT libra
+             PLATFORM silicon
+             REGRESSION daily
+             CATEGORY func
+             OS ubuntu
+             MODULE vllm_dev
+             ID 6
+             NAME test_convert_req_index_to_global_index
+             COMMAND "cd tests && python -m pytest -sv kernels/test_convert_req_index_to_global_index.py"
+            )
+add_py_test (PROJECT libra
+             PLATFORM silicon
+             REGRESSION daily
+             CATEGORY func
+             OS ubuntu
+             MODULE vllm_dev
+             ID 7
+             NAME test_mrotary_embedding
+             COMMAND "cd tests && python -m pytest -sv kernels/test_mrotary_embedding.py"
+            )
+add_py_test (PROJECT libra
+             PLATFORM silicon
+             REGRESSION daily
+             CATEGORY func
+             OS ubuntu
+             MODULE vllm_dev
+             ID 8
+             NAME test_topk_softmax_renormalize
+             COMMAND "cd tests && python -m pytest -sv kernels/test_topk_softmax_renormalize.py"
+            )
+add_py_test (PROJECT libra
+             PLATFORM silicon
+             REGRESSION daily
+             CATEGORY func
+             OS ubuntu
+             MODULE vllm_dev
+             ID 9
+             NAME test_index_add
+             COMMAND "cd tests && python -m pytest -sv kernels/test_index_add.py"
+            )
+add_py_test (PROJECT libra
+             PLATFORM silicon
+             REGRESSION daily
+             CATEGORY func
+             OS ubuntu
+             MODULE vllm_dev
+             ID 10 
+             NAME test_get_ep_indices
+             COMMAND "cd tests && python -m pytest -sv kernels/test_get_ep_indices.py"
+            )
