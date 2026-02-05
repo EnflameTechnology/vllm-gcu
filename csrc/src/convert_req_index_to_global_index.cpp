@@ -30,7 +30,8 @@ void convert_req_index_to_global_index(
     const c10::optional<at::Tensor>& prefill_workspace_request_ids,
     const c10::optional<at::Tensor>& prefill_workspace_starts,
     int64_t block_size, int64_t num_topk_tokens, int64_t block_n,
-    bool has_prefill_workspace, const c10::optional<at::Tensor>& seq_lens) {
+    bool has_prefill_workspace, const c10::optional<at::Tensor>& seq_lens,
+    int64_t threshold) {
   const torch_gcu::OptionalGCUGuard device_guard(device_of(output));
   const topsStream_t stream = torch_gcu::getCurrentGCUStream();
   at::Tensor prefill_workspace_request_ids_tensor;
@@ -54,7 +55,7 @@ void convert_req_index_to_global_index(
           output, req_id, block_table, token_indices,
           prefill_workspace_request_ids_tensor, prefill_workspace_starts_tensor,
           seq_lens_tensor, block_size, num_topk_tokens, block_n,
-          has_prefill_workspace, -1, stream));
+          has_prefill_workspace, threshold, stream));
 }
 
 }  // namespace vllm_gcu::llm_ops

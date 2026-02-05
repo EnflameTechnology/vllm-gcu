@@ -1301,14 +1301,14 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
   ops.def(
       "top_k_per_row_prefill(Tensor logits, Tensor rowStarts, Tensor rowEnds, "
       "Tensor! indices, int numRows, int stride0, "
-      "int stride1, int topK) -> ()");
+      "int stride1, int topK, int threshold) -> ()");
   ops.impl("top_k_per_row_prefill", torch::kPrivateUse1,
            &top_k_per_row_prefill);
 
   ops.def(
       "top_k_per_row_decode(Tensor logits, int next_n, "
       "Tensor seq_lens, Tensor! indices, "
-      "int numRows, int stride0, int stride1, int topK) -> ()");
+      "int numRows, int stride0, int stride1, int topK, int threshold) -> ()");
   ops.impl("top_k_per_row_decode", torch::kPrivateUse1, &top_k_per_row_decode);
 }
 
@@ -1434,7 +1434,8 @@ TORCH_LIBRARY_FRAGMENT(CONCAT(TORCH_EXTENSION_NAME, _cache_ops),
       "                                 int block_size, int num_topk_tokens, "
       "                                 int block_n, "
       "                                 bool has_prefill_workspace, "
-      "                                 Tensor? seq_lens) -> ()");
+      "                                 Tensor? seq_lens, "
+      "                                 int threshold) -> ()");
   }
   cache_ops.impl("convert_req_index_to_global_index", torch::kPrivateUse1,
                  &convert_req_index_to_global_index);

@@ -52,8 +52,9 @@ class GCUDeepseekV32IndexerMetadataBuilder(DeepseekV32IndexerMetadataBuilder):
                                                      device=self.device)
         indexer_parallel = self.vllm_config.additional_config.get("indexer_parallel", '')
         self.indexer_use_sp_q = indexer_parallel == 'sp_q'
-        self.topk_threshold = -1
-        # self.topk_threshold = int(self.vllm_config.additional_config.get("ds32_topk_threshold", -1))
+        self.topk_threshold = int(
+            self.vllm_config.additional_config.get("ds32_topk_threshold", -1)
+        )
 
     def chunk_sequence_parallel(
         self,

@@ -142,7 +142,7 @@ def _run_top_k_per_row_decode_test(
         logits.stride(0),
         logits.stride(1),
         top_k,
-        # threshold,
+        threshold,
     )
     torch.gcu.synchronize()
     # Run reference implementation
@@ -200,7 +200,7 @@ def test_top_k_per_row(num_rows: int, top_k: int, threshold: int) -> None:
         logits.stride(0),
         logits.stride(1),
         top_k,
-        # threshold,
+        threshold,
     )
     # Run reference implementation
     torch_indices = logits.topk(min(top_k, max(row_ends)), dim=-1)[1]

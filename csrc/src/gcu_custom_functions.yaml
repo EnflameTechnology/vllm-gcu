@@ -67,10 +67,10 @@
 - func: topk_softmax(Tensor(a!) topk_weights, Tensor(a!) topk_indices, Tensor(a!) token_expert_indices, Tensor(a!) gating_output) -> ()
   variants: function
 
-- func: top_k_per_row_decode(Tensor logits, int next_n, Tensor seq_lens, Tensor(a!) indices, int numRows, int stride0, int stride1, int topK) -> ()
+- func: top_k_per_row_decode(Tensor logits, int next_n, Tensor seq_lens, Tensor(a!) indices, int numRows, int stride0, int stride1, int topK, int threshold) -> ()
   variants: function
 
-- func: top_k_per_row_prefill(Tensor logits, Tensor rowStarts, Tensor rowEnds, Tensor(a!) indices, int numRows, int stride0, int stride1, int topK) -> ()
+- func: top_k_per_row_prefill(Tensor logits, Tensor rowStarts, Tensor rowEnds, Tensor(a!) indices, int numRows, int stride0, int stride1, int topK, int threshold) -> ()
   variants: function
 
 - func: topk_softmax_renormalize(Tensor(a!) topk_weights, Tensor(a!) topk_indices, Tensor(a!) token_expert_indices, Tensor(a!) gating_output, bool renormalize) -> ()
@@ -244,7 +244,7 @@
 - func: gather_and_maybe_dequant_cache(Tensor src_cache, Tensor dst, Tensor block_table, Tensor cu_seq_lens, int batch_size, str kv_cache_dtype, Tensor scale, Tensor? seq_starts) -> ()
   variants: function
 
-- func: convert_req_index_to_global_index(Tensor(a!) output, Tensor req_id, Tensor block_table, Tensor token_indices, Tensor? prefill_workspace_request_ids, Tensor? prefill_workspace_starts, int block_size, int num_topk_tokens, int block_n, bool has_prefill_workspace, Tensor? seq_lens) -> ()
+- func: convert_req_index_to_global_index(Tensor(a!) output, Tensor req_id, Tensor block_table, Tensor token_indices, Tensor? prefill_workspace_request_ids, Tensor? prefill_workspace_starts, int block_size, int num_topk_tokens, int block_n, bool has_prefill_workspace, Tensor? seq_lens, int threshold) -> ()
   variants: function
 
 - func: dynamic_per_token_group_fp8_quant_with_size(Tensor(a!) output, Tensor(a!) scale, Tensor input, Tensor real_size, int group_size) -> ()

@@ -128,6 +128,11 @@ class FlashMLASparseFusionImpl(FlashMLASparseImpl):
         topk_indices = self.topk_indices_buffer[:num_actual_toks]
 
         topk_indices_global = torch.empty_like(topk_indices)
+        topk_threshold = (
+            -1
+            if attn_metadata.fp8_extra_metadata is None
+            else attn_metadata.fp8_extra_metadata.topk_threshold
+        )
         torch.ops._C_cache_ops.convert_req_index_to_global_index(
             topk_indices_global,
             attn_metadata.req_id_per_token,
@@ -139,7 +144,10 @@ class FlashMLASparseFusionImpl(FlashMLASparseImpl):
             topk_indices.shape[1],
             128,
             False,
-            None,
+            seq_lens=attn_metadata.fp8_extra_metadata.cache_lens
+            if topk_threshold != -1
+            else None,
+            threshold=topk_threshold,
         )
 
         fp8_attention = self.kv_cache_dtype.startswith("fp8")

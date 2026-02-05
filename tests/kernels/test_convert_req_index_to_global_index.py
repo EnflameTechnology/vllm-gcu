@@ -103,6 +103,7 @@ def test_convert_req_index_to_global_index(case, add_invalid):
         block_n,
         has_prefill_workspace,
         None,
+        -1,
     )
 
     ref = _ref_convert_req_index_to_global_index(req_id, block_table,

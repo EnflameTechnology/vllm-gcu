@@ -368,6 +368,7 @@ def sparse_attn_indexer(
             topk_indices = topk_indices_buffer[
                 chunk.token_start : chunk.token_end, :topk_tokens
             ]
+            topk_threshold = getattr(attn_metadata, 'topk_threshold', -1)
             torch.ops._C.top_k_per_row_prefill(
                 logits,
                 chunk.cu_seqlen_ks,
@@ -377,6 +378,7 @@ def sparse_attn_indexer(
                 logits.stride(0),
                 logits.stride(1),
                 topk_tokens,
+                topk_threshold,
             )
             if gathered_slice := getattr(chunk, "gathered_slice", None):
                 topk_indices_buffer[gathered_slice, :topk_tokens] = sp_to_tp(
@@ -441,6 +443,7 @@ def sparse_attn_indexer(
             logits.stride(0),
             logits.stride(1),
             topk_tokens,
+            topk_threshold,
         )
         if decode_metadata.requires_padding:
             # if padded, we need to unpack

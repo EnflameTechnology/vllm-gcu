@@ -11,9 +11,7 @@ from vllm import _custom_ops as ops
 from vllm.attention.backends.abstract import (AttentionBackend, AttentionLayer,
                                               AttentionMetadata)
 from vllm.attention.backends.utils import get_mla_dims
-from vllm.attention.ops.flashmla import (flash_mla_sparse_prefill,
-                                         flash_mla_with_kvcache,
-                                         get_mla_metadata)
+from vllm.attention.ops.flashmla import flash_mla_sparse_prefill
 from vllm.config import VllmConfig
 from vllm.logger import init_logger
 from vllm.platforms import current_platform
@@ -25,6 +23,7 @@ from vllm.v1.attention.backends.utils import (AttentionCGSupport,
                                               CommonAttentionMetadata)
 from vllm.v1.kv_cache_interface import AttentionSpec
 import vllm_gcu.envs as gcu_envs
+from vllm_gcu.attention.ops.flashmla import flash_mla_with_kvcache_sparse, get_mla_metadata
 
 if TYPE_CHECKING:
     from vllm.model_executor.models.deepseek_v2 import Indexer
@@ -318,13 +317,25 @@ class FlashMLASparseMetadataBuilder(
             max((sm_count // 2) / h_k // (cdiv(h_q // h_k, 2 * 64) * s_q), 1))
         if current_platform.is_device_capability(100):
             max_num_sm_parts *= 2
+        self.topk_threshold = int(
+            vllm_config.additional_config.get("ds32_topk_threshold", -1)
+        )
+        if self.topk_threshold != -1 and cache_config.cache_dtype != "fp8":
+            raise NotImplementedError(
+                "ds32_topk_threshold only supports kv_cache_dtype=fp8.")
+
         self.tile_scheduler_metadata_buffer = None
         self.num_splits_buffer = None
+        if self.topk_threshold != -1:
+            self.tile_scheduler_metadata_buffer = torch.empty(
+                24 * 1024 * 1024,
+                device=self.device,
+                dtype=torch.int8,
+            )
         self.req_id_per_token_buffer = torch.empty(
             (vllm_config.scheduler_config.max_num_batched_tokens, ),
             dtype=torch.int32,
             device=device)
-        self.topk_threshold = -1#int(self.vllm_config.additional_config.get("ds32_topk_threshold", -1))
 
 
     def build(self,
@@ -347,6 +358,18 @@ class FlashMLASparseMetadataBuilder(
 
         fp8_extra_metadata = None
         if self.use_fp8_kv_cache:
+            if self.topk_threshold != -1:
+                get_mla_metadata(
+                    self.tile_scheduler_metadata_buffer,
+                    cache_seqlens=common_attn_metadata.seq_lens,
+                    num_q_tokens_per_head_k=num_tokens * self.num_heads,
+                    num_heads_k=1,
+                    num_heads_q=self.num_heads,
+                    is_fp8_kvcache=True,
+                    topk=self.topk_tokens,
+                    threshold=self.topk_threshold,
+                    cu_seq_q=common_attn_metadata.query_start_loc,
+                )
             fp8_extra_metadata = FlashMLASparseMetadata.FP8KernelMetadata(
                 scheduler_metadata=self.tile_scheduler_metadata_buffer,
                 num_splits=self.num_splits_buffer,
@@ -453,7 +476,6 @@ class FlashMLASparseImpl(MLACommonBaseImpl[FlashMLASparseMetadata]):
 
         assert attn_metadata.fp8_extra_metadata is not None
         extra_metadata = attn_metadata.fp8_extra_metadata
-        from vllm_gcu.attention.ops.flashmla import flash_mla_with_kvcache_sparse
         topk_threshold = attn_metadata.fp8_extra_metadata.topk_threshold
         if topk_threshold == -1:
             _attn_out, _ = flash_mla_with_kvcache_sparse(
@@ -539,6 +561,11 @@ class FlashMLASparseImpl(MLACommonBaseImpl[FlashMLASparseMetadata]):
         topk_indices = self.topk_indices_buffer[:num_actual_toks]
 
         topk_indices_global = torch.empty_like(topk_indices)
+        topk_threshold = (
+            -1
+            if attn_metadata.fp8_extra_metadata is None
+            else attn_metadata.fp8_extra_metadata.topk_threshold
+        )
         torch.ops._C_cache_ops.convert_req_index_to_global_index(
             topk_indices_global,
             attn_metadata.req_id_per_token,
@@ -550,7 +577,10 @@ class FlashMLASparseImpl(MLACommonBaseImpl[FlashMLASparseMetadata]):
             topk_indices.shape[1],
             128,
             False,
-            None
+            seq_lens=attn_metadata.fp8_extra_metadata.cache_lens
+            if topk_threshold != -1
+            else None,
+            threshold=topk_threshold,
         )
 
         q = torch.cat([ql_nope, q_pe], dim=-1)
