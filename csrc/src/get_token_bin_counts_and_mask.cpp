@@ -29,11 +29,13 @@ void get_token_bin_counts_and_mask(at::Tensor &bin_counts,
                                    at::Tensor &mask,
                                    const at::Tensor &tokens,
                                    const int64_t vocab_size,
-                                   const int64_t num_seqs) {
+                                   const int64_t num_seqs,
+                                   bool return_bin_counts) {
   const torch_gcu::OptionalGCUGuard device_guard(device_of(tokens));
   const topsStream_t stream = torch_gcu::getCurrentGCUStream();
   ATEN_ATENOP_CHECK(
       ATEN_ATENOP_CALL(topsvllm::topsvllmGetTokenBinCountsAndMask)(
-      bin_counts, mask, tokens, vocab_size, num_seqs, stream));
+      bin_counts, mask, tokens, vocab_size, num_seqs,
+      return_bin_counts, stream));
 }
 }  // namespace vllm_gcu::llm_ops

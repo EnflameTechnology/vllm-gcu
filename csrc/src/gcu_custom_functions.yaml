@@ -297,7 +297,7 @@
 - func: mha_fwd_kvcache_mla_mixed(Tensor(a!) q, Tensor kcache, int head_size_v, Tensor seqlens_k, Tensor block_table, float softmax_scale, bool is_causal, Tensor tile_scheduler_metadata, Tensor num_splits, bool is_fp8_kvcache, Tensor indices, Tensor? descale_k, int threshold, Tensor cu_seq_q) -> (Tensor, Tensor)
   variants: function
 
-- func: get_token_bin_counts_and_mask(Tensor(a!) bin_counts, Tensor(a!) mask, Tensor tokens, int vocab_size, int num_seqs) -> ()
+- func: get_token_bin_counts_and_mask(Tensor(a!) bin_counts, Tensor(a!) mask, Tensor tokens, int vocab_size, int num_seqs, bool return_bin_counts) -> ()
   variants: function
 
 - func: cp_gather_indexer_k_quant_cache(Tensor kv_cache, Tensor(a!) dst_value, Tensor(a!) dst_scale, Tensor block_table, Tensor cu_seq_lens) -> ()

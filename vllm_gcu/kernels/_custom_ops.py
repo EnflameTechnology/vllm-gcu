@@ -625,6 +625,7 @@ def get_token_bin_counts_and_mask(
     tokens: torch.Tensor,
     vocab_size: int,
     num_seqs: int,
+    return_bin_counts: bool = True,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     # 3.0 not support get_token_bin_counts_and_mask fusion
     from vllm.platforms import current_platform
@@ -641,7 +642,8 @@ def get_token_bin_counts_and_mask(
                                                         mask,
                                                         tokens,
                                                         vocab_size,
-                                                        num_seqs)
+                                                        num_seqs,
+                                                        return_bin_counts)
         return bin_counts, mask
 
 def topk_softmax_renormalize(topk_weights: torch.Tensor, topk_ids: torch.Tensor,

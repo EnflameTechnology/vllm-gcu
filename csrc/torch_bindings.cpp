@@ -1293,7 +1293,8 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
   if (!handle.has_value()) {
     ops.def(
         "get_token_bin_counts_and_mask(Tensor! bin_counts, "
-        "Tensor! mask, Tensor tokens, int vocab_size, int num_seqs) "
+        "Tensor! mask, Tensor tokens, int vocab_size, int num_seqs, "
+        "bool return_bin_count) "
         "-> ()");
   }
   ops.impl("get_token_bin_counts_and_mask", torch::kPrivateUse1,
