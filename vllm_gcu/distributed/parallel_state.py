@@ -158,7 +158,7 @@ def all_gather_v(inp: torch.Tensor, recv_counts: list[int],
         raise ValueError(f"Group {group_name} is destroyed.")
 
     if not current_platform.has_device_capability(140):
-        gathered = [torch.empty((s, ) + inp.shape[1:]) for s in recv_counts]
+        gathered = [torch.empty((s, ) + inp.shape[1:], dtype = inp.dtype, device=inp.device) for s in recv_counts]
         torch.distributed.all_gather(gathered,
                                      inp,
                                      group=group.device_group)
