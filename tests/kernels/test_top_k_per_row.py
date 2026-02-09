@@ -3,6 +3,8 @@ import torch
 import torch_gcu
 import numpy as np
 from vllm_gcu.kernels import _custom_ops as ops
+from vllm_gcu.kernels.native_op.torch_native_op import register_native_overrides, restore_native_overrides
+
 
 NUM_ROWS = [1, 32, 2050]
 TOP_K_VALUES = [2048, 3000]
@@ -212,3 +214,112 @@ def test_top_k_per_row(num_rows: int, top_k: int, threshold: int) -> None:
     assert compare_top_k_results(
         logits, indices, torch_indices, row_starts, row_ends, top_k
     ), "GCU top_k_per_row_prefill results don't match torch.topk"
+
+
+def _run_top_k_per_row_decode_kernel(
+    logits: torch.Tensor,
+    next_n: int,
+    seq_lens: torch.Tensor,
+    top_k: int,
+    threshold: int = -1,
+) -> torch.Tensor:
+    """Run top_k_per_row_decode kernel and return indices."""
+    num_rows = seq_lens.shape[0] * next_n
+    indices = torch.empty((num_rows, top_k), dtype=torch.int32, device="gcu")
+    torch.ops._C.top_k_per_row_decode(
+        logits,
+        next_n,
+        seq_lens,
+        indices,
+        num_rows,
+        logits.stride(0),
+        logits.stride(1),
+        top_k,
+        threshold,
+    )
+    torch.gcu.synchronize()
+    return indices
+
+
+def _run_top_k_per_row_prefill_kernel(
+    logits: torch.Tensor,
+    row_starts: torch.Tensor,
+    row_ends: torch.Tensor,
+    top_k: int,
+    threshold: int = -1,
+) -> torch.Tensor:
+    """Run top_k_per_row_prefill kernel and return indices."""
+    num_rows = row_starts.shape[0]
+    indices = torch.empty((num_rows, top_k), dtype=torch.int32, device="gcu")
+    torch.ops._C.top_k_per_row_prefill(
+        logits,
+        row_starts,
+        row_ends,
+        indices,
+        num_rows,
+        logits.stride(0),
+        logits.stride(1),
+        top_k,
+        threshold,
+    )
+    torch.gcu.synchronize()
+    return indices
+
+@pytest.mark.parametrize("top_k", [256, 1024])
+@pytest.mark.parametrize("batch_size", [1, 4])
+@pytest.mark.parametrize("next_n", [1, 4])
+@torch.inference_mode()
+def test_top_k_per_row_decode_native_override(
+    top_k: int, batch_size: int, next_n: int
+) -> None:
+    """
+    Test top_k_per_row_decode by comparing kernel output with native Python override.
+    """
+    torch.manual_seed(42)
+
+    vocab_size = 5000
+    num_rows = batch_size * next_n
+    seq_lens = torch.randint(vocab_size // 2, vocab_size, (batch_size,), dtype=torch.int32, device="gcu")
+    row_starts = torch.zeros(num_rows, dtype=torch.int32, device="gcu")
+    row_indices = torch.arange(num_rows, device="gcu") // next_n
+    next_n_offset = torch.arange(num_rows, device="gcu") % next_n
+    row_ends = seq_lens[row_indices] - next_n + next_n_offset + 1
+    logits = create_random_logits(row_starts, row_ends, torch.float32, 42, "random")
+
+    # Run original kernel
+    out_kernel = _run_top_k_per_row_decode_kernel(logits, next_n, seq_lens, top_k)
+
+    # Override with native Python implementation
+    register_native_overrides({"fallback_ops": ["top_k_per_row_decode"]})
+    out_override = _run_top_k_per_row_decode_kernel(logits, next_n, seq_lens, top_k)
+    restore_native_overrides()
+
+    # Compare results
+    assert compare_top_k_results(
+        logits, out_kernel, out_override, row_starts, row_ends, top_k
+    ), "Kernel output doesn't match native override for top_k_per_row_decode"
+
+
+@pytest.mark.parametrize("num_rows", [1, 32, 128])
+@pytest.mark.parametrize("top_k", [256, 1024])
+@torch.inference_mode()
+def test_top_k_per_row_prefill_native_override(num_rows: int, top_k: int) -> None:
+    """
+    Test top_k_per_row_prefill by comparing kernel output with native Python override.
+    """
+    torch.manual_seed(42)
+
+    vocab_size = 5000
+    row_starts, row_ends = create_row_boundaries(num_rows, vocab_size)
+    logits = create_random_logits(row_starts, row_ends, torch.float32, 42, "random")
+
+    # Run original kernel
+    out_kernel = _run_top_k_per_row_prefill_kernel(logits, row_starts, row_ends, top_k)
+
+    # Override with native Python implementation
+    register_native_overrides({"fallback_ops": ["top_k_per_row_prefill"]})
+    out_override = _run_top_k_per_row_prefill_kernel(logits, row_starts, row_ends, top_k)
+    restore_native_overrides()
+
+    # Compare results
+    torch.testing.assert_close(out_kernel, out_override, rtol=1e-4, atol=1e-4)

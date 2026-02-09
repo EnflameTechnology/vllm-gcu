@@ -3,7 +3,16 @@ from vllm_gcu.kernels.native_op.utils import register_native
 
 @register_native("_C", "top_k_per_row_prefill")
 def _ref_top_k_per_row_prefill(
-    logits, row_starts, row_ends, indices, num_rows, stride0, stride1, topk):
+    logits: torch.Tensor,
+    row_starts: torch.Tensor,
+    row_ends: torch.Tensor,
+    indices: torch.Tensor,
+    num_rows: int,
+    stride0: int,
+    stride1: int,
+    topk: int,
+    threshold:float
+):
     topk_indices = logits.topk(min(topk, logits.shape[-1]),
                                 dim=-1)[1]
     topk_indices -= row_starts[:, None]

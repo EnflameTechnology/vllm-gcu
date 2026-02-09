@@ -3,9 +3,16 @@ from vllm_gcu.kernels.native_op.utils import register_native
 
 @register_native("_C", "top_k_per_row_decode")
 def _ref_top_k_per_row_decode(
-    logits, next_n, seq_lens, 
-    indices, num_rows, stride0, 
-    stride1, topk):
+    logits: torch.Tensor,
+    next_n: int,
+    seq_lens: torch.Tensor,
+    indices: torch.Tensor,
+    num_rows: int,
+    stride0: int,
+    stride1: int,
+    topk: int,
+    threshold:float
+):
     # padded query len
     current_device = logits.device
     batch_size = seq_lens.shape[0]
