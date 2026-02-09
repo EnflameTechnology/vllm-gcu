@@ -84,6 +84,9 @@ class GCUMLAMetadataBuilder(MLACommonMetadataBuilder[GCUMLAMetadata]):
         super().__init__(kv_cache_spec, layer_names, vllm_config, device,
                          GCUMLAMetadata)
 
+        self.num_q_heads = vllm_config.model_config.get_num_attention_heads(
+            vllm_config.parallel_config)
+
         self.use_tile_scheduler_metadata = True if \
           current_platform.get_device_capability().to_int() == 140 and \
           vllm_config.cache_config.cache_dtype.startswith("fp8") \
