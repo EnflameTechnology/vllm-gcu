@@ -692,10 +692,19 @@ class DeepseekV2MLAAttention(nn.Module):
         self.is_v32 = hasattr(config, "index_topk")
 
         if self.is_v32:
+            self.indexer_rope_emb = get_rope(
+                qk_rope_head_dim,
+                rotary_dim=qk_rope_head_dim,
+                max_position=max_position_embeddings,
+                base=rope_theta,
+                rope_scaling=rope_scaling,
+                is_neox_style=True,
+            )
             self.indexer = Indexer(vllm_config, config, hidden_size,
                                    q_lora_rank, quant_config, cache_config,
                                    topk_indices_buffer, f"{prefix}.indexer")
         else:
+            self.indexer_rope_emb = None
             self.indexer = None
 
         mla_modules = MLAModules(
@@ -712,6 +721,7 @@ class DeepseekV2MLAAttention(nn.Module):
             q_b_proj=self.q_b_proj if self.q_lora_rank is not None else None,
             q_proj=self.q_proj if self.q_lora_rank is None else None,
             indexer=self.indexer,
+            indexer_rotary_emb=self.indexer_rope_emb,
             is_sparse=self.is_v32,
             topk_indices_buffer=topk_indices_buffer,
         )

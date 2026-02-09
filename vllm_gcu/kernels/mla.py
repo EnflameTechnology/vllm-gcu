@@ -48,7 +48,7 @@ class GCUMultiHeadLatentAttention(MultiHeadLatentAttention):
         self.rotary_emb = mla_modules.rotary_emb
         self.o_proj = mla_modules.o_proj
         self.indexer = mla_modules.indexer
-        # self.indexer_rope_emb = mla_modules.indexer_rotary_emb
+        self.indexer_rope_emb = mla_modules.indexer_rotary_emb
         self.is_sparse = mla_modules.is_sparse
 
         if self.indexer is not None:
@@ -148,7 +148,7 @@ class GCUMultiHeadLatentAttention(MultiHeadLatentAttention):
 
         if self.indexer and self.is_sparse:  # v3.2
             _topk_indices = self.indexer(
-                hidden_states, q_c, positions, self.rotary_emb, indexer_k,
+                hidden_states, q_c, positions, self.indexer_rope_emb, indexer_k,
             )
 
         # if llama_4_scaling is not None:
