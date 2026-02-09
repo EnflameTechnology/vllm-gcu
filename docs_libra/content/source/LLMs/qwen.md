@@ -1108,7 +1108,6 @@ curl "http://127.0.0.1:8000/v1/chat/completions" \
 ```shell
 # 启动服务端
 vllm serve "[path of Qwen2-72B-Instruct]"  \
-        --tokenizer="[path of Qwen2-72B-Instruct]"  \
         --dtype=bfloat16 \
         --max-model-len=32768 \
         --tensor-parallel-size=2 \
@@ -1117,19 +1116,23 @@ vllm serve "[path of Qwen2-72B-Instruct]"  \
         --gpu-memory-utilization=0.9 \
         --no-enable-prefix-caching \
         --async-scheduling \
-        --enable-chunked-prefill
+        --served-model-name Qwen2-72B-Instruct
 
 
 # 启动客户端
 vllm bench serve \
         --dataset-name random \
-        --model [path of Qwen2-72B-Instruct] \
-        --num-prompt 10 \
+        --model Qwen2-72B-Instruct \
+        --tokenizer [path of Qwen2-72B-Instruct] \
+        --num-prompts 10 \
         --max-concurrency 1 \
         --random-input-len 2048 \
         --random-output-len 1024 \
         --trust-remote-code \
-        --ignore_eos
+        --ignore_eos \
+        --percentile-metrics 'ttft,tpot,itl,e2el' \
+        --metric-percentiles 25,50,75,90,95,99,100 \
+        --save-result
 ```
 注：
 *  本模型支持的`max-model-len`为32768；
