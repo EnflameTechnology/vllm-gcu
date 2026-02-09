@@ -36,6 +36,7 @@ from vllm.utils import make_zmq_path, make_zmq_socket
 from vllm.v1.attention.backends.utils import get_kv_cache_layout
 from vllm.v1.core.sched.output import SchedulerOutput
 from vllm.utils import current_stream
+import vllm_gcu.envs as gcu_envs
 
 if TYPE_CHECKING:
     from vllm.attention.backends.abstract import AttentionMetadata
@@ -48,6 +49,7 @@ LayerName = str
 
 GET_META_MSG = b"get_meta_msg"
 DONE_SENDING_MSG = b"done_sending_msg"
+FIRST_TOKEN_MSG = b"first_token_msg"
 
 logger = init_logger(__name__)
 
@@ -74,6 +76,12 @@ _NIXL_SUPPORTED_DEVICE = {
 }
 # support for oot platform by providing mapping in current_platform
 _NIXL_SUPPORTED_DEVICE.update(current_platform.get_nixl_supported_devices())
+_ENABLE_FIRST_TOKEN_REUSE = gcu_envs.VLLM_GCU_NIXL_ENABLE_FIRST_TOKEN_REUSE
+_INVALID_TOKEN_ID: int = -1
+
+_SCHEDULER_PORT_OFFSET: int = 0
+_WORKER_BASE_PORT_OFFSET: int = 1024
+_WORKER_RECV_PORT_OFFSET: int = 5120
 
 
 class NixlAgentMetadata(
@@ -279,7 +287,8 @@ class KVCacheLayerwiseRecvThread(threading.Thread):
         self.ready_event = ready_event
 
         self.lock = threading.Lock()
-        self.done_requests = set[str]()
+        self.done_recv_requests = set[str]()
+        self.done_first_token_requests = set[str]()
         self.task_tracker = dict[str, int]()
 
     def run(self):
@@ -314,7 +323,16 @@ class KVCacheLayerwiseRecvThread(threading.Thread):
                                      "DONE_RECVING_MSG for "
                                      "request: %s, tp_ratio: %s",
                                      req_id, tp_ratio)
-                        self.update_task(req_id, int(tp_ratio))
+                        self.update_recv_task(req_id, int(tp_ratio))
+                        sock.send_multipart((identity, b"", b"ACK"))
+                    elif msg[0] == FIRST_TOKEN_MSG:
+                        notif_msg = msg[1]
+                        req_id, first_token = notif_msg.rsplit(":", 1)
+                        logger.debug("KVCacheLayerwiseRecvThread get "
+                                     "FIRST_TOKEN_MSG for "
+                                     "request: %s, first_token: %s",
+                                     req_id, first_token)
+                        self.update_first_token_task(req_id, int(first_token))
                         sock.send_multipart((identity, b"", b"ACK"))
                     else:
                         logger.error("Connection listener got "
@@ -322,12 +340,16 @@ class KVCacheLayerwiseRecvThread(threading.Thread):
                 except Exception as e:
                     logger.error("Failed to decode message: %s", e)
 
-    def update_task(self, req_id, tp_ratio):
+    def update_recv_task(self, req_id, tp_ratio):
         with self.lock:
             self.task_tracker[req_id] += 1
             if self.task_tracker[req_id] == tp_ratio:
                 self.task_tracker.pop(req_id)
-                self.done_requests.add(req_id)
+                self.done_recv_requests.add(req_id)
+
+    def update_first_token_task(self, req_id, first_token):
+        with self.lock:
+            self.done_first_token_requests.add(req_id)
 
     def add_task_trace(self, req_id):
         with self.lock:
@@ -339,9 +361,19 @@ class KVCacheLayerwiseRecvThread(threading.Thread):
         Returns:
             A set of request IDs that have been completed.
         """
-        with self.lock:
-            finished_requests = self.done_requests
-            self.done_requests = set()
+        if _ENABLE_FIRST_TOKEN_REUSE and self.tp_rank == 0:
+            finished_requests = set[str]()
+            with self.lock:
+                done_first_token_reqs = self.done_first_token_requests.copy()
+                for req_id in done_first_token_reqs:
+                    if req_id in self.done_recv_requests:
+                        finished_requests.add(req_id)
+                        self.done_recv_requests.remove(req_id)
+                        self.done_first_token_requests.remove(req_id)
+        else:
+            with self.lock:
+                finished_requests = self.done_recv_requests
+                self.done_recv_requests = set()
         return finished_requests
 
 
@@ -510,6 +542,8 @@ class NixlLayerwiseConnector(KVConnectorBase_V1):
         pass
 
     def shutdown(self):
+        if self.connector_scheduler is not None:
+            self.connector_scheduler.shutdown()
         if self.connector_worker is not None:
             self.connector_worker.shutdown()
 
@@ -524,6 +558,7 @@ class NixlLayerwiseConnectorScheduler:
         self.side_channel_host = envs.VLLM_NIXL_SIDE_CHANNEL_HOST
         self.side_channel_port = (
             envs.VLLM_NIXL_SIDE_CHANNEL_PORT +
+            _SCHEDULER_PORT_OFFSET +
             vllm_config.parallel_config.data_parallel_rank *
             vllm_config.parallel_config.tensor_parallel_size)
         logger.info("Initializing NIXL Scheduler %s", engine_id)
@@ -536,6 +571,26 @@ class NixlLayerwiseConnectorScheduler:
         # req_id, (len(prompt), local_block_ids, request)
         self._reqs_need_send_layerwise: \
             dict[ReqId, tuple[int, list[int], Request]] = {}
+
+        # first token reuse
+        self._reqs_in_process: dict[ReqId, Request] = {}
+        # Background thread for handling first token
+        self._first_token_listener_t: Optional[threading.Thread] = None
+        # Protects _reqs_in_process.
+        self._first_token_lock = threading.RLock()
+
+        if _ENABLE_FIRST_TOKEN_REUSE and \
+            self.vllm_config.kv_transfer_config.is_kv_consumer:
+            ready_event = threading.Event()
+            self._first_token_listener_t = threading.Thread(
+                target=self._first_token_listener_on_decode,
+                args=(ready_event, self.side_channel_host,
+                      self.side_channel_port),
+                daemon=True,
+                name="first_token_listener")
+            self._first_token_listener_t.start()
+            ready_event.wait()
+
 
     def get_num_new_matched_tokens(
             self, request: "Request",
@@ -616,6 +671,9 @@ class NixlLayerwiseConnectorScheduler:
                 local_block_ids=block_ids,
                 kv_transfer_params=req.kv_transfer_params,
             )
+            if _ENABLE_FIRST_TOKEN_REUSE:
+                with self._first_token_lock:
+                    self._reqs_in_process[req_id] = req
 
         cached_reqs = scheduler_output.scheduled_cached_reqs
         new_reqs = scheduler_output.scheduled_new_reqs
@@ -654,6 +712,9 @@ class NixlLayerwiseConnectorScheduler:
                         local_block_ids=block_ids,
                         kv_transfer_params=req.kv_transfer_params,
                     )
+                    if _ENABLE_FIRST_TOKEN_REUSE:
+                        with self._first_token_lock:
+                            self._reqs_in_process[req_id] = req
                     self._reqs_need_send_layerwise.pop(req_id)
 
 
@@ -685,10 +746,165 @@ class NixlLayerwiseConnectorScheduler:
                 or request.status != RequestStatus.FINISHED_LENGTH_CAPPED):
             return False, None
 
+        if _ENABLE_FIRST_TOKEN_REUSE and params.get("do_remote_decode"):
+            first_token = _INVALID_TOKEN_ID
+            if request.num_output_tokens > 0:
+                first_token = request.output_token_ids[0]
+            else:
+                logger.debug("No output tokens for request %s",
+                             request.request_id)
+
+            remote_host = request.kv_transfer_params.get("remote_host", None),
+            remote_port = request.kv_transfer_params.get("remote_port", None),
+            assert remote_host is not None and remote_port is not None, \
+                f"Invalid remote host({remote_host}) " \
+                f"or remote port({remote_port})"
+            self._send_first_token_to_decode_sched(request.request_id,
+                                                   first_token,
+                                                   remote_host,
+                                                   remote_port)
+
         delay_free_blocks = len(block_ids) > 0
 
         return delay_free_blocks, None
 
+
+    def _send_first_token_to_decode_sched(self, req_id: ReqId, first_token: int,
+                                          remote_host: Union[str, tuple],
+                                          remote_port: Union[int, tuple]):
+        try:
+            if isinstance(remote_host, tuple):
+                if len(remote_host) == 0:
+                    raise ValueError(f"remote_host is empty tuple "
+                                     f"for request {req_id}")
+                remote_host = remote_host[0]
+            if isinstance(remote_port, tuple):
+                if len(remote_port) == 0:
+                    raise ValueError(f"remote_port is empty tuple "
+                                     f"for request {req_id}")
+                remote_port = remote_port[0]
+            # get scheduler port from worker port, using offset
+            remote_sched_port = (remote_port - _WORKER_BASE_PORT_OFFSET +
+                                 _SCHEDULER_PORT_OFFSET)
+            logger.debug("Sending first token(%s) to decode sched for "
+                         "request %s to %s:%d",
+                         first_token, req_id, remote_host, remote_sched_port)
+            path = make_zmq_path("tcp", remote_host, remote_sched_port)
+            send_msg = f"{req_id}:{first_token}:{remote_port}"
+            with zmq_ctx(zmq.REQ, path) as sock:
+                msg_encoder = msgspec.msgpack.Encoder()
+                encoded_data = msg_encoder.encode((FIRST_TOKEN_MSG, send_msg))
+                sock.send(encoded_data)
+                ack = sock.recv()
+                if ack != b"ACK":
+                    raise ValueError(f"Unexpected ACK response: {ack}")
+                logger.debug("ConnectorScheduler send_first_token_to_decode "
+                             "for req: %s", req_id)
+
+        except Exception as e:
+            logger.error(
+                f"Sending first token for request {req_id} to "
+                f"{remote_host}:{remote_sched_port} fail with error: {e}"
+            )
+
+
+    def _first_token_listener_on_decode(self, ready_event: threading.Event,
+                                        host: str, port: int):
+        """
+        Background thread for recv first token from
+        P NixlLayerwiseConnectorScheduler.
+        """
+        path = make_zmq_path("tcp", host, port)
+        logger.debug("first_token_listener starting listening "
+                     "on path: %s", path)
+        with zmq_ctx(zmq.ROUTER, path) as sock:
+            ready_event.set()
+            decoder = msgspec.msgpack.Decoder(type=tuple)
+            while True:
+                try:
+                    frames = sock.recv_multipart()
+                    if len(frames) < 2:
+                        logger.error("Invalid message format: %s", frames)
+                        continue
+
+                    identity = frames[0]
+                    payload = [f for f in frames[1:] if f != b""]
+                    if len(payload) != 1:
+                        logger.error("Invalid message format: %s", frames)
+                        continue
+
+                    msg = decoder.decode(payload[0])
+                    if msg[0] == FIRST_TOKEN_MSG:
+                        recv_msg = msg[1]
+                        req_id, first_token_str, worker_port_str = \
+                            recv_msg.rsplit(":", 2)
+                        logger.debug("_first_token_listener get FIRST_TOKEN_MSG"
+                                     " for request: %s, first_token: %s",
+                                     req_id, first_token_str)
+                        self._set_first_token_to_request(
+                            req_id, int(first_token_str))
+                        self._send_first_token_msg_to_worker(
+                            req_id, int(first_token_str), int(worker_port_str))
+                        sock.send_multipart((identity, b"", b"ACK"))
+                    else:
+                        logger.error("first_token listener got "
+                                     "unexpected message %s", msg)
+                except Exception as e:
+                    logger.error("Failed to decode message: %s", e)
+
+
+    def _set_first_token_to_request(self, req_id: ReqId, first_token: int):
+        with self._first_token_lock:
+            assert req_id in self._reqs_in_process, \
+                f"Invalid request {req_id} for setting first token."
+            request = self._reqs_in_process[req_id]
+            if first_token != _INVALID_TOKEN_ID:
+                logger.debug("Reuse first_token[%s] for request %s",
+                             first_token, req_id)
+                request.prompt_token_ids.append(first_token)
+                request.num_prompt_tokens = len(request.prompt_token_ids)
+                request._all_token_ids.append(first_token)
+            else:
+                logger.debug("Reuse first_token get _INVALID_TOKEN_ID, "
+                             "request: %s", req_id)
+            self._reqs_in_process.pop(req_id)
+
+
+    def _send_first_token_msg_to_worker(self, req_id: ReqId, first_token: int,
+                                        worker_port: int):
+        try:
+            host = self.side_channel_host
+            recv_port_offset = _WORKER_RECV_PORT_OFFSET - \
+                               _WORKER_BASE_PORT_OFFSET
+            port = worker_port + recv_port_offset
+            logger.debug("Sending first token msg to worker "
+                         "for request %s to %s:%d",
+                         req_id, host, port)
+            path = make_zmq_path("tcp", host, port)
+            notif_msg = f"{req_id}:{first_token}"
+            with zmq_ctx(zmq.REQ, path) as sock:
+                msg_encoder = msgspec.msgpack.Encoder()
+                encoded_data = msg_encoder.encode((FIRST_TOKEN_MSG, notif_msg))
+                sock.send(encoded_data)
+                ack = sock.recv()
+                if ack != b"ACK":
+                    raise ValueError(f"Unexpected ACK response: {ack}")
+                logger.debug("NixlLayerwiseConnectorScheduler, Sending first "
+                             "token msg to worker for request: %s", req_id)
+
+        except Exception as e:
+            logger.error("Sending first token msg to worker for request %s "
+                         "to %s:%s fail with error: %s", req_id,
+                         host, port)
+
+
+    def shutdown(self):
+        """Shutdown the connector scheduler."""
+        if self.self._first_token_listener_t is not None:
+            self.self._first_token_listener_t.join(timeout=0)
+            self.self._first_token_listener_t = None
+
+        logger.info("NixlLayerwiseConnectorScheduler shutdown complete")
 
 class NixlLayerwiseConnectorWorker:
     """Implementation of Worker side methods"""
@@ -725,6 +941,7 @@ class NixlLayerwiseConnectorWorker:
         # Each TP rank listens/queries on the base_port + tp_rank.
         self.side_channel_port: int = (
             envs.VLLM_NIXL_SIDE_CHANNEL_PORT +
+            _WORKER_BASE_PORT_OFFSET +
             vllm_config.parallel_config.data_parallel_rank *
             vllm_config.parallel_config.tensor_parallel_size)
         self.side_channel_host = envs.VLLM_NIXL_SIDE_CHANNEL_HOST
@@ -838,9 +1055,7 @@ class NixlLayerwiseConnectorWorker:
             Optional[KVCacheLayerwiseRecvThread] = None
 
         # Avoid conflicts between communication ports and handshake ports.
-        _max_dp_size = 1024
-        self._port_offset = _max_dp_size * \
-                            vllm_config.parallel_config.tensor_parallel_size
+        self._port_offset = _WORKER_RECV_PORT_OFFSET - _WORKER_BASE_PORT_OFFSET
 
         # set device
         _local_rank = get_world_group().local_rank
