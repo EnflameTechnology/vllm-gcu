@@ -59,11 +59,12 @@ at::Tensor fp8_paged_mqa_logits_v1(
                           q.options().dtype(torch::kFloat));
 
   at::Scalar max_context_len_scalar(max_context_len);
+  at::Scalar threshold_scalar(threshold);
 
-  ATEN_ATENOP_CHECK(
-      ATEN_ATENOP_CALL(topsdeepgemm::topsdeepgemmFp8PagedMqaLogits)(
-          out, q, fused_kv_cache, weights, context_lens, block_table,
-          schedule_meta, max_context_len_scalar, clean_logits, stream));
+  ATEN_ATENOP_CHECK(ATEN_ATENOP_CALL(
+      topsdeepgemm::topsdeepgemmFp8PagedMqaLogits_V1)(
+      out, q, fused_kv_cache, weights, context_lens, block_table, schedule_meta,
+      max_context_len_scalar, threshold_scalar, clean_logits, stream));
 
   return out;
 }
