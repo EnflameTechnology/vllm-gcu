@@ -27,7 +27,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: EnflameTechnology/sast.git
-          ref: ${{ env.SAST_BRANCH }}
+          ref: main
           path: ./sast
           ssh-key: ${{ secrets.SSH_PUB_KEY }}
 
