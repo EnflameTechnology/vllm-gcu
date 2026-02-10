@@ -13,11 +13,19 @@ jobs:
     runs-on: S60
     
     steps:
+    - name: Checkout sast
+      uses: actions/checkout@v4
+      with:
+        repository:  EnflameTechnology/sast  # 目标仓库：owner/repo
+        ref: main                        # 分支名（可选，默认拉取默认分支）
+        path: ./sast           # 拉取到本地 ./external-repo 目录（避免冲突）
+
     - name: Checkout code
       uses: actions/checkout@v4
       with:
         fetch-depth: 0  # 需要完整的git历史来比较变更
+        path: ./vllm-gcu
 
     - name: Run static code analysis
       run: |
-        sudo docker run --rm -v $(pwd):/app -v $(pwd):/sast -u $(id -u):$(id -g) -w /app registry-egc.enflame-tech.com/enflame/ci_sast:v1.0-os bash -c 'cd /app && python3 /sast/run.py --all_ci_check'
+        sudo docker run --rm -v ./vllm-gcu:/app -v ./sast:/sast -u $(id -u):$(id -g) -w /app registry-egc.enflame-tech.com/enflame/ci_sast:v1.0-os bash -c 'cd /app && python3 /sast/run.py --all_ci_check'
