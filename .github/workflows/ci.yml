@@ -24,12 +24,14 @@ jobs:
           repository: ${{ env.SAST_REPO }}
           ref: ${{ env.SAST_BRANCH }}
           path: ./sast
+          ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0  # Required for full git history to compare changes
           path: ./vllm-gcu
+          ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
       - name: Run static code analysis
         run: |
