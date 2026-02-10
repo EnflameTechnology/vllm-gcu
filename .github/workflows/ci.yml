@@ -29,6 +29,7 @@ jobs:
           repository: git@github.com:EnflameTechnology/sast.git
           ref: ${{ env.SAST_BRANCH }}
           path: ./sast
+          ssh-key: ${{ secrets.SSH_PUB_KEY }}
 
       - name: Checkout code
         uses: actions/checkout@v4
@@ -36,6 +37,7 @@ jobs:
           repository: git@github.com:EnflameTechnology/vllm-gcu.git
           fetch-depth: 0  # Required for full git history to compare changes
           path: ./vllm-gcu
+          ssh-key: ${{ secrets.SSH_PUB_KEY }}
 
       - name: Run static code analysis
         run: |
