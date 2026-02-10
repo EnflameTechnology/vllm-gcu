@@ -26,7 +26,7 @@ jobs:
       - name: Checkout SAST tools
         uses: actions/checkout@v4
         with:
-          repository: ${{ env.SAST_REPO }}
+          repository: git@github.com:EnflameTechnology/sast.git
           ref: ${{ env.SAST_BRANCH }}
           path: ./sast
 
