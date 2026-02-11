@@ -27,7 +27,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{env.SAST_REPO}}
-          ref: main
+          ref: ${{env.SAST_BRANCH}}
           path: ./sast
           ssh-key: ${{ secrets.SSH_PUB_KEY }}
 
