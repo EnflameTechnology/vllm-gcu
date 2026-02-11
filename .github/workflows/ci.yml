@@ -10,7 +10,7 @@ on:
 
 env:
   DOCKER_IMAGE: registry-egc.enflame-tech.com/enflame/ci_sast:v1.0-os
-  SAST_REPO: git@github.com:EnflameTechnology/sast.git
+  SAST_REPO: EnflameTechnology/sast
   SAST_BRANCH: main
 
 jobs:
@@ -18,15 +18,15 @@ jobs:
     runs-on: S60
     
     steps:
-      - name: Setup SSH Agent
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+      # - name: Setup SSH Agent
+      #   uses: webfactory/ssh-agent@v0.9.0
+      #   with:
+      #     ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
       - name: Checkout SAST tools
         uses: actions/checkout@v4
         with:
-          repository: EnflameTechnology/sast
+          repository: ${{env.SAST_REPO}}
           ref: main
           path: ./sast
           ssh-key: ${{ secrets.SSH_PUB_KEY }}
@@ -34,7 +34,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          repository: EnflameTechnology/vllm-gcu
           fetch-depth: 0  # Required for full git history to compare changes
           path: ./vllm-gcu
           ssh-key: ${{ secrets.SSH_PUB_KEY }}
