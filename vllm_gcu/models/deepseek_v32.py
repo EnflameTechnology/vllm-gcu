@@ -38,7 +38,7 @@ from vllm.attention.ops.common import pack_seq_triton, unpack_seq_triton
 from vllm.compilation.decorators import support_torch_compile
 from vllm.config import (CacheConfig, ParallelConfig, VllmConfig,
                          get_current_vllm_config)
-from vllm.distributed import (get_ep_group, get_pp_group,
+from vllm.distributed import (get_tp_group, get_ep_group, get_pp_group,
                               get_tensor_model_parallel_rank,
                               get_tensor_model_parallel_world_size,
                               tensor_model_parallel_all_gather,
@@ -391,16 +391,26 @@ def sparse_attn_indexer(
         # we only have [num_block, block_size, head_dim],
         kv_cache = kv_cache.unsqueeze(-2)
         decode_lens = decode_metadata.decode_lens
+        next_n = num_decode_tokens // attn_metadata.num_decodes
+
+        if gathered_slice := getattr(decode_metadata, "gathered_slice", None):
+            token_start = gathered_slice.start * next_n
+            token_end = gathered_slice.stop * next_n
+        else:
+            token_start = 0
+            token_end = num_decode_tokens
+
         if decode_metadata.requires_padding:
             # pad in edge case where we have short chunked prefill length <
             # decode_threshold since we unstrictly split
             # prefill and decode by decode_threshold
             # (currently set to 1 + speculative tokens)
             padded_q_fp8_decode_tokens = pack_seq_triton(
-                q_fp8[:num_decode_tokens], decode_lens)
+                q_fp8[token_start: token_end], decode_lens)
         else:
-            padded_q_fp8_decode_tokens = q_fp8[:num_decode_tokens].reshape(
-                decode_lens.shape[0], -1, *q_fp8.shape[1:])
+            padded_q_fp8_decode_tokens = q_fp8[token_start: token_end].reshape(
+                decode_lens.shape[0], next_n, *q_fp8.shape[1:])
+
         # TODO: move and optimize below logic with triton kernels
         batch_size = padded_q_fp8_decode_tokens.shape[0]
         next_n = padded_q_fp8_decode_tokens.shape[1]
@@ -411,7 +421,7 @@ def sparse_attn_indexer(
             logits = torch.ops._deepgemm_C.fp8_paged_mqa_logits_v1(
                 padded_q_fp8_decode_tokens,
                 kv_cache,
-                weights[:num_padded_tokens],
+                weights[token_start: token_end],
                 decode_metadata.seq_lens,
                 decode_metadata.block_table,
                 decode_metadata.schedule_metadata,
@@ -424,7 +434,7 @@ def sparse_attn_indexer(
             logits = deep_gemm.fp8_paged_mqa_logits(
                 padded_q_fp8_decode_tokens,
                 kv_cache,
-                weights[:num_padded_tokens],
+                weights[token_start: token_end],
                 decode_metadata.seq_lens,
                 decode_metadata.block_table,
                 decode_metadata.schedule_metadata,
@@ -432,7 +442,7 @@ def sparse_attn_indexer(
                 False,
             )
         num_rows = logits.shape[0]
-        topk_indices = topk_indices_buffer[:num_decode_tokens, :topk_tokens]
+        topk_indices = topk_indices_buffer[token_start: token_end, :topk_tokens]
 
         torch.ops._C.top_k_per_row_decode(
             logits,
@@ -452,8 +462,23 @@ def sparse_attn_indexer(
                 topk_indices.reshape(batch_size, -1, topk_indices.shape[-1]),
                 decode_lens,
             )
-            topk_indices_buffer[:num_decode_tokens, : topk_indices.shape[-1]] = (
+            topk_indices_buffer[token_start: token_end, : topk_indices.shape[-1]] = (
                 topk_indices
+            )
+
+        if gathered_slice:
+            tp_group = get_tp_group()
+
+            if num_decode_tokens == 0:
+                scatter_counts = [0 for _ in range(tp_group.world_size)]
+            else:
+                from vllm_gcu.utils import scatter
+
+                scatter_counts = scatter(attn_metadata.num_decodes, tp_group.world_size)
+
+            scatter_counts = list(map(lambda x: x * next_n, scatter_counts))
+            topk_indices_buffer[:num_decode_tokens, :topk_tokens] = tp_group.all_gatherv(
+                topk_indices, dim=0, sizes=scatter_counts
             )
 
     return topk_indices_buffer

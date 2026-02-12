@@ -43,16 +43,7 @@
 - func: awq_gemm_gcu(Tensor(a!) _in_feats, Tensor(a!) _kernel, Tensor(a!) _scaling_factors, Tensor(a!) _zeros, int split_k_iters, Tensor? bias, int group_size) -> Tensor
   variants: function
 
-- func: awq_dequantize(Tensor(a!) _kernel, Tensor(a!) _scaling_factors, Tensor(a!) _zeros, int split_k_iters, int thx, int thy) -> Tensor
-  variants: function
-
-- func: squeezellm_gemm(Tensor(a!) vec, Tensor(a!) mat, Tensor(a!) mul, Tensor(a!) lookup_table) -> ()
-  variants: function
-
 - func: gptq_gemm_gcu(Tensor(a!) a, Tensor(a!) b_q_weight, Tensor(a!) b_gptq_qzeros, Tensor(a!) b_gptq_scales, Tensor(a!) b_g_idx, int bit, Tensor? bias, int group_size) -> Tensor
-  variants: function
-
-- func: gptq_shuffle(Tensor(a!) q_weight, Tensor(a!) q_perm) -> ()
   variants: function
 
 - func: fused_moe_kernel(Tensor(a!) C, Tensor A, Tensor B, Tensor topk_weights, Tensor topk_ids, Tensor sorted_topk_ids, Tensor expert_ids, Tensor num_tokens_post_pad, bool mul_routed_weight, int topk, int block_size, Tensor? bias) -> ()

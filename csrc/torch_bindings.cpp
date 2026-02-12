@@ -1,7 +1,6 @@
 #include <torch/library.h>
 
 #include "registration.h"
-#include "src/awq_dequantize.h"
 #include "src/awq_gemm_gcu.h"
 #include "src/cache_ops.h"
 #include "src/concat_and_cache_mla.h"
@@ -50,7 +49,6 @@
 #include "src/gelu_tanh_static_int8_quant.h"
 #include "src/get_ep_indices.h"
 #include "src/gptq_gemm_gcu.h"
-#include "src/gptq_shuffle.h"
 #include "src/layer_norm_static_int8_quant.h"
 #include "src/linear_quant.h"
 #include "src/memory_efficient_attention_alibi.h"
