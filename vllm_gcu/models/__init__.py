@@ -37,6 +37,7 @@ def register_custom_models():
 
     chat_templates = [
         ['deepseek_ocr', 'deepseek_ocr/template_deepseek_ocr.jinja'],
+        ['deepseek_ocr2', 'deepseek_ocr2/template_deepseek_ocr.jinja'],
         ['got_ocr2', 'template_got_ocr2.jinja'],
     ]
     for model_type, chat_template in chat_templates:
@@ -62,6 +63,7 @@ def register_custom_models():
     ModelRegistry.register_model("KeyeVL1_5ForConditionalGeneration", "vllm_gcu.models.keye_vl:KeyeVL1_5ForConditionalGeneration")#gitleaks:allow
     ModelRegistry.register_model("Qwen2VLForConditionalGeneration", "vllm_gcu.models.qwen2_vl:Qwen2VLForConditionalGeneration")
     ModelRegistry.register_model("DeepseekOCRForCausalLM", "vllm_gcu.models.deepseek_ocr.deepseek_ocr:DeepseekOCRForCausalLM")
+    ModelRegistry.register_model("DeepseekOCR2ForCausalLM", "vllm_gcu.models.deepseek_ocr2.deepseek_ocr2:DeepseekOCR2ForCausalLM")
     ModelRegistry.register_model("DeepseekForCausalLM", "vllm_gcu.models.deepseek_ocr.deepseek:DeepseekForCausalLMGCU")
     ModelRegistry.register_model("MMGPTStep3vForCausalLM", "vllm_gcu.models.step3v.mm_step1o:MMGPTStep1oForCausalLM")
     ModelRegistry.register_model("Step2MiniForCausalLM", "vllm_gcu.models.step3v.step2_mini:Step2MiniForCausalLM")
