@@ -10,6 +10,9 @@
 - func: silu_and_mul(Tensor(a!) out, Tensor input) -> ()
   variants: function
 
+- func: swigluoai_and_mul(Tensor(a!) out, Tensor input, float alpha, float limit) -> ()
+  variants: function
+
 - func: gelu_and_mul(Tensor(a!) out, Tensor input) -> ()
   variants: function
 

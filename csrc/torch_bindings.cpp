@@ -107,6 +107,7 @@
 #include "src/cp_gather_indexer_k_quant_cache.h"
 #include "src/get_paged_mqa_logits_metadata_v1.h"
 #include "src/fp8_paged_mqa_logits_v1.h"
+#include "src/swigluoai_and_mul.h"
 
 // Note on op signatures:
 // The X_meta signatures are for the meta functions corresponding to op X.
@@ -191,6 +192,15 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
     ops.def("mul_and_silu(Tensor! out, Tensor input) -> ()");
   }
   ops.impl("mul_and_silu", torch::kPrivateUse1, &mul_and_silu);
+
+  // Activation function used in swigluoai_and_mul.
+  handle =
+      c10::Dispatcher::singleton().findSchema({"_C::swigluoai_and_mul", ""});
+  if (!handle.has_value()) {
+    ops.def("swigluoai_and_mul(Tensor! out, Tensor input, float alpha=1.702, "
+            "float limit = 7.0) ->()");
+  }
+  ops.impl("swigluoai_and_mul", torch::kPrivateUse1, &swigluoai_and_mul);
 
   // Activation function used in GeGLU with `none` approximation.
   handle = c10::Dispatcher::singleton().findSchema({"_C::gelu_and_mul", ""});

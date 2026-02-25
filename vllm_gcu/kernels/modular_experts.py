@@ -178,6 +178,7 @@ class TritonExpertsPad(mk.FusedMoEPermuteExpertsUnpermute):
             block_shape=self.block_shape,
             real_token_num=expert_num_tokens if is_static else None,
             A_scale_rec=w13_input_scale_rec,
+            bias=self.quant_config.w1_bias,
         )
 
         if activation == "silu":
@@ -242,6 +243,12 @@ class TritonExpertsPad(mk.FusedMoEPermuteExpertsUnpermute):
                     intermediate_cache1,
                     expert_num_tokens,
                 )
+        elif activation == "swigluoai":
+            # alpha = 1.702, limit = 7.0
+            assert not self.quant_config.use_fp8_w8a8
+            assert not self.quant_config.use_int8_w8a8
+            torch.ops._C.swigluoai_and_mul(intermediate_cache2,
+                                       intermediate_cache1.view(-1, N))
         else:
             raise ValueError(f"Unsupported FusedMoe activation: {activation}")
 
@@ -269,6 +276,7 @@ class TritonExpertsPad(mk.FusedMoEPermuteExpertsUnpermute):
             block_shape=self.block_shape,
             real_token_num=expert_num_tokens if is_static else None,
             A_scale_rec=w2_input_scale_rec,
+            bias=self.quant_config.w2_bias,
         )
 
         torch.ops._moe_C.moe_sum_pad(

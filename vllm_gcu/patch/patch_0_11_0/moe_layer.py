@@ -262,11 +262,118 @@ def forward_impl_chunked(
         return (full_shared_final_hidden_states,
                 full_fused_final_hidden_states)
 
+def forward_cuda(
+    self,
+    layer: torch.nn.Module,
+    x: torch.Tensor,
+    use_grouped_topk: bool,
+    top_k: int,
+    router_logits: torch.Tensor,
+    renormalize: bool,
+    topk_group: Optional[int] = None,
+    num_expert_group: Optional[int] = None,
+    global_num_experts: int = -1,
+    expert_map: Optional[torch.Tensor] = None,
+    custom_routing_function: Optional[Callable] = None,
+    scoring_func: str = "softmax",
+    routed_scaling_factor: float = 1.0,
+    e_score_correction_bias: Optional[torch.Tensor] = None,
+    apply_router_weight_on_input: bool = False,
+    activation: str = "silu",
+    enable_eplb: bool = False,
+    expert_load_view: Optional[torch.Tensor] = None,
+    logical_to_physical_map: Optional[torch.Tensor] = None,
+    logical_replica_count: Optional[torch.Tensor] = None,
+) -> Union[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
+
+    zero_expert_num = getattr(layer, 'zero_expert_num', 0)
+    zero_expert_type = getattr(layer, 'zero_expert_type', None)
+
+    topk_weights, topk_ids, zero_expert_result = FusedMoE.select_experts(
+        hidden_states=x,
+        router_logits=router_logits,
+        use_grouped_topk=use_grouped_topk,
+        top_k=top_k,
+        renormalize=renormalize,
+        topk_group=topk_group,
+        num_expert_group=num_expert_group,
+        custom_routing_function=custom_routing_function,
+        scoring_func=scoring_func,
+        routed_scaling_factor=routed_scaling_factor,
+        e_score_correction_bias=e_score_correction_bias,
+        indices_type=self.topk_indices_dtype,
+        enable_eplb=enable_eplb,
+        expert_map=expert_map,
+        expert_load_view=expert_load_view,
+        logical_to_physical_map=logical_to_physical_map,
+        logical_replica_count=logical_replica_count,
+        global_num_experts=global_num_experts,
+        zero_expert_num=zero_expert_num,
+        zero_expert_type=zero_expert_type)
+
+    if self.rocm_aiter_moe_enabled:
+        assert self.fused_experts is None
+        result = self.rocm_aiter_fused_experts(
+            hidden_states=x,
+            w1=layer.w13_weight,
+            w2=layer.w2_weight,
+            topk_weights=topk_weights,
+            topk_ids=topk_ids,
+            expert_map=expert_map,
+            activation=activation,
+            apply_router_weight_on_input=apply_router_weight_on_input)
+    elif self.flashinfer_cutlass_moe_enabled:
+        return self.flashinfer_cutlass_moe(
+            hidden_states=x,
+            w1=layer.w13_weight,
+            w2=layer.w2_weight,
+            topk_weights=topk_weights,
+            topk_ids=topk_ids,
+            activation=activation,
+            apply_router_weight_on_input=apply_router_weight_on_input)
+    elif self.fused_experts is not None:
+        result = self.fused_experts(
+            hidden_states=x,
+            w1=layer.w13_weight,
+            w2=layer.w2_weight,
+            topk_weights=topk_weights,
+            topk_ids=topk_ids,
+            inplace=True,
+            activation=activation,
+            apply_router_weight_on_input=apply_router_weight_on_input,
+            global_num_experts=global_num_experts,
+            expert_map=expert_map,
+        )
+    else:
+        from vllm.model_executor.layers.fused_moe import fused_experts
+        assert fused_experts is not None
+        result = fused_experts(
+            hidden_states=x,
+            w1=layer.w13_weight,
+            w2=layer.w2_weight,
+            topk_weights=topk_weights,
+            topk_ids=topk_ids,
+            inplace=True,
+            activation=activation,
+            quant_config=self.moe_quant_config,
+            apply_router_weight_on_input=apply_router_weight_on_input,
+            global_num_experts=global_num_experts,
+            expert_map=expert_map,
+        )
+
+    if zero_expert_num != 0 and zero_expert_type is not None:
+        assert not isinstance(result, tuple), \
+            "Shared + zero experts are mutually exclusive not yet supported"
+        return result, zero_expert_result
+    else:
+        return result
 
 # yapf: disable
 patch("vllm.model_executor.layers.fused_moe.layer.FusedMoEMethodBase.init_prepare_finalize", init_prepare_finalize).start()
 patch("vllm.model_executor.layers.fused_moe.FusedMoEMethodBase.init_prepare_finalize", init_prepare_finalize).start()
 patch("vllm.model_executor.layers.fused_moe.layer.UnquantizedFusedMoEMethod.select_gemm_impl", select_gemm_impl_unquant).start()
+patch("vllm.model_executor.layers.fused_moe.layer.UnquantizedFusedMoEMethod.forward_cuda", forward_cuda).start()
+patch("vllm.model_executor.layers.fused_moe.layer.UnquantizedFusedMoEMethod.forward_native", forward_cuda).start()
 patch("vllm.model_executor.layers.fused_moe.layer.eplb_map_to_physical_and_record", eplb_map_to_physical_and_record).start()
 patch("vllm.model_executor.layers.fused_moe.layer.FusedMoE.forward_impl_chunked", forward_impl_chunked).start()
 patch("vllm.model_executor.layers.fused_moe.FusedMoE.forward_impl_chunked", forward_impl_chunked).start()
