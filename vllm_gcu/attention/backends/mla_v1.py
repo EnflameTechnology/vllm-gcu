@@ -75,7 +75,7 @@ def customized_split_decodes_and_prefills(
 
 
 class GCUMLAMetadataBuilder(MLACommonMetadataBuilder[GCUMLAMetadata]):
-    reorder_batch_threshold: int = 8
+    reorder_batch_threshold: int = 1
     # NOTE: uniform decode graphs will only be selected when q=N*(1+k)
     cudagraph_support = AttentionCGSupport.UNIFORM_BATCH
 
@@ -83,6 +83,10 @@ class GCUMLAMetadataBuilder(MLACommonMetadataBuilder[GCUMLAMetadata]):
                  vllm_config: VllmConfig, device: torch.device):
         super().__init__(kv_cache_spec, layer_names, vllm_config, device,
                          GCUMLAMetadata)
+        num_speculative_tokens = (
+            vllm_config.speculative_config.num_speculative_tokens
+            if vllm_config.speculative_config else 0)
+        self.reorder_batch_threshold += num_speculative_tokens
 
         self.num_q_heads = vllm_config.model_config.get_num_attention_heads(
             vllm_config.parallel_config)
@@ -166,6 +170,8 @@ class GCUMLAMetadataBuilder(MLACommonMetadataBuilder[GCUMLAMetadata]):
 
 
 class GCUMLAImpl(MLACommonImpl[GCUMLAMetadata]):
+
+    can_return_lse_for_decode: bool = True
 
     def __init__(
             self,
@@ -339,7 +345,7 @@ class GCUMLAImpl(MLACommonImpl[GCUMLAMetadata]):
         sum_seq_q = q.shape[0]
         batch = decode_meta.block_table.shape[0]
 
-        if sum_seq_q // batch > 1:
+        if sum_seq_q // batch > 1 or self.dcp_world_size > 1:
             assert sum_seq_q % batch == 0
             q = q.view(batch, sum_seq_q // batch, *q.shape[1:])
 
@@ -357,8 +363,8 @@ class GCUMLAImpl(MLACommonImpl[GCUMLAMetadata]):
                 descale_k=layer._k_scale,
             )
             output = output.view(-1, *output.shape[2:])
-            # TODO: for dcp
-            # softmax_lse = softmax_lse.transpose(2, 1).reshape(-1, self.num_heads)
+            if self.dcp_world_size > 1:
+                softmax_lse = softmax_lse.transpose(2, 1).reshape(-1, softmax_lse.shape[1])
         else:
             q_scale = None
             if self.kv_cache_dtype == "fp8":

@@ -232,7 +232,7 @@
 - func: merge_attn_states(Tensor(a!) output, Tensor(a!) output_lse, Tensor prefix_output, Tensor prefix_lse, Tensor suffix_output, Tensor suffix_lse) -> ()
   variants: function
 
-- func: gather_cache(Tensor src_cache, Tensor dst, Tensor block_table, Tensor cu_seq_lens, int batch_size, Tensor seq_starts) -> ()
+- func: cp_gather_cache(Tensor src_cache, Tensor(a!) dst, Tensor block_table, Tensor cu_seq_lens, int batch_size, Tensor? seq_starts) -> ()
   variants: function
 
 - func: gather_and_maybe_dequant_cache(Tensor src_cache, Tensor dst, Tensor block_table, Tensor cu_seq_lens, int batch_size, str kv_cache_dtype, Tensor scale, Tensor? seq_starts) -> ()

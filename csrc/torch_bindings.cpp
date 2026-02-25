@@ -31,7 +31,7 @@
 #include "src/fused_qkv_gemm_quant.h"
 #include "src/fused_qkv_proj.h"
 #include "src/gather_and_maybe_dequant_cache.h"
-#include "src/gather_cache.h"
+#include "src/cp_gather_cache.h"
 #include "src/gelu_and_mul.h"
 #include "src/gelu_asym_quant.h"
 #include "src/gelu_fast.h"
@@ -1447,14 +1447,13 @@ TORCH_LIBRARY_FRAGMENT(CONCAT(TORCH_EXTENSION_NAME, _cache_ops),
   cache_ops.impl("convert_fp8", torch::kPrivateUse1, &convert_fp8);
 
   handle = c10::Dispatcher::singleton().findSchema(
-      {"_C_cache_ops::gather_cache", ""});
+      {"_C_cache_ops::cp_gather_cache", ""});
   if (!handle.has_value()) {
     cache_ops.def(
-        "gather_cache(Tensor(a!) src_cache, Tensor(a!) dst, "
-        "Tensor(a!) block_table, Tensor(a!) cu_seq_lens, "
-        "int batch_size, Tensor(a!) seq_starts) -> ()");
+      "cp_gather_cache(Tensor src_cache, Tensor! dst, Tensor block_table, "
+      "Tensor cu_seq_lens, int batch_size, Tensor? seq_starts) -> ()");
   }
-  cache_ops.impl("gather_cache", torch::kPrivateUse1, &gather_cache);
+  cache_ops.impl("cp_gather_cache", torch::kPrivateUse1, &cp_gather_cache);
   handle = c10::Dispatcher::singleton().findSchema(
       {"_C_cache_ops::gather_and_maybe_dequant_cache", ""});
   if (!handle.has_value()) {

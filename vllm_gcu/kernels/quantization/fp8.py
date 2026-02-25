@@ -470,11 +470,12 @@ def apply_w8a8_block_fp8_linear(
     use_aiter_and_is_supported: bool = False,
 ) -> torch.Tensor:
     output_dtype = input.dtype
+    output_shape = [*input.shape[:-1], weight.shape[0]]
+    input_2d = input.view(-1, input.shape[-1])
 
     if input_scale is None:
-        # input_2d = input.view(-1, input.shape[-1])
         q_input, x_scale = ops.per_token_group_quant_fp8(
-            input,  # input_2d
+            input_2d,
             block_size[1],
             dtype=current_platform.fp8_dtype(),
             column_major_scales=False,
@@ -484,7 +485,6 @@ def apply_w8a8_block_fp8_linear(
         q_input = input
         x_scale = input_scale
 
-    output_shape = [*input.shape[:-1], weight.shape[0]]
     output = ops.w8a8_block_fp8_matmul(
         q_input,
         weight,
