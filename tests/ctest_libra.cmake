@@ -98,3 +98,33 @@ add_py_test (PROJECT libra
              NAME test_get_ep_indices
              COMMAND "cd tests && python -m pytest -sv kernels/test_get_ep_indices.py"
             )
+add_py_test (PROJECT libra
+             PLATFORM silicon
+             REGRESSION daily
+             CATEGORY func
+             OS ubuntu
+             MODULE vllm_dev
+             ID 11
+             NAME test_cp_gather_indexer_k_quant_cache
+             COMMAND "cd tests && python -m pytest -sv kernels/test_cp_gather_indexer_k_quant_cache.py"
+            )
+add_py_test (PROJECT libra
+             PLATFORM silicon
+             REGRESSION daily
+             CATEGORY func
+             OS ubuntu
+             MODULE vllm_dev
+             ID 12
+             NAME test_flashmla_mixed
+             COMMAND "cd tests && python -m pytest -sv kernels/test_flashmla_mixed.py"
+            )
+add_py_test (PROJECT libra
+             PLATFORM silicon
+             REGRESSION daily
+             CATEGORY func
+             OS ubuntu
+             MODULE vllm_dev
+             ID 13
+             NAME test_linear_quant_per_tensor_fp8
+             COMMAND "cd tests && python -m pytest -sv kernels/test_linear_quant_per_tensor_fp8.py"
+            )
