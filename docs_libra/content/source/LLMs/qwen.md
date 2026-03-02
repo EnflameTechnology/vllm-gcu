@@ -1226,3 +1226,84 @@ vllm bench serve \
 *  本模型支持的`max-model-len`为262144；
 *  `input-len`、`output-len`和`num-prompts`可按需调整；
 
+### Qwen3-30B-A3B-Instruct-2507
+#### 模型下载
+*  url: [Qwen3-30B-A3B-Instruct-2507](https://www.modelscope.cn/models/Qwen/Qwen3-30B-A3B-Instruct-2507)
+
+*  branch: `master`
+
+*  commit id: `1bb16df4`
+
+将上述url设定的路径下的内容全部下载到`Qwen3-30B-A3B-Instruct-2507`文件夹中。
+
+#### 环境变量
+
+```
+export VLLM_USE_V1=1
+export TORCHGCU_INDUCTOR_ENABLE=0
+export PYTORCH_EFML_BASED_GCU_CHECK=1
+export TORCH_ECCL_AVOID_RECORD_STREAMS=1
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export VLLM_ATTENTION_BACKEND=FLASH_ATTN
+```
+
+#### 在线测试
+```shell
+ # 启动服务端
+vllm serve "[path of Qwen3-30B-A3B-Instruct-2507]" \
+ --data-parallel-size 4 \
+ --enable-expert-parallel \
+ --block-size=64 \
+ --no-enable-prefix-caching \
+ --async-scheduling
+
+# 启动客户端
+curl "http://localhost:8080/v1/chat/completions" \
+ -H "Content-Type: application/json" \
+ -d '{
+        "max_tokens": 64,
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are a helpful assistant."
+            },
+            {
+                "role": "user",
+                "content": "李白是谁？"
+            }
+        ],
+        "model":"[path of Qwen3-30B-A3B-Instruct-2507]",
+        "stop": null,
+        "stream": false
+    }'
+```
+
+#### 性能测试
+
+```shell
+# 启动服务端
+vllm serve "[path of Qwen3-30B-A3B-Instruct-2507]" \
+ --tokenizer="[path of Qwen3-30B-A3B-Instruct-2507]" \
+ --data-parallel-size 4 \
+ --enable-expert-parallel \
+ --block-size=64 \
+ --no-enable-prefix-caching \
+ --async-scheduling
+
+# 启动客户端
+vllm bench serve \
+ --model "[path of Qwen3-30B-A3B-Instruct-2507]" \
+ --base-url http://127.0.0.1:8080 \
+ --dataset-name random \
+ --random-input-len 8192 \
+ --random-output-len 2048 \
+ --num-prompts 512 \
+ --max-concurrency 256 \
+ --trust-remote-code \
+ --ignore-eos \
+ --percentile-metrics ttft,tpot,itl,e2el \
+ --metric-percentiles 25,50,75,90,99,100
+```
+注：
+*  本模型支持的`max-model-len`为262144；
+*  `input-len`、`output-len`和`num-prompts`可按需调整；
