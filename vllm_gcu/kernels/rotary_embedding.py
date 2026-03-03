@@ -9,8 +9,6 @@ from vllm.model_executor.layers.rotary_embedding import (
     RotaryEmbedding,
     MRotaryEmbedding,
 )
-from vllm.model_executor.layers.rotary_embedding.mrope import apply_interleaved_rope
-from vllm.platforms import current_platform
 from vllm_gcu.kernels import _custom_ops as ops
 
 
@@ -94,12 +92,12 @@ def deepseek_oot(
 
     return query, key
 
+
 def m_forward_oot(
         self,
         positions: torch.Tensor,
         query: torch.Tensor,
-        key: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        key: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
     """PyTorch-native implementation equivalent to forward().
 
     Args:
@@ -110,42 +108,23 @@ def m_forward_oot(
         key: [num_tokens, num_kv_heads * head_size]
     """
     assert positions.ndim == 1 or positions.ndim == 2
-    num_tokens = positions.shape[-1]
-    cos_sin = self.cos_sin_cache[positions]
-    cos, sin = cos_sin.chunk(2, dim=-1)
     if positions.ndim == 2:
         assert self.mrope_section
+        # custom mrotary_embedding operator expects positions to be contiguous
+        positions = positions.contiguous()
+        ops.mrotary_embedding(
+            positions,
+            query,
+            key,
+            self.head_size,
+            self.cos_sin_cache,
+            self.is_neox_style,
+            self.mrope_section,
+            self.mrope_interleaved,
+        )
+        return query, key
 
-        if self.mrope_interleaved:
-            if not current_platform.has_device_capability(140):
-                positions = torch.arange(num_tokens, device=query.device, dtype=torch.long)
-                ops.mrotary_embedding(
-                    positions,
-                    query,
-                    key,
-                    self.head_size,
-                    cos_sin,
-                    self.is_neox_style,
-                    self.mrope_section,
-                )
-                return query, key
-            else:
-                cos = apply_interleaved_rope(cos, self.mrope_section)
-                sin = apply_interleaved_rope(sin, self.mrope_section)
-        else:
-            cos = torch.cat([
-                m[i]
-                for i, m in enumerate(cos.split(self.mrope_section, dim=-1))
-            ],
-                            dim=-1)
-            sin = torch.cat([
-                m[i]
-                for i, m in enumerate(sin.split(self.mrope_section, dim=-1))
-            ],
-                            dim=-1)
-        cos_sin = torch.concat([cos, sin], -1)
-        rotary_dim = cos.shape[0]
-        positions = torch.arange(rotary_dim, device=query.device, dtype=torch.long)
+    num_tokens = positions.shape[-1]
 
     query_shape = query.shape
     query = query.view(num_tokens, -1, self.head_size)
@@ -165,7 +144,7 @@ def m_forward_oot(
         query_rot,
         key_rot,
         self.head_size,
-        cos_sin,
+        self.cos_sin_cache,
         self.is_neox_style,
     )
     query_rot = query_rot.reshape(query_rot_shape)

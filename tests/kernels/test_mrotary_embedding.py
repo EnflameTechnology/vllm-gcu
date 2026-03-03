@@ -4,11 +4,10 @@ import torch
 import torch_gcu
 
 from vllm.model_executor.layers.rotary_embedding import MRotaryEmbedding
-from vllm.platforms import current_platform
 from vllm_gcu.kernels import _custom_ops as ops
 
 
-def create_mrope_embedding(head_size, rotary_dim, is_neox, mrope_section, dtype, mrope_interleaved=False):
+def create_mrope_embedding(head_size, rotary_dim, is_neox, mrope_section, dtype, mrope_interleaved):
     """Create a MRotaryEmbedding instance for testing."""
     return MRotaryEmbedding(
         head_size=head_size,
@@ -22,18 +21,17 @@ def create_mrope_embedding(head_size, rotary_dim, is_neox, mrope_section, dtype,
     )
 
 
-@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16, torch.float32])
+@pytest.mark.parametrize("dtype", [torch.bfloat16])
+@pytest.mark.parametrize("is_neox", [True])
+@pytest.mark.parametrize("head_size", [128])
+@pytest.mark.parametrize("group_size", [1, 4])
+@pytest.mark.parametrize("mrope_interleaved", [True, False])
+@pytest.mark.parametrize("num_heads", [32])
 @pytest.mark.parametrize(
-    "num_tokens, num_heads, head_size, is_neox",
-    [
-        (2048, 32,  128, True),
-        (1,    32,  128, True),
-    ]
+    "num_tokens", [1, 313, 6474, 8192]
 )
 @pytest.mark.parametrize("mrope_section", [[24, 20, 20]])
-def test_interleaved_mrope(dtype, num_tokens, num_heads, head_size, is_neox, mrope_section):
-    if current_platform.get_device_capability().to_int() > 130:
-        pytest.skip(f"mrope_interleaved is not supported on Libra")
+def test_mrope(dtype, num_tokens: int, num_heads: int, head_size: int, group_size: int, is_neox: bool, mrope_section: list[int], mrope_interleaved: bool):
     
     torch.random.manual_seed(42)
     
@@ -41,33 +39,30 @@ def test_interleaved_mrope(dtype, num_tokens, num_heads, head_size, is_neox, mro
     
     # Prepare tensors
     query = torch.randn(num_tokens, num_heads * head_size, dtype=dtype).gcu()
-    key = torch.randn(num_tokens, num_heads * head_size, dtype=dtype).gcu()
+    key = torch.randn(num_tokens, num_heads * head_size // group_size, dtype=dtype).gcu()
+
     positions = torch.stack([
-        torch.arange(num_tokens, dtype=torch.long),  # T dimension
-        torch.arange(num_tokens, dtype=torch.long),  # H dimension  
-        torch.arange(num_tokens, dtype=torch.long),  # W dimension
-    ]).gcu()
-    
+        torch.randint(0, num_tokens, (num_tokens,), dtype=torch.int64),  # T dimension
+        torch.randint(0, num_tokens, (num_tokens,), dtype=torch.int64),  # H dimension  
+        torch.randint(0, num_tokens, (num_tokens,), dtype=torch.int64),  # W dimension
+    ]).gcu().contiguous()  # [3, num_tokens]
+
     # Create MRotaryEmbedding instance with interleaved mode
-    mrope = create_mrope_embedding(head_size, rotary_dim, is_neox, mrope_section, dtype, mrope_interleaved=True)
-    
-    # Get cos_sin from cache (cache is on CPU, so we need to use CPU positions)
-    cos_sin = mrope.cos_sin_cache[positions.cpu()].gcu()
-    cos, sin = cos_sin.chunk(2, dim=-1)
+    mrope = create_mrope_embedding(head_size, rotary_dim, is_neox, mrope_section, dtype, mrope_interleaved)
+    mrope.cos_sin_cache = mrope.cos_sin_cache.gcu()
     
     # Run kernel
     query_kernel = query.clone()
     key_kernel = key.clone()
-    rotary_dim_kernel = cos.shape[1]
-    positions_kernel = torch.arange(rotary_dim_kernel, device=query.device, dtype=torch.long)
     ops.mrotary_embedding(
-        positions_kernel,
+        positions,
         query_kernel,
         key_kernel,
         head_size,
-        cos_sin,
+        mrope.cos_sin_cache,
         is_neox,
         mrope_section,
+        mrope.mrope_interleaved,
     )
     
     # Run reference implementation using MRotaryEmbedding.forward_native

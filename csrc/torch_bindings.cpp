@@ -342,7 +342,7 @@ TORCH_LIBRARY_FRAGMENT(TORCH_EXTENSION_NAME, ops) {
         "mrotary_embedding(Tensor positions, Tensor! query,"
         "                 Tensor! key, int head_size,"
         "                 Tensor cos_sin_cache, bool is_neox,"
-        "                 int[] mrope_section) -> ()");
+        "                 int[] mrope_section, bool mrope_interleaved) -> ()");
   }
   ops.impl("mrotary_embedding", torch::kPrivateUse1, &mrotary_embedding);
 

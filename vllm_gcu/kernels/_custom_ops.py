@@ -175,12 +175,13 @@ def mrotary_embedding(
     cos_sin_cache: torch.Tensor,
     is_neox: bool,
     mrope_section: List[int],
+    mrope_interleaved: bool,
 ) -> None:
     if query.numel() == 0:
         return
 
     torch.ops._C.mrotary_embedding(
-        positions, query, key, head_size, cos_sin_cache, is_neox, mrope_section
+        positions, query, key, head_size, cos_sin_cache, is_neox, mrope_section, mrope_interleaved
     )
 
 # layer norm ops

@@ -25,7 +25,7 @@ namespace vllm_gcu::llm_ops {
 
 void mrotary_embedding(const at::Tensor &positions, at::Tensor &query,
     at::Tensor &key, int64_t head_size, const at::Tensor &cos_sin_cache,
-    bool is_neox, at::IntArrayRef mrope_section) {
+    bool is_neox, at::IntArrayRef mrope_section, bool mrope_interleaved) {
     const torch_gcu::OptionalGCUGuard device_guard(device_of(query));
     const topsStream_t stream = torch_gcu::getCurrentGCUStream();
 
@@ -33,14 +33,14 @@ void mrotary_embedding(const at::Tensor &positions, at::Tensor &query,
 
     auto view_query = query.view({-1, query.size(-1)});
     auto view_key = key.view({-1, key.size(-1)});
-    auto view_positions = positions.view({-1});
 
     topsatenSize_t mrope_section_t(mrope_section.data(),
                                    static_cast<int64_t>(mrope_section.size()));
 
     ATEN_ATENOP_CHECK(ATEN_ATENOP_CALL(topsvllm::topsvllmMRotaryEmbedding)(
-        view_query, view_key, view_positions, cos_sin_cache,
-        static_cast<int>(head_size), is_neox, mrope_section_t, stream));
+        view_query, view_key, positions, cos_sin_cache,
+        static_cast<int>(head_size), is_neox, mrope_section_t,
+        mrope_interleaved, stream));
 }
 
 }  // namespace vllm_gcu::llm_ops
