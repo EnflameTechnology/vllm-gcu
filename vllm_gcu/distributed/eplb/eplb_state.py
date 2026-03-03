@@ -93,14 +93,16 @@ def step(self,
         #   (mean load across ranks) / (max load across ranks)
         avg_tokens_per_layer_tensor = num_tokens_per_rank.mean(dim=1)
         max_tokens_per_layer_tensor = num_tokens_per_rank.max(dim=1).values
+        min_tokens_per_layer_tensor = num_tokens_per_rank.min(dim=1).values
 
         avg_tokens_tensor = avg_tokens_per_layer_tensor.sum(dim=0)
         max_tokens_tensor = max_tokens_per_layer_tensor.sum(dim=0)
+        min_tokens_tensor = min_tokens_per_layer_tensor.sum(dim=0)
 
         # Just to make type checker happy
         tokens_tensors: list[float] = torch.stack(
-            [avg_tokens_tensor, max_tokens_tensor]).tolist()
-        avg_tokens, max_tokens = tokens_tensors
+            [avg_tokens_tensor, max_tokens_tensor, min_tokens_tensor]).tolist()
+        avg_tokens, max_tokens, min_tokens = tokens_tensors
         balancedness = avg_tokens / max_tokens if max_tokens > 0 else 0.0
 
         imbalanceness = (
@@ -108,11 +110,14 @@ def step(self,
              avg_tokens_per_layer_tensor).mean() if \
             torch.all(avg_tokens_per_layer_tensor > 0) else torch.inf
 
+        lower_bound = min_tokens / avg_tokens if avg_tokens > 0 else 0.0
+        upper_bound = max_tokens / avg_tokens if avg_tokens > 0 else 0.0
+
         if ep_group.rank() == 0:
             logger.info(
                 "EPLB step: avg_tokens=%.2f, max_tokens=%d, "
-                "balancedness=%.4f, imbalanceness=%.4f",
-                avg_tokens, max_tokens, balancedness, imbalanceness)
+                "balancedness=%.4f, imbalanceness=%.4f, lower_bound=%.4f, upper_bound=%.4f",
+                avg_tokens, max_tokens, balancedness, imbalanceness, lower_bound, upper_bound)
 
     # Update the expert load sliding window
     if not is_dummy:
