@@ -39,7 +39,7 @@ vllm serve "[path of rnj-1-instruct]" \
     --block-size=64
 
 # 启动客户端
-curl -X POST "http://localhost:8080/v1/chat/completions" \
+curl -X POST "http://localhost:8000/v1/chat/completions" \
      -H "Content-Type: application/json"
      --data '{
                 "model": "rnj",

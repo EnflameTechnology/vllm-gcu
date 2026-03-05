@@ -1258,7 +1258,7 @@ vllm serve "[path of Qwen3-30B-A3B-Instruct-2507]" \
  --async-scheduling
 
 # 启动客户端
-curl "http://localhost:8080/v1/chat/completions" \
+curl "http://localhost:8000/v1/chat/completions" \
  -H "Content-Type: application/json" \
  -d '{
         "max_tokens": 64,
@@ -1293,7 +1293,7 @@ vllm serve "[path of Qwen3-30B-A3B-Instruct-2507]" \
 # 启动客户端
 vllm bench serve \
  --model "[path of Qwen3-30B-A3B-Instruct-2507]" \
- --base-url http://127.0.0.1:8080 \
+ --base-url http://127.0.0.1:8000 \
  --dataset-name random \
  --random-input-len 8192 \
  --random-output-len 2048 \
