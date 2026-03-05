@@ -55,7 +55,7 @@ for idx in "${!valid_ips[@]}"; do
         break
     fi
 done
- 
+
 if ! $valid; then
     echo "Error: Unsupported IP address $HOST_IP"
     exit 1
@@ -100,7 +100,7 @@ vllm serve ${model_name} \
     - 例如：`MTP_TOKENS=1`、`--max-num-seqs=16` → 最大值 `32`，列表为 `1 2 3 4 5 6 7 8 10 12 ... 32`。
     - 一行生成示例：
       ```bash
-      T=${MTP_TOKENS:-1}; N=${MAX_SEQS_DECODE:-16}
+      T=${MTP_TOKENS:-1}; N=${max_num_seqs:-16}
       cuda_graph_sizes="1 2 3 4 5 6 7 8 $(seq $((8+T+1)) $((T+1)) $((N*(T+1))))"
       ```
 
@@ -278,7 +278,7 @@ for idx in "${!valid_ips[@]}"; do
         break
     fi
 done
- 
+
 if ! $valid; then
     echo "Error: Unsupported IP address $HOST_IP"
     exit 1
@@ -322,7 +322,7 @@ vllm serve ${model_name} \
     - 例如：`MTP_TOKENS=1`、`--max-num-seqs=16` → 最大值 `32`，列表为 `1 2 3 4 5 6 7 8 10 12 ... 32`。
     - 一行生成示例：
       ```bash
-      T=${MTP_TOKENS:-1}; N=${MAX_SEQS_DECODE:-16}
+      T=${MTP_TOKENS:-1}; N=${max_num_seqs:-16}
       cuda_graph_sizes="1 2 3 4 5 6 7 8 $(seq $((8+T+1)) $((T+1)) $((N*(T+1))))"
       ```
 
@@ -530,7 +530,7 @@ vllm serve ${pretrained_model} \
     - 例如：`MTP_TOKENS=1`、`--max-num-seqs=16` → 最大值 `32`，列表为 `1 2 3 4 5 6 7 8 10 12 ... 32`。
     - 一行生成示例：
       ```bash
-      T=${MTP_TOKENS:-1}; N=${MAX_SEQS_DECODE:-16}
+      T=${MTP_TOKENS:-1}; N=${max_num_seqs:-16}
       cuda_graph_sizes="1 2 3 4 5 6 7 8 $(seq $((8+T+1)) $((T+1)) $((N*(T+1))))"
       ```
 
@@ -619,7 +619,7 @@ vllm serve ${pretrained_model} \
     - 例如：`MTP_TOKENS=1`、`--max-num-seqs=16` → 最大值 `32`，列表为 `1 2 3 4 5 6 7 8 10 12 ... 32`。
     - 一行生成示例：
       ```bash
-      T=${MTP_TOKENS:-1}; N=${MAX_SEQS_DECODE:-16}
+      T=${MTP_TOKENS:-1}; N=${max_num_seqs:-16}
       cuda_graph_sizes="1 2 3 4 5 6 7 8 $(seq $((8+T+1)) $((T+1)) $((N*(T+1))))"
       ```
 
@@ -695,6 +695,227 @@ bash ./client.sh [IP] [path of DeepSeek-V3.1-Terminus] [batch-size] [input-len] 
   * `[num-prompts]`: 本次推理一共发送的请求总数，建议设置为`[batch-size]`的 2~10 倍
 ```
 * client测试成功后，会在 client 的`log_folder`路径下的**client.log**文件内输出如下日志：
+```shell
+============ Serving Benchmark Result ============
+Successful requests:                     xxx
+Benchmark duration (s):                  xxx
+Total input tokens:                      xxx
+Total generated tokens:                  xxx
+Request throughput (req/s):              xxx
+Output token throughput (tok/s):         xxx
+Total Token throughput (tok/s):          xxx
+---------------Time to First Token----------------
+Mean TTFT (ms):                          xxx
+Median TTFT (ms):                        xxx
+P25 TTFT (ms):                           xxx
+P50 TTFT (ms):                           xxx
+P75 TTFT (ms):                           xxx
+P90 TTFT (ms):                           xxx
+P99 TTFT (ms):                           xxx
+P100 TTFT (ms):                          xxx
+-----Time per Output Token (excl. 1st token)------
+Mean TPOT (ms):                          xxx
+Median TPOT (ms):                        xxx
+P25 TPOT (ms):                           xxx
+P50 TPOT (ms):                           xxx
+P75 TPOT (ms):                           xxx
+P90 TPOT (ms):                           xxx
+P99 TPOT (ms):                           xxx
+P100 TPOT (ms):                          xxx
+---------------Inter-token Latency----------------
+Mean ITL (ms):                           xxx
+Median ITL (ms):                         xxx
+P25 ITL (ms):                            xxx
+P50 ITL (ms):                            xxx
+P75 ITL (ms):                            xxx
+P90 ITL (ms):                            xxx
+P99 ITL (ms):                            xxx
+P100 ITL (ms):                           xxx
+----------------End-to-end Latency----------------
+Mean E2EL (ms):                          xxx
+Median E2EL (ms):                        xxx
+P25 E2EL (ms):                           xxx
+P50 E2EL (ms):                           xxx
+P75 E2EL (ms):                           xxx
+P90 E2EL (ms):                           xxx
+P99 E2EL (ms):                           xxx
+P100 E2EL (ms):                          xxx
+==================================================
+```
+
+
+## DeepSeek-V3.2
+本模型推理及性能测试，需要安装 vllm-0.11.0版本。
+
+### 模型下载
+*  url: [DeepSeek-V3.2](https://modelscope.cn/models/deepseek-ai/DeepSeek-V3.2/files)
+
+*  branch: `master`
+
+*  commit id: `342593c9`
+
+将上述url设定的路径下的内容全部下载到`deepseek-v3.2`文件夹中。
+
+
+### 使用 DP1-TP8-EP8 并行方案部署模型
+
+此 PD 混跑方案需要一台机器共 8 张 enflame-gcu 卡
+
+#### 性能测试
+
+* server测试脚本，将下述代码放在**server.sh**文件内
+
+```shell
+set -x
+pkill -9 python
+pkill -9 VLLM
+sleep 5
+rm -r /root/.cache/vllm/torch_compile_cache/
+
+valid_ip=$1
+valid_ips=($valid_ip)
+dp_size=1
+tp_size=8
+base_port=7555
+model_name=$2
+max_model_len=163840
+max_num_seqs=16
+cuda_graph_sizes="1 2 3 4 5 6 7 8 10 12 14 16 18 20 22 24 26 28 30 32"
+max_num_batched_tokens=8192
+MTP_TOKENS=1
+
+HOST_IP=$(hostname -I | awk '{print $1}')
+echo ${HOST_IP}
+dt=`date +'%Y%m%d%H%M'`
+name="$(date +%m%d)_online"
+
+log_folder="./logs/${name}/${dt}_server"
+mkdir -p "$log_folder"
+
+valid=false
+host_index=-1
+for idx in "${!valid_ips[@]}"; do
+    if [[ "$HOST_IP" == "${valid_ips[idx]}" ]]; then
+        valid=true
+        host_index=$idx
+        break
+    fi
+done
+
+if ! $valid; then
+    echo "Error: Unsupported IP address $HOST_IP"
+    exit 1
+fi
+
+EFRT_ENABLE_CTX_SYNC_FOR_FREE=true \
+EFRT_STREAM_SYNC_USE_POLLING=true \
+TOPS_STREAM_SCHEDULE_CREDIT=4 \
+PYTORCH_GCU_ALLOC_CONF=backend:topsMallocAsync \
+VLLM_GCU_RANK_LOG_PATH=${log_folder} \
+VLLM_USE_V1=1 \
+VLLM_GCU_DEEPSEEK_FUSION=1 \
+PYTORCH_EFML_BASED_GCU_CHECK=1 \
+TORCHGCU_INDUCTOR_ENABLE=0 \
+TORCH_ECCL_AVOID_RECORD_STREAMS=1 \
+vllm serve ${model_name} \
+    --host ${HOST_IP} \
+    --port ${base_port} \
+    --max-model-len ${max_model_len} \
+    --max-num-batched-tokens ${max_num_batched_tokens} \
+    --no-enable-prefix-caching \
+    --block-size 64 \
+    --dtype bfloat16 \
+    --data-parallel-size ${dp_size} \
+    --tensor-parallel-size ${tp_size} \
+    --trust-remote-code \
+    --enable-expert-parallel \
+    --gpu-memory-utilization 0.9 \
+    --additional_config '{"async_scheduling":true, "disable_dp_sampler":false, "set_cpu_affinity": true, "tokenizer_mode": "deepseek_v32"}' \
+    --speculative-config '{"method": "deepseek_mtp", "num_speculative_tokens": '${MTP_TOKENS}'}' \
+    --compilation_config '{"cudagraph_mode":"FULL_DECODE_ONLY","splitting_ops":[]}' \
+    --max-num-seqs ${max_num_seqs} \
+    --cuda-graph-sizes ${cuda_graph_sizes} \
+    --kv-cache-dtype 'fp8' &> ${log_folder}/server.log &
+```
+
+* 说明：
+  * `cuda_graph_sizes` 需要根据 `MTP_TOKENS` 与 `--max-num-seqs` 组合设置：
+    - 规则：先包含 `1..8`，再从 `8 + (MTP_TOKENS+1)` 开始，以步长 `(MTP_TOKENS+1)` 递增，直至 `--max-num-seqs * (MTP_TOKENS+1)`。
+    - 例如：`MTP_TOKENS=1`、`--max-num-seqs=16` → 最大值 `32`，列表为 `1 2 3 4 5 6 7 8 10 12 ... 32`。
+    - 一行生成示例：
+      ```bash
+      T=${MTP_TOKENS:-1}; N=${max_num_seqs:-16}
+      cuda_graph_sizes="1 2 3 4 5 6 7 8 $(seq $((8+T+1)) $((T+1)) $((N*(T+1))))"
+      ```
+
+* **server**启动命令
+```shell
+bash ./server.sh [IP] [path of DeepSeek-V3.2]
+```
+* 说明：
+  * `[IP]`: 服务器的ip
+  * `[path of DeepSeek-V3.2]`: 模型路径
+* server启动成功后，会在`log_folder`路径下的**server.log**文件内输出如下日志：
+```shell
+INFO:     Started server process [xxx]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+```
+
+* client测试脚本，将下述代码放在**client.sh**文件内
+
+  注：需要安装以下依赖：
+
+```shell
+python3 -m pip install datasets==3.6.0
+```
+
+```shell
+server_ip=$1
+model_name=$2
+global_bs=$3
+input_len=$4
+output_len=$5
+num_prompts=$6
+
+dt=`date +'%Y%m%d%H%M'`
+name="$(date +%m%d)_online"
+
+log_folder="./logs/${name}/${dt}_client"
+mkdir -p "$log_folder"
+server_port=7555
+
+server_url="http://${server_ip}:${server_port}"
+
+vllm bench serve \
+    --model ${model_name} \
+    --dataset-name random \
+    --num-prompts ${num_prompts} \
+    --max-concurrency ${global_bs} \
+    --random-input-len ${input_len} \
+    --random-output-len ${output_len} \
+    --trust-remote-code \
+    --ignore-eos \
+    --base-url ${server_url} \
+    --save-result \
+    --save-detailed \
+    --result-dir ${log_folder} \
+    --percentile-metrics 'ttft,tpot,itl,e2el' \
+    --metric-percentiles "25,50,75,90,99,100" &> ${log_folder}/client.log &
+```
+
+* **client**启动命令：
+```shell
+bash ./client.sh [IP] [path of DeepSeek-V3.2] [batch-size] [input-len] [output-len] [num-prompts]
+* 说明：
+  * `[IP]`: 服务器的ip
+  * `[path of DeepSeek-V3.2]`: 模型路径
+  * `[batch-size]`: 模型推理的并发数
+  * `[input-len]`: 输入的token长度
+  * `[output-len]`: 输出的token长度
+  * `[num-prompts]`: 本次推理一共发送的请求总数，建议设置为`[batch-size]`的2~10倍
+```
+* client测试成功后，会在`log_folder`路径下的**client.log**文件内输出如下日志：
 ```shell
 ============ Serving Benchmark Result ============
 Successful requests:                     xxx
