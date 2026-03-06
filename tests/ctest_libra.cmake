@@ -128,3 +128,23 @@ add_py_test (PROJECT libra
              NAME test_linear_quant_per_tensor_fp8
              COMMAND "cd tests && python -m pytest -sv kernels/test_linear_quant_per_tensor_fp8.py"
             )
+add_py_test (PROJECT libra
+             PLATFORM silicon
+             REGRESSION daily
+             CATEGORY func
+             OS ubuntu
+             MODULE vllm_dev
+             ID 14
+             NAME test_correct_attn_cp_out
+             COMMAND "cd tests && python -m pytest -sv kernels/test_correct_attn_cp_out.py"
+            )
+add_py_test (PROJECT libra
+             PLATFORM silicon
+             REGRESSION daily
+             CATEGORY func
+             OS ubuntu
+             MODULE vllm_dev
+             ID 15
+             NAME test_fused_moe_per_tensor_fp8
+             COMMAND "cd tests && python -m pytest -sv kernels/test_fused_moe_per_tensor_fp8.py"
+            )
