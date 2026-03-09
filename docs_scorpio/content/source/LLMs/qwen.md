@@ -1141,3 +1141,105 @@ export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 注：
 *  本模型支持的`max-model-len`为32768；
 *  `input-len`、`output-len`、`max-concurrency`和`num-prompts`可按需调整；
+
+
+### Qwen3-4B-Instruct-2507-W4A16-AWQ-C8
+
+#### 模型下载
+* 如需要下载权重，请联系商务人员开通[EGC](https://egc.enflame-tech.com/)权限进行下载
+
+- 下载`Qwen3-4B-Instruct-2507-W4A16-AWQ-C8.tar`文件并解压，将压缩包内的内容全部拷贝到`Qwen3-4B-Instruct-2507-W4A16-AWQ-C8`文件夹中。
+- `Qwen3-4B-Instruct-2507-W4A16-AWQ-C8`目录结构如下所示：
+
+```shell
+Qwen3-4B-Instruct-2507-W4A16-AWQ-C8
+├── added_tokens.json
+├── chat_template.jinja
+├── config.json
+├── generation_config.json
+├── int8_kv_cache.safetensors
+├── merges.txt
+├── model.safetensors
+├── quantize_config.json
+├── special_tokens_map.json
+├── tokenizer_config.json
+├── tokenizer.json
+├── tops_quantize_info.json
+└── vocab.json
+```
+
+注：需要安装以下依赖：
+#### 环境变量
+
+```
+export VLLM_USE_V1=1
+export TORCHGCU_INDUCTOR_ENABLE=0
+export PYTORCH_EFML_BASED_GCU_CHECK=1
+export TORCH_ECCL_AVOID_RECORD_STREAMS=1
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+```
+
+#### 在线测试
+
+```shell
+# 启动服务器
+vllm serve "[path of Qwen3-4B-Instruct-2507-W4A16-AWQ-C8]" \
+  --port 8192 \
+  --block-size=64 \
+  --async-scheduling \
+  --no-enable-prefix-caching \
+  --kv_cache-dtype=int8 \
+  --trust-remote-code  \
+  --quantization awq
+
+# 启动客户端
+curl http://0.0.0.0:8192/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+        "max_tokens": 500,
+        "messages": [
+                        {
+                            "role": "system",
+                             "content": "You are a helpful assistant."
+                         },
+                         {
+                             "role":"user",
+                             "content":"李白是谁？"
+                         }
+                     ],
+        "model":"[path of Qwen3-4B-Instruct-2507-W4A16-AWQ-C8]",
+        "stop": null,
+        "stream": false
+      }'
+```
+
+#### 性能测试
+
+```shell
+# 启动服务端
+vllm serve "[path of Qwen3-4B-Instruct-2507-W4A16-AWQ-C8]" \
+  --port 8192 \
+  --block-size=64 \
+  --max-model-len 32768 \
+  --async-scheduling \
+  --no-enable-prefix-caching \
+  --kv_cache-dtype=int8 \
+  --trust-remote-code 
+
+# 启动客户端
+vllm bench serve --model "[path of Qwen3-4B-Instruct-2507-W4A16-AWQ-C8]" \
+  --port 8192   \
+  --dataset-name random \
+  --num-prompts 40 \
+  --max-concurrency 4 \
+  --random-input-len 2048 \
+  --random-output-len 2048 \
+  --trust-remote-code \
+  --ignore-eos \
+  --percentile-metrics ttft,tpot,itl \
+  --metric-percentiles 25,50,75,90,99,100
+```
+
+注：
+*  Qwen3-4B-Instruct-2507-W4A16-AWQ-C8模型支持的`max-model-len`为32k；
+*  `input-len`、`output-len`和`num-prompts`可按需调整;
