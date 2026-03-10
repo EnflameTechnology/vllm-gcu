@@ -4,9 +4,8 @@ import os
 import random
 import types
 from functools import lru_cache, wraps
-from typing import List, Optional, Tuple, Union, Callable, TypeVar
+from typing import List, Optional, Tuple, Union, Callable, TypeVar, TYPE_CHECKING
 from typing_extensions import ParamSpec
-
 
 import numpy as np
 import torch
@@ -22,6 +21,8 @@ from vllm.logger import init_logger
 
 import vllm_gcu.envs as gcu_envs
 
+if TYPE_CHECKING:
+    from vllm.config import ModelConfig
 
 logger = init_logger(__name__)
 
@@ -47,6 +48,7 @@ class GCUPlatform(Platform):
     device_name: str = "GCU"
     device_type: str = "gcu"
     dispatch_key: str = "PrivateUse1"
+    dist_backend: str = "eccl"
     ray_device_key: str = "GPU"
     device_control_env_var: str = "TOPS_VISIBLE_DEVICES"
     simple_compile_backend: str = "topsgraph"
@@ -66,6 +68,13 @@ class GCUPlatform(Platform):
     def is_cuda_alike(self) -> bool:
         return True
 
+    def get_vit_attn_backend(cls, head_size: int, dtype: torch.dtype) -> _Backend:
+        return _Backend.FLASH_ATTN
+
+    @classmethod
+    def opaque_attention_op(cls) -> bool:
+        return True
+
     @classmethod
     def get_attn_backend_cls(
         cls,
@@ -76,32 +85,37 @@ class GCUPlatform(Platform):
         block_size: int,
         use_v1: bool,
         use_mla: bool,
+        has_sink: bool,
+        use_sparse: bool,
     ) -> str:
         if use_mla:
-            if use_v1:
-                if selected_backend == _Backend.FLASHMLA:
-                    return "vllm.v1.attention.backends.mla.flashmla.FlashMLABackend"
+            if use_sparse:
+                logger.info_once("Using Sparse MLA backend on V1 engine.")
                 if gcu_envs.VLLM_GCU_DEEPSEEK_FUSION:
-                    return "vllm_gcu.attention.backends.mla_v1_fusion.GCUMLAFusionBackend"
+                    return ("vllm_gcu.attention.backends.flashmla_sparse_fusion."
+                            "FlashMLASparseFusionBackend")
                 else:
-                    return "vllm_gcu.attention.backends.mla_v1.GCUMLABackend"
+                    return ("vllm_gcu.attention.backends.flashmla_sparse."
+                            "FlashMLASparseBackend")
+            if selected_backend == _Backend.FLASHMLA:
+                raise ValueError("FLASHMLA is not supported on GCU yet!")
+                # return "vllm.v1.attention.backends.mla.flashmla.FlashMLABackend"
+            if gcu_envs.VLLM_GCU_DEEPSEEK_FUSION:
+                return "vllm_gcu.attention.backends.mla_v1_fusion.GCUMLAFusionBackend"
             else:
-                if gcu_envs.VLLM_GCU_DEEPSEEK_FUSION:
-                    return "vllm_gcu.attention.backends.mla_fusion.GCUMLAFusionBackend"
-                else:
-                    return "vllm_gcu.attention.backends.mla.GCUMLABackend"
-        if use_v1:
-            return "vllm.v1.attention.backends.flash_attn.FlashAttentionBackend"
-        if selected_backend == _Backend.FLASHINFER:
-            raise NotImplementedError
-        elif selected_backend == _Backend.XFORMERS:
-            return "vllm_gcu.attention.backends.xformers.GCUXFormersBackend"
-        elif selected_backend == _Backend.FLASH_ATTN:
-            return "vllm.attention.backends.flash_attn.FlashAttentionBackend"
-            # return "vllm_gcu.attention.backends.flash_attn.FlashAttentionBackend"
-        elif selected_backend:
-            raise NotImplementedError(f"{selected_backend}")
-        return "vllm_gcu.attention.backends.xformers.GCUXFormersBackend"
+                return "vllm_gcu.attention.backends.mla_v1.GCUMLABackend"
+
+        if cls.get_device_capability().to_int() == 130:
+            if kv_cache_dtype.startswith("fp8"):
+                raise ValueError("FP8 kv is not supported on Scorpio!")
+            elif kv_cache_dtype.startswith("int8"):
+                return "vllm_gcu.attention.backends.flash_attn_int8kv.GCUFlashAttentionInt8KVBackend"
+
+        if cls.get_device_capability().to_int() == 140 and kv_cache_dtype.startswith("int8"):
+            raise ValueError("INT8 kv is not supported on Libra!")
+
+        return "vllm.v1.attention.backends.flash_attn.FlashAttentionBackend"
+
 
     @classmethod
     def get_device_capability(cls, device_id: int = 0) -> DeviceCapability:
@@ -137,10 +151,6 @@ class GCUPlatform(Platform):
         return device_props.total_memory
 
     @classmethod
-    def is_async_output_supported(cls, enforce_eager: Optional[bool]) -> bool:
-        return False if enforce_eager else True
-
-    @classmethod
     def inference_mode(cls):
         return torch.inference_mode(mode=True)
 
@@ -161,13 +171,12 @@ class GCUPlatform(Platform):
         import torch_gcu  # noqa: F401
         import torch_gcu.transfer_to_gcu  # noqa: F401
 
+        import vllm_gcu.kernels  # noqa: F401
         import vllm_gcu.compilation  # noqa: F401
         import vllm_gcu.distributed  # noqa: F401
-        import vllm_gcu.kernels  # noqa: F401
         import vllm_gcu.patch  # noqa: F401
 
-        if envs.VLLM_USE_V1:
-            os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
+        os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
 
         if parser:
             key = "--device"
@@ -175,6 +184,14 @@ class GCUPlatform(Platform):
                 # set "gcu" to device
                 parser._option_string_actions[key].choices += ["gcu"]
                 parser._option_string_actions[key].default = "gcu"
+
+            key = "--block-size"
+            if key in parser._option_string_actions:
+                parser._option_string_actions[key].choices += [256]
+
+            key = "--kv-cache-dtype"
+            if key in parser._option_string_actions:
+                parser._option_string_actions[key].choices += ['fp8_ds_mla', 'int8']
 
             # key = "--disable-async-output-proc"
             # if key in parser._option_string_actions:
@@ -188,171 +205,129 @@ class GCUPlatform(Platform):
         cache_config = vllm_config.cache_config
         model_config = vllm_config.model_config
         compilation_config = vllm_config.compilation_config
+        speculative_config = vllm_config.speculative_config
 
         if parallel_config.worker_cls == "auto":
-            if scheduler_config.is_multi_step:
-                parallel_config.worker_cls = (
-                    "vllm_gcu.worker.multi_step_worker.GCUMultiStepWorker"
-                )
-            elif vllm_config.speculative_config:
-                if envs.VLLM_USE_V1:
-                    parallel_config.worker_cls = "vllm_gcu.worker.worker_v1.GCUWorker"
-                else:
-                    parallel_config.worker_cls = (
-                        "vllm_gcu.worker.spec_decode.spec_decode_worker.create_spec_worker"
-                    )
-                    parallel_config.sd_worker_cls = "vllm_gcu.worker.worker.GCUWorker"
-            else:
-                if envs.VLLM_USE_V1:
-                    parallel_config.worker_cls = "vllm_gcu.worker.worker_v1.GCUWorker"
-                else:
-                    parallel_config.worker_cls = "vllm_gcu.worker.worker.GCUWorker"
+            parallel_config.worker_cls = "vllm_gcu.worker.gcu_worker.GCUWorker"
 
-        # make sure patch work
-        if envs.VLLM_USE_V1:
-            distributed_executor_backend = parallel_config.distributed_executor_backend
-            if isinstance(distributed_executor_backend, str):
-                if distributed_executor_backend == "mp":
-                    from vllm_gcu.executor import GCUMultiprocExecutor
+        distributed_executor_backend = parallel_config.distributed_executor_backend
+        if isinstance(distributed_executor_backend, str):
+            if distributed_executor_backend == "mp":
+                from vllm_gcu.executor.executor import GCUMultiprocExecutor
 
-                    parallel_config.distributed_executor_backend = GCUMultiprocExecutor
-                elif distributed_executor_backend == "ray":
-                    pass
-
-        if envs.VLLM_USE_V1 and torch.__version__.startswith("2.5.1"):
-
-            def stateless_init_dp_group(self):
-                from vllm_gcu.distributed.utils import (
-                    stateless_init_torch_distributed_process_group,
-                )
-
-                # use gloo since the engine process might not have cuda device
-                dp_group = stateless_init_torch_distributed_process_group(
-                    self.data_parallel_master_ip,
-                    self.get_next_dp_init_port(),
-                    self.data_parallel_rank,
-                    self.data_parallel_size,
-                    backend="gloo",
-                )
-
-                return dp_group
-
-            parallel_config.stateless_init_dp_group = types.MethodType(
-                stateless_init_dp_group, parallel_config
-            )
+                parallel_config.distributed_executor_backend = GCUMultiprocExecutor
+            elif distributed_executor_backend == "ray":
+                pass
 
         # Force disable custom all reduce
         parallel_config.disable_custom_all_reduce = True
         if (
             parallel_config.distributed_executor_backend == "mp"
         ):
+            from vllm_gcu.executor.executor import GCUMultiprocExecutor
             # force spawn multiprocessing method as others not support
             os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
             envs.VLLM_WORKER_MULTIPROC_METHOD = "spawn"
+
+            parallel_config.distributed_executor_backend = GCUMultiprocExecutor
 
         if cache_config:
             if cache_config.block_size is None:
                 # set block size to 64 for gcu if not specific
                 cache_config.block_size = 64
 
-            if (
-                cache_config.cache_dtype.startswith("fp8")
-                and cls.get_device_capability().to_int() == 130
-            ):
-                cache_config.cache_dtype = "int8"
-
-        if (
-            parallel_config.data_parallel_size > 1
-            and parallel_config.enable_expert_parallel
-            and scheduler_config.policy == "priority"
-        ):
-            # use prioritied scheduling when DP and EP
-            scheduler_config.scheduler_cls = (
-                "vllm_gcu.scheduler.PriorityScheduler"  # priority to preempt
-            )
+        enable_deepseek_fused_mtp = gcu_envs.VLLM_GCU_ENABLE_DEEPSEEK_MTP_FUSION
+        if not enable_deepseek_fused_mtp and \
+            vllm_config.additional_config.get("deepseek_fused_mtp", False):
+            enable_deepseek_fused_mtp = True
+            os.environ["VLLM_GCU_ENABLE_DEEPSEEK_MTP_FUSION"] = "1"
+        if enable_deepseek_fused_mtp:
+            logger.info("Using deepseek fused mtp")
+            if vllm_config.additional_config.get("deepseek_fused_mtp_use_penalty", True):
+                vllm_config.additional_config.setdefault("deepseek_fused_mtp_penalty_max_prompt_len", 512)
+                vllm_config.additional_config.setdefault("deepseek_fused_mtp_penalty_max_output_len", 1024)
+                
+        vllm_config.additional_config.update({"deepseek_fused_mtp": enable_deepseek_fused_mtp})
 
         if compilation_config:
             if compilation_config.level > 0:
                 compilation_config.backend = "topsgraph"
 
             if compilation_config.level == 3:
-                # TODO: remove after rmsnorm pattern fix in official.
-                compilation_config.pass_config.enable_fusion = True
-                compilation_config.custom_ops = ["all"]
+                compilation_config.pass_config.enable_noop = False
+                compilation_config.pass_config.enable_sequence_parallelism = False
+                compilation_config.pass_config.enable_fi_allreduce_fusion = False
+                compilation_config.pass_config.enable_fusion = False
+                compilation_config.pass_config.enable_attn_fusion = False
 
-                if gcu_envs.VLLM_GCU_ENABLE_COMPILE_DUMP:
-                    compilation_config.pass_config.dump_graph_stages.extend(
-                        [
-                            "before_fusion",
-                            "after_pre_pattern_apply",
-                            "after_fusion",
-                            "after_dump",
-                        ]
-                    )
+                compilation_config.custom_ops = ["all"]
 
             if vllm_config.parallel_config.data_parallel_size > 1:
                 compilation_config.compile_sizes.append(0)
                 compilation_config.cudagraph_capture_sizes.append(0)  # capture 0 graph
 
+            if enable_deepseek_fused_mtp:
+                assert vllm_config.speculative_config is not None
+                spec_k = vllm_config.speculative_config.num_speculative_tokens
+                cudagraph_capture_sizes = compilation_config.cudagraph_capture_sizes.copy()
+                new_cudagraph_capture_sizes = []
+                uniform_batch = True
+                for s in cudagraph_capture_sizes:
+                    if s % (1 + spec_k) != 0:
+                        uniform_batch = False
+                    new_cudagraph_capture_sizes.append(s * (1 + spec_k))
+                if not uniform_batch:
+                    compilation_config.cudagraph_capture_sizes = new_cudagraph_capture_sizes
+                    compilation_config.init_with_cudagraph_sizes(new_cudagraph_capture_sizes)
+                logger.info(f'for mtp_fusion, capture sizes is {compilation_config.cudagraph_capture_sizes}')
+
         if model_config:
             model_config.enable_sleep_mode = False
-            if envs.VLLM_USE_V1:
-                model_config.use_async_output_proc = True
 
         additional_config = vllm_config.additional_config
+        async_scheduling = additional_config.get("async_scheduling", None)
+        if async_scheduling is not None:
+            scheduler_config.async_scheduling = async_scheduling
+            logger.info("override async_scheduling of scheduler_config by additional_config")
+
+        if additional_config.get("tokenizer_mode", False):
+            model_config.tokenizer_mode = additional_config['tokenizer_mode']
+
+        if scheduler_config.async_scheduling:
+            if speculative_config is not None:
+                scheduler_config.scheduler_cls = "vllm_gcu.core.scheduler.AsyncScheduler"
+        else:
+            scheduler_config.scheduler_cls = "vllm_gcu.core.scheduler.GCUScheduler"
+
         if additional_config.get("enable_eplb", False):
             parallel_config.enable_eplb = True
         num_redundant_experts = additional_config.get("num_redundant_experts", 0)
         if num_redundant_experts > 0:
             assert parallel_config.enable_eplb, "EPLB must be enabled"
-            parallel_config.num_redundant_experts = num_redundant_experts
+            parallel_config.eplb_config.num_redundant_experts = num_redundant_experts
 
-        # TODO: v1
-        if not envs.VLLM_USE_V1 and \
-                "VLLM_GCU_DEEPSEEK_FUSION" not in os.environ and \
-                cls.get_device_capability().to_int() == 130 and \
-                model_config and model_config.hf_text_config.model_type in \
+        if "VLLM_GCU_DEEPSEEK_FUSION" not in os.environ and \
+            model_config and model_config.hf_text_config.model_type in \
                     ('deepseek_v3', 'deepseek_mtp'):
             os.environ["VLLM_GCU_DEEPSEEK_FUSION"] = "1"
+        if (
+            enable_deepseek_fused_mtp
+            and model_config
+            and model_config.hf_text_config.model_type == "deepseek_v32"
+        ):
+            logger.warning('Disable deepseek fusion ops as not support deepseek_v32 with deepseek_fused_mtp')
+            os.environ["VLLM_GCU_DEEPSEEK_FUSION"] = "0"
 
+        # for torch native op
+        from vllm_gcu.kernels.native_op.torch_native_op import register_native_overrides
+        register_native_overrides(additional_config)
+        
         # Disable usage status for security
         envs.VLLM_NO_USAGE_STATS = "1"
         if gcu_envs.VLLM_GCU_DEEPSEEK_FUSION:
             logger.info("Deepseek fusion ops enabled.")
         if gcu_envs.VLLM_GCU_ENABLE_PARALLEL_COMPUTE:
             logger.info("Overlap shared experts with dispatch enabled.")
-
-        enable_async_executing = additional_config.get("async_executing", False)
-        enable_async_scheduling = additional_config.get("async_scheduling", False)
-
-        # 开启异步执行，异步调度也必须得打开
-        assert  not enable_async_executing or \
-            (enable_async_scheduling and enable_async_executing), "Async scheduling must be enabled to allow async executing!"
-
-
-        # 如果开启异步调度，则必须更换scheduler_cls和distributed_executor_backend
-        if enable_async_scheduling:
-            from vllm_gcu.v1.executor.async_multiproc_executor import AsyncMultiprocExecutor
-            scheduler_config.scheduler_cls = "vllm_gcu.v1.core.sched.async_scheduler.AsyncScheduler"
-            # Async scheduling does not work with the uniprocess backend.
-            parallel_config.distributed_executor_backend = AsyncMultiprocExecutor
-            
-            # 该版本目前不支持流水线并行
-            if parallel_config.pipeline_parallel_size > 1:
-                raise ValueError("Async scheduling is not supported with "
-                                "pipeline-parallel-size > 1.")
-
-            # 该版本目前不支持推测解码
-            if vllm_config.speculative_config is not None:
-                raise ValueError(
-                    "Currently, speculative decoding is not supported with "
-                    "async scheduling.")
-
-            logger.info("async_scheduling enabled.")
-        
-        if enable_async_executing:
-            logger.info("enable_sync_executing enabled.")
-
 
     @classmethod
     def verify_model_arch(cls, model_arch: str) -> None:
@@ -404,18 +379,31 @@ class GCUPlatform(Platform):
     def fp8_dtype(cls) -> torch.dtype:
         return torch.float8_e4m3fn
 
-    @classmethod
-    def supports_v1(cls, model_config) -> bool:
-        return True
-
     def is_sleep_mode_available(self) -> bool:
         return False
 
     @classmethod
-    def default_v1(cls, model_config) -> bool:
-        return cls.supports_v1(model_config)
+    def get_static_graph_wrapper_cls(cls) -> str:
+        return "vllm.compilation.cuda_graph.CUDAGraphWrapper"
 
     @classmethod
+    def is_kv_cache_dtype_supported(cls, kv_cache_dtype: str,
+                                    model_config: "ModelConfig") -> bool:
+        fp8_attention = kv_cache_dtype.startswith("fp8")
+        if fp8_attention and not cls.supports_fp8():
+            return False
+        return True
+
+    @classmethod
+    def check_if_supports_dtype(cls, torch_dtype: torch.dtype):
+        if torch_dtype in [torch.float8_e4m3fn] and not cls.supports_fp8():
+            return False
+        return True
+
+    @classmethod
+    def support_hybrid_kv_cache(cls) -> bool:
+        return True
+
     @with_efml_context
     def set_cpu_affinity(cls, device_id: int) -> None:
         """
@@ -459,14 +447,6 @@ class GCUPlatform(Platform):
                 return
 
             cpu_set_size = (cpu_count + 63) // 64
-            from vllm.config import get_current_vllm_config
-            parallel_config = get_current_vllm_config().parallel_config
-            tp_size = parallel_config.tensor_parallel_size
-            dp_size = parallel_config.data_parallel_size
-            dp_rank = parallel_config.data_parallel_rank
-            dp_size_local = parallel_config.data_parallel_size_local
-            logger.debug("logical device_id={}, physical_device_id={},cpu_set_size={}, cpu_count={},device_count={}".format(device_id, physical_device_id,cpu_set_size,cpu_count, device_count))
-            logger.debug("tp_size={},dp_rank={},dp_size={},dp_size_local={}".format(tp_size, dp_rank, dp_size, dp_size_local))
 
             # Get CPU affinity from EFML
             cpu_affinity_mask = pyefml.efmlDeviceGetCpuAffinity(
@@ -485,16 +465,11 @@ class GCUPlatform(Platform):
             if cpu_ids:
                 # Set CPU affinity using psutil
                 current_process = psutil.Process()
-                #bind a half of total cpu core for worker process
-                slice_step = round( len(cpu_ids) / tp_size / min(dp_size, dp_size_local))
-                affinity_cpu_ids_per_device = cpu_ids[device_id*slice_step:(device_id+1)*slice_step:1]
-                #current_process.cpu_affinity(cpu_ids)
-                current_process.cpu_affinity(affinity_cpu_ids_per_device)
-                logger.debug("cpu_ids={},slice_step={},affinity_cpu_ids_per_device={}".format(cpu_ids, slice_step,affinity_cpu_ids_per_device))
+                current_process.cpu_affinity(cpu_ids)
                 logger.info(
                     "Set CPU affinity for process %d to " \
                     "CPUs %s for logical GCU devices %s, physical_device_id %s pci busid %s",
-                    current_process.pid, affinity_cpu_ids_per_device, device_id, physical_device_id, pci_busid)
+                    current_process.pid, cpu_ids, device_id, physical_device_id, pci_busid)
             else:
                 logger.warning(
                     "No CPU affinity information available for GCU devices %s",
@@ -505,5 +480,23 @@ class GCUPlatform(Platform):
                            device_id, str(e))
 
     @classmethod
-    def get_piecewise_backend_cls(cls) -> str:
-        return "vllm_gcu.compilation.double_cuda_piecewise_backend.DoubleCUDAPiecewiseBackend"  # noqa
+    def support_static_graph_mode(cls) -> bool:
+        """
+        Returns if the graph mode is supported by the current platform.
+        """
+        return True
+
+    @classmethod
+    def get_nixl_supported_devices(cls) -> dict[str, tuple[str, ...]]:
+        """
+        Returns a mapping from device_type to a tuple of supported
+        kv_buffer_device for nixl.
+        """
+        return {"gcu": ("gcu", "cuda")}
+
+    @classmethod
+    def get_nixl_memory_type(cls) -> Optional[str]:
+        """
+        Returns the nixl memory type for the current platform.
+        """
+        return "VRAM"

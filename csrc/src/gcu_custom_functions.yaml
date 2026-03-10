@@ -10,6 +10,9 @@
 - func: silu_and_mul(Tensor(a!) out, Tensor input) -> ()
   variants: function
 
+- func: swigluoai_and_mul(Tensor(a!) out, Tensor input, float alpha, float limit) -> ()
+  variants: function
+
 - func: gelu_and_mul(Tensor(a!) out, Tensor input) -> ()
   variants: function
 
@@ -31,22 +34,19 @@
 - func: fused_add_rms_norm(Tensor(a!) input, Tensor(a!) residual, Tensor weight, float epsilon) -> ()
   variants: function
 
+- func: fused_qk_norm_rope(Tensor(a!) qkv, int num_heads_q, int num_heads_k, int num_heads_v, int head_dim, float eps, Tensor(a!) q_weight, Tensor(a!) k_weight, Tensor(a!) cos_sin_cache, bool is_neox, Tensor(a!) position_ids) -> ()
+  variants: function
+
 - func: rotary_embedding(Tensor positions, Tensor(a!) query, Tensor(a!) key, int head_size, Tensor cos_sin_cache, bool is_neox) -> ()
+  variants: function
+
+- func: mrotary_embedding(Tensor positions, Tensor(a!) query, Tensor(a!) key, int head_size, Tensor cos_sin_cache, bool is_neox, int[] mrope_section, bool mrope_interleaved) -> ()
   variants: function
 
 - func: awq_gemm_gcu(Tensor(a!) _in_feats, Tensor(a!) _kernel, Tensor(a!) _scaling_factors, Tensor(a!) _zeros, int split_k_iters, Tensor? bias, int group_size) -> Tensor
   variants: function
 
-- func: awq_dequantize(Tensor(a!) _kernel, Tensor(a!) _scaling_factors, Tensor(a!) _zeros, int split_k_iters, int thx, int thy) -> Tensor
-  variants: function
-
-- func: squeezellm_gemm(Tensor(a!) vec, Tensor(a!) mat, Tensor(a!) mul, Tensor(a!) lookup_table) -> ()
-  variants: function
-
 - func: gptq_gemm_gcu(Tensor(a!) a, Tensor(a!) b_q_weight, Tensor(a!) b_gptq_qzeros, Tensor(a!) b_gptq_scales, Tensor(a!) b_g_idx, int bit, Tensor? bias, int group_size) -> Tensor
-  variants: function
-
-- func: gptq_shuffle(Tensor(a!) q_weight, Tensor(a!) q_perm) -> ()
   variants: function
 
 - func: fused_moe_kernel(Tensor(a!) C, Tensor A, Tensor B, Tensor topk_weights, Tensor topk_ids, Tensor sorted_topk_ids, Tensor expert_ids, Tensor num_tokens_post_pad, bool mul_routed_weight, int topk, int block_size, Tensor? bias) -> ()
@@ -61,10 +61,16 @@
 - func: topk_softmax(Tensor(a!) topk_weights, Tensor(a!) topk_indices, Tensor(a!) token_expert_indices, Tensor(a!) gating_output) -> ()
   variants: function
 
-- func: context_attention_forward(Tensor q, Tensor k, Tensor v, Tensor(a!) o, Tensor key_cache, Tensor value_cache, Tensor block_tables, Tensor subquery_start_loc, Tensor seq_lens_tensor, Tensor context_lens, int max_query_len, Tensor? alibi_slopes, int? sliding_window) -> ()
+- func: top_k_per_row_decode(Tensor logits, int next_n, Tensor seq_lens, Tensor(a!) indices, int numRows, int stride0, int stride1, int topK, int threshold) -> ()
   variants: function
 
-- func: weight_only_quant(Tensor(a!) output, Tensor input, Tensor qweight, Tensor? bias, Tensor scale, int group_size) -> ()
+- func: top_k_per_row_prefill(Tensor logits, Tensor rowStarts, Tensor rowEnds, Tensor(a!) indices, int numRows, int stride0, int stride1, int topK, int threshold) -> ()
+  variants: function
+
+- func: topk_softmax_renormalize(Tensor(a!) topk_weights, Tensor(a!) topk_indices, Tensor(a!) token_expert_indices, Tensor(a!) gating_output, bool renormalize) -> ()
+  variants: function
+
+- func: context_attention_forward(Tensor q, Tensor k, Tensor v, Tensor(a!) o, Tensor key_cache, Tensor value_cache, Tensor block_tables, Tensor subquery_start_loc, Tensor seq_lens_tensor, Tensor context_lens, int max_query_len, Tensor? alibi_slopes, int? sliding_window) -> ()
   variants: function
 
 - func: rms_norm_static_int8_quant(Tensor(a!) output, Tensor input, Tensor weight, Tensor scale, float epsilon) -> ()
@@ -127,9 +133,6 @@
 - func: layer_norm_static_int8_quant(Tensor(a!) output, Tensor input, Tensor scale, int[] normalized_shape, Tensor? weight, Tensor? bias, float epsilon) -> ()
   variants: function
 
-- func: dot_bias_quant(Tensor(a!) out, Tensor lhs, Tensor rhs, Tensor scale, Tensor? bias) -> ()
-  variants: function
-
 - func: cutlass_scaled_mm(Tensor(a!) out, Tensor x, Tensor weight, Tensor x_scale, Tensor w_scale, Tensor? bias) -> ()
   variants: function
 
@@ -140,12 +143,6 @@
   variants: function
 
 - func: dispatch_bgmv_low_level(Tensor(a!) y, Tensor x, Tensor w, Tensor indicies, int layer_idx, float scale, int h_in, int h_out, int y_offset) -> ()
-  variants: function
-
-- func: advance_step_flashattn(int num_seqs, int num_queries, int block_size, Tensor(a!) input_tokens, Tensor(a!) sampled_token_ids, Tensor(a!) input_positions, Tensor(a!) seq_lens, Tensor(a!) slot_mapping, Tensor(a!) block_tables) -> ()
-  variants: function
-
-- func: advance_step_xformers(int num_seqs, int num_queries, int block_size, Tensor(a!) input_tokens, Tensor(a!) sampled_token_ids, Tensor(a!) input_positions, Tensor(a!) seq_lens, Tensor(a!) slot_mapping, Tensor(a!) block_tables) -> ()
   variants: function
 
 - func: weak_ref_tensor(Tensor x) -> Tensor
@@ -163,13 +160,10 @@
 - func: fused_add_rms_norm_static_fp8_quant(Tensor(a!) result, Tensor input, Tensor(a!) residual, Tensor weight, Tensor scale, float epsilon) -> ()
   variants: function
 
-- func: batched_rotary_embedding(Tensor positions, Tensor(a!) query, Tensor(a!) key, int head_size, Tensor cos_sin_cache, bool is_neox, int rot_dim, Tensor cos_sin_cache_offsets) -> ()
-  variants: function
-
 - func: concat_and_cache_mla(Tensor kv_c, Tensor k_pe, Tensor(a!) kv_cache, Tensor slot_mapping, str kv_cache_dtype, Tensor scale) -> ()
   variants: function
 
-- func: fused_grouped_topk(Tensor(a!) topk_weights, Tensor(a!) topk_ids, Tensor gating_output, int topk, bool renormalize, int num_expert_group, int topk_group, Tensor e_score_correction_bias, str scoring_func) -> ()
+- func: fused_grouped_topk(Tensor(a!) topk_weights, Tensor(a!) topk_ids, Tensor gating_output, int topk, bool renormalize, int num_expert_group, int topk_group, Tensor e_score_correction_bias, str scoring_func, float routed_scaling_factor) -> ()
   variants: function
 
 - func: get_ep_indices(Tensor(a!) ep_count, Tensor(a!) ep_token_indices, Tensor(a!) ep_valid_token_indices, Tensor topk_ids, int expert_per_rank, int ep_size) -> ()
@@ -181,7 +175,7 @@
 - func: moe_sum(Tensor(a!) out, Tensor input, Tensor size, int dim, bool keepdim) -> ()
   variants: function
 
-- func: linear_quant(Tensor(a!) out, Tensor lhs, Tensor rhs, Tensor? bias, Tensor lhs_scale, Tensor rhs_scale) -> ()
+- func: linear_quant(Tensor(a!) out, Tensor lhs, Tensor rhs, Tensor? bias, Tensor lhs_scale, Tensor? rhs_scale, int group_size) -> ()
   variants: function
 
 - func: dynamic_split(Tensor[] out, Tensor input, Tensor size, int[] split_sizes, int dim) -> ()
@@ -232,13 +226,22 @@
 - func: reshape_and_cache_flash(Tensor key, Tensor value, Tensor(a!) key_cache, Tensor(a!) value_cache, Tensor slot_mapping, str kv_cache_dtype, Tensor k_scale, Tensor v_scale) -> ()
   variants: function
 
+- func: reshape_and_cache_flash_int8kv(Tensor key, Tensor value, Tensor(a!) key_cache, Tensor(a!) value_cache, Tensor slot_mapping, str kv_cache_dtype, Tensor k_scale, Tensor v_scale, Tensor k_zp, Tensor v_zp) -> ()
+  variants: function
+
 - func: fused_qkv_gemm_quant(Tensor(a!) q, Tensor(a!) kv, Tensor x, Tensor weight, Tensor scale, Tensor zeros, int group_size) -> ()
   variants: function
-  
+
 - func: merge_attn_states(Tensor(a!) output, Tensor(a!) output_lse, Tensor prefix_output, Tensor prefix_lse, Tensor suffix_output, Tensor suffix_lse) -> ()
   variants: function
-  
-- func: gather_cache(Tensor src_cache, Tensor dst, Tensor block_table, Tensor cu_seq_lens, int batch_size, Tensor seq_starts) -> ()
+
+- func: cp_gather_cache(Tensor src_cache, Tensor(a!) dst, Tensor block_table, Tensor cu_seq_lens, int batch_size, Tensor? seq_starts) -> ()
+  variants: function
+
+- func: gather_and_maybe_dequant_cache(Tensor src_cache, Tensor dst, Tensor block_table, Tensor cu_seq_lens, int batch_size, str kv_cache_dtype, Tensor scale, Tensor? seq_starts) -> ()
+  variants: function
+
+- func: convert_req_index_to_global_index(Tensor(a!) output, Tensor req_id, Tensor block_table, Tensor token_indices, Tensor? prefill_workspace_request_ids, Tensor? prefill_workspace_starts, int block_size, int num_topk_tokens, int block_n, bool has_prefill_workspace, Tensor? seq_lens, int threshold) -> ()
   variants: function
 
 - func: dynamic_per_token_group_fp8_quant_with_size(Tensor(a!) output, Tensor(a!) scale, Tensor input, Tensor real_size, int group_size) -> ()
@@ -267,5 +270,41 @@
 - func: top_k_top_p(Tensor(a!) logits, Tensor k, Tensor p, int dim, bool descending) -> ()
   variants: function
 
+- func: apply_repetition_penalties(Tensor(a!) logits, Tensor prompt_mask, Tensor output_mask, Tensor repetition_penalties) -> ()
+  variants: function
+
 - func: eplb_map_to_physical_and_record(Tensor(a!) out, Tensor topk_ids, Tensor(a!) expert_load_view, Tensor logical_to_physical_map, Tensor logical_replica_count) -> ()
+  variants: function
+
+- func: silu_mul_fp8_quant_deep_gemm(Tensor input, Tensor counts, Tensor(a!) y_q, Tensor(a!) y_s, int group_size, bool use_ue8m0, int num_parallel_tokens) -> ()
+  variants: function
+
+- func: get_mla_decoding_metadata(Tensor(a!) out, Tensor seqlens_k, int num_q_tokens_per_head_k, int h_k, int? h_q, bool is_fp8_kvcache, int? topk, int? threshold, Tensor? cu_seq_q) -> ()
+  variants: function
+
+- func: indexer_k_quant_and_cache(Tensor k, Tensor(a!) kv_cache, Tensor slot_mapping, int quant_block_size, str scale_fmt) -> ()
+  variants: function
+
+- func: dynamic_per_token_group_fp8_quant_with_ue8m0(Tensor(a!) output, Tensor(a!) scale, Tensor input, int group_size, bool scale_to_ue8m0) -> ()
+  variants: function
+
+- func: mha_fwd_kvcache_mla_sparse(Tensor(a!) q, Tensor kcache, int head_size_v, Tensor seqlens_k, Tensor block_table, float softmax_scale, bool is_causal, Tensor tile_scheduler_metadata, Tensor num_splits, bool is_fp8_kvcache, Tensor indices, Tensor? descale_k) -> (Tensor, Tensor)
+  variants: function
+
+- func: mha_fwd_kvcache_mla_mixed(Tensor(a!) q, Tensor kcache, int head_size_v, Tensor seqlens_k, Tensor block_table, float softmax_scale, bool is_causal, Tensor tile_scheduler_metadata, Tensor num_splits, bool is_fp8_kvcache, Tensor indices, Tensor? descale_k, int threshold, Tensor cu_seq_q) -> (Tensor, Tensor)
+  variants: function
+
+- func: get_token_bin_counts_and_mask(Tensor(a!) bin_counts, Tensor(a!) mask, Tensor tokens, int vocab_size, int num_seqs, bool return_bin_counts) -> ()
+  variants: function
+
+- func: cp_gather_indexer_k_quant_cache(Tensor kv_cache, Tensor(a!) dst_value, Tensor(a!) dst_scale, Tensor block_table, Tensor cu_seq_lens) -> ()
+  variants: function
+
+- func: get_paged_mqa_logits_metadata_v1(Tensor context_lens, int block_kv, int num_sms, int threshold) -> Tensor
+  variants: function
+
+- func: fp8_paged_mqa_logits_v1(Tensor q, Tensor fused_kv_cache, Tensor weights, Tensor context_lens, Tensor block_table, Tensor schedule_meta, int max_context_len, bool clean_logits, int threshold) -> Tensor
+  variants: function
+
+- func: mha_fwd_int8kv(Tensor q, Tensor k, Tensor v, Tensor? k_new, Tensor? v_new, Tensor? q_v, Tensor? out, Tensor? cu_seqlens_q, Tensor? cu_seqlens_k, Tensor? cu_seqlens_k_new, Tensor? seqused_q, Tensor? seqused_k, int? max_seqlen_q, int? max_seqlen_k, Tensor? page_table, Tensor? kv_batch_idx, Tensor? leftpad_k, Tensor? rotary_cos, Tensor? rotary_sin, Tensor? seqlens_rotary, Tensor? q_descale, Tensor? k_descale, Tensor? v_descale, Tensor? k_zp, Tensor? v_zp, float? softmax_scale, bool is_causal, int window_size_left, int window_size_right, float softcap, bool is_rotary_interleaved, Tensor? scheduler_metadata, int num_splits, bool? pack_gqa, int sm_margin, Tensor? s_aux) -> (Tensor, Tensor, Tensor, Tensor)
   variants: function

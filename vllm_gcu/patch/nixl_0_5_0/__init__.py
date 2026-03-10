@@ -1,0 +1,1 @@
+import vllm_gcu.patch.nixl_0_5_0.api

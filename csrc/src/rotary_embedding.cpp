@@ -31,12 +31,15 @@ void rotary_embedding(const at::Tensor &positions, at::Tensor &query,
 
   if (query.numel() == 0) return;
 
-  auto view_query = query.view({-1, query.size(-1)});
-  auto view_key = key.view({-1, key.size(-1)});
-  auto view_positions = positions.view({-1});
+  TORCH_CHECK(query.dim() == key.dim(),
+    "query.dim() must equal key.dim()");
+  TORCH_CHECK(query.dim() == 3 || query.dim() == 2,
+    "query.dim() must be 2 or 3");
+  TORCH_CHECK(positions.dim() == 1,
+    "positions.dim() must be 1, but got ", positions.dim());
 
   ATEN_ATENOP_CHECK(ATEN_ATENOP_CALL(topsvllm::topsvllmRotaryEmbedding)(
-      view_query, view_key, view_positions, cos_sin_cache, (int)head_size,
+      query, key, positions, cos_sin_cache, static_cast<int>(head_size),
       is_neox, stream));
 }
 

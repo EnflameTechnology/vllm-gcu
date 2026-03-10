@@ -110,7 +110,6 @@ def reduce_scatter_v(inp: torch.Tensor, scatter_counts: list[int],
     group = _groups[group_name]()
     if group is None:
         raise ValueError(f"Group {group_name} is destroyed.")
-    output_size = (scatter_counts[group.rank_in_group], ) + inp.size()[1:]
 
     if not current_platform.has_device_capability(140):
         # reduce_scatter_v is not supported on 130 currently
@@ -119,8 +118,10 @@ def reduce_scatter_v(inp: torch.Tensor, scatter_counts: list[int],
         assert world_size == len(scatter_counts)
 
         output = group.all_reduce(inp)
-        return output[sum(scatter_counts[:group.rank_in_group]):sum(scatter_counts[:group.rank_in_group + 1])]
+        return output[sum(scatter_counts[:group.rank_in_group]
+                          ):sum(scatter_counts[:group.rank_in_group + 1])]
 
+    output_size = (scatter_counts[group.rank_in_group], ) + inp.size()[1:]
     output = torch.empty(output_size, dtype=inp.dtype, device=inp.device)
     torch_gcu.distributed.reduce_scatter_tensor_v(output,
                                                   inp,
@@ -157,25 +158,11 @@ def all_gather_v(inp: torch.Tensor, recv_counts: list[int],
         raise ValueError(f"Group {group_name} is destroyed.")
 
     if not current_platform.has_device_capability(140):
-        B = inp.shape[0]
-        world_size = group.world_size
-        assert world_size == len(recv_counts)
-
-        inp = torch.nn.functional.pad(
-            inp,
-            (0, 0, 0, max(recv_counts) - B),
-            mode="constant",
-            value=0,
-        )
-        gathered = [torch.empty_like(inp) for _ in range(world_size)]
-        torch.distributed.all_gather(gathered, inp, group=group.device_group)
-
-        results = []
-        for i in range(world_size):
-            results.append(gathered[i][: recv_counts[i]])
-
-        output = torch.cat(results, dim=0)
-        return output
+        gathered = [torch.empty((s, ) + inp.shape[1:], dtype = inp.dtype, device=inp.device) for s in recv_counts]
+        torch.distributed.all_gather(gathered,
+                                     inp,
+                                     group=group.device_group)
+        return torch.cat(gathered, dim=0)
 
     output_size = (sum(recv_counts), ) + inp.size()[1:]
     output = torch.empty(output_size, dtype=inp.dtype, device=inp.device)

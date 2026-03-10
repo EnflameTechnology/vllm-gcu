@@ -36,6 +36,53 @@ def get_default_config(
     }
     return config
 
+def vllm_topk_softmax(topk_weights: torch.Tensor, topk_indices: torch.Tensor,
+                      token_expert_indices: torch.Tensor,
+                      gating_output: torch.Tensor,
+                      renormalize: bool) -> tuple[torch.Tensor, ...]:
+    ops.topk_softmax_renormalize(
+        topk_weights,
+        topk_indices,
+        token_expert_indices,
+        gating_output,
+        renormalize
+    )
+
+    return topk_weights, topk_indices
+
+def fused_topk(
+    hidden_states: torch.Tensor,
+    gating_output: torch.Tensor,
+    topk: int,
+    renormalize: bool
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    assert hidden_states.size(0) == gating_output.size(0), (
+        "Number of tokens mismatch")
+
+    M, _ = hidden_states.size()
+
+    topk_weights = torch.empty(M,
+                               topk,
+                               dtype=torch.float32,
+                               device=hidden_states.device)
+    topk_ids = torch.empty(
+        M,
+        topk,
+        dtype=torch.int32,
+        device=hidden_states.device)
+    token_expert_indices = torch.empty(M,
+                                       topk,
+                                       dtype=torch.int32,
+                                       device=hidden_states.device)
+
+    gating_output_float = gating_output.float()
+
+    # use vllm_topk_softmax for gcu
+    topk_weights, topk_ids = vllm_topk_softmax(topk_weights, topk_ids,
+                                       token_expert_indices,
+                                       gating_output_float, renormalize)
+
+    return topk_weights, topk_ids
 
 def moe_align_block_size(
     topk_ids: torch.Tensor,
@@ -57,7 +104,7 @@ def moe_align_block_size(
     num_tokens_post_pad = torch.empty((1), dtype=torch.int32, device=topk_ids.device)
 
     if topk_ids_size is not None:
-        if not gcu_envs.VLLM_GCU_DEEPSEEK_FUSION or expert_map is None:
+        if expert_map is None:
             ops.moe_align_block_size_pad(
                 topk_ids,
                 topk_ids_size,
@@ -67,8 +114,6 @@ def moe_align_block_size(
                 expert_ids,
                 num_tokens_post_pad,
             )
-            if expert_map is not None:
-                expert_ids = torch_gcu.gcu.efficient.gcu_index(expert_map, [expert_ids])
         else:
             torch.ops._C.exts_moe_align_block_size(
                 sorted_ids,
@@ -152,7 +197,10 @@ def invoke_fused_moe_kernel(
         if use_fp8_w8a8:
             B_zp = None
             if B.dtype != torch.int8:
-                group_size = block_shape[1]
+                if block_shape is None:
+                    group_size = -1
+                else:
+                    group_size = block_shape[1]
         elif use_int8_w8a8:
             B_zp = None
             group_size = 1
@@ -191,6 +239,27 @@ def invoke_fused_moe_kernel(
                 top_k,
                 block_size,
                 128,
+                -1,
+            )
+        elif use_fp8_w8a8 and B.dtype == torch.float8_e4m3fn and block_shape is None:
+            torch.ops._C.fused_moe_quant_kernel_ex(
+                C,
+                A,
+                B,
+                A_scale_rec, # GCU FP8 per-tensor: w13_input_scale_rec / w2_input_scale_rec stores original scale
+                B_scale,
+                B_zp,
+                bias,
+                topk_weights,
+                topk_ids,
+                sorted_token_ids,
+                expert_ids,
+                num_tokens_post_padded,
+                real_token_num,
+                mul_routed_weight,
+                top_k,
+                block_size,
+                -1,
                 -1,
             )
         else:
@@ -239,6 +308,7 @@ def grouped_topk(
     num_expert_group: int = 0,
     topk_group: int = 0,
     scoring_func: str = "softmax",
+    routed_scaling_factor: float = 1.0,
     e_score_correction_bias: Optional[torch.Tensor] = None,
 ):
     assert hidden_states.shape[0] == gating_output.shape[0], "Number of tokens mismatch"
@@ -246,8 +316,11 @@ def grouped_topk(
     topk_weights = torch.empty(
         (gating_output.shape[0], topk), device=gating_output.device, dtype=torch.float32
     )
+    indices_type = torch.int64 if envs.VLLM_ALL2ALL_BACKEND in [
+        "deepep_high_throughput", "deepep_low_latency"
+    ] else torch.int32
     topk_ids = torch.empty(
-        (gating_output.shape[0], topk), device=gating_output.device, dtype=torch.int32
+        (gating_output.shape[0], topk), device=gating_output.device, dtype=indices_type
     )
 
     if hidden_states.numel() == 0:
@@ -263,7 +336,9 @@ def grouped_topk(
         topk_group,
         e_score_correction_bias,
         scoring_func,
+        routed_scaling_factor,
     )
+
     return topk_weights, topk_ids
 
 

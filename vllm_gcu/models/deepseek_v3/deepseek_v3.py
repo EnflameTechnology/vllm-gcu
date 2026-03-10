@@ -30,6 +30,7 @@ import numpy as np
 import torch
 from torch import nn
 from transformers import PretrainedConfig
+import vllm.envs as envs
 from vllm.attention import Attention
 from vllm.compilation.decorators import support_torch_compile
 from vllm.config import (
@@ -46,9 +47,9 @@ from vllm.distributed import (
     tensor_model_parallel_all_reduce,
 )
 
-from vllm.inputs import DummyData, InputContext
 from vllm.model_executor.layers.activation import SiluAndMul
 from vllm.model_executor.layers.fused_moe import FusedMoE
+from vllm.model_executor.layers.shared_fused_moe import SharedFusedMoE
 from vllm.model_executor.layers.layernorm import RMSNorm
 from vllm.model_executor.layers.linear import (
     ColumnParallelLinear,
@@ -76,8 +77,7 @@ from vllm.model_executor.models.utils import (
     maybe_prefix,
     PPMissingLayer,
 )
-from vllm.model_executor.sampling_metadata import SamplingMetadata
-from vllm.sequence import IntermediateTensors, SequenceData
+from vllm.sequence import IntermediateTensors
 
 import vllm_gcu.envs as gcu_envs
 import vllm_gcu.distributed.parallel_state  # noqa
@@ -87,12 +87,12 @@ from vllm_gcu.distributed.sp import slice_tensor_sp, sp_to_tp, tp_to_sp
 
 
 def custom_pass(graph: torch.fx.Graph) -> torch.fx.Graph:
-    from vllm_gcu.compilation.fusion import GCUFusionPass
+    from vllm_gcu.compilation.pass_manager import PassManager
+    from vllm.compilation.inductor_pass import pass_context
 
     vllm_config = get_current_vllm_config()
-    GCUFusionPass.instance(
-        vllm_config
-    ).patterns.apply(graph)
+    with pass_context(None):
+        PassManager(vllm_config)(graph)
     graph.eliminate_dead_code()
     return graph
 
@@ -181,20 +181,30 @@ class DeepseekV2MoE(nn.Module):
     def __init__(
         self,
         config: PretrainedConfig,
+        model_config,
         quant_config: Optional[QuantizationConfig] = None,
         prefix: str = "",
         layer_log2phy=None,
         enable_eplb: bool = False,
     ):
         super().__init__()
+        self.tp_size = get_tensor_model_parallel_world_size()
+        vllm_config = get_current_vllm_config()
+        parallel_config = vllm_config.parallel_config
+
         self.routed_scaling_factor = config.routed_scaling_factor
-        self.n_shared_experts = config.n_shared_experts
 
         self.ep_group = get_ep_group().device_group
         self.ep_rank = self.ep_group.rank()
         self.ep_size = self.ep_group.size()
         self.n_routed_experts: int = config.n_routed_experts
         self.n_shared_experts: int = config.n_shared_experts
+
+        self.is_sequence_parallel = (envs.VLLM_ALL2ALL_BACKEND
+                                     in ("deepep_high_throughput",
+                                         "deepep_low_latency")
+                                     and ((parallel_config.enable_expert_parallel
+                                     and self.tp_size > 1) or gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL))
 
         if layer_log2phy is not None:
             self.layer_log2phy = layer_log2phy.to(torch.gcu.current_device())
@@ -222,11 +232,10 @@ class DeepseekV2MoE(nn.Module):
             self.gate.e_score_correction_bias = None
 
         # Load balancing settings.
-        vllm_config = get_current_vllm_config()
-        parallel_config = vllm_config.parallel_config
+        eplb_config = parallel_config.eplb_config
         self.enable_eplb = enable_eplb
 
-        self.n_redundant_experts = parallel_config.num_redundant_experts if enable_eplb else 0
+        self.n_redundant_experts = eplb_config.num_redundant_experts if enable_eplb else 0
         self.n_logical_experts = self.n_routed_experts
         self.n_physical_experts = (self.n_logical_experts +
                                    self.n_redundant_experts)
@@ -237,28 +246,32 @@ class DeepseekV2MoE(nn.Module):
         self.physical_expert_end = (self.physical_expert_start +
                                     self.n_local_physical_experts)
 
-        self.experts = FusedMoE(
-            num_experts=config.n_routed_experts,
-            top_k=config.num_experts_per_tok,
-            hidden_size=config.hidden_size,
-            intermediate_size=config.moe_intermediate_size,
-            reduce_results=False,
-            renormalize=config.norm_topk_prob,
-            quant_config=quant_config,
-            use_grouped_topk=True,
-            num_expert_group=config.n_group,
-            topk_group=config.topk_group,
-            prefix=f"{prefix}.experts",
-            scoring_func=config.scoring_func,
-            e_score_correction_bias=self.gate.e_score_correction_bias,
-            enable_eplb=self.enable_eplb,
-            num_redundant_experts=self.n_redundant_experts
-        )
+        if config.n_shared_experts is None:
+            self.experts = FusedMoE(
+                num_experts=config.n_routed_experts,
+                top_k=config.num_experts_per_tok,
+                hidden_size=config.hidden_size,
+                intermediate_size=config.moe_intermediate_size,
+                reduce_results=False,
+                renormalize=config.norm_topk_prob,
+                quant_config=quant_config,
+                use_grouped_topk=True,
+                num_expert_group=config.n_group,
+                topk_group=config.topk_group,
+                prefix=f"{prefix}.experts",
+                scoring_func=config.scoring_func,
+                # we do scaling outside, set factor to 1.0 to avoid double mul
+                routed_scaling_factor=1.0,
+                e_score_correction_bias=self.gate.e_score_correction_bias,
+                enable_eplb=self.enable_eplb,
+                num_redundant_experts=self.n_redundant_experts,
+                is_sequence_parallel=self.is_sequence_parallel,
+            )
+            self.shared_experts = None
+        else:
+            intermediate_size = (config.moe_intermediate_size *
+                                 config.n_shared_experts)
 
-        self.tp_size = self.experts.tp_size
-
-        if config.n_shared_experts is not None:
-            intermediate_size = config.moe_intermediate_size * config.n_shared_experts
             self.shared_experts = DeepseekV2MLP(
                 hidden_size=config.hidden_size,
                 intermediate_size=intermediate_size,
@@ -267,27 +280,57 @@ class DeepseekV2MoE(nn.Module):
                 reduce_results=False,
                 prefix=f"{prefix}.shared_experts",
             )
-
             if quant_config is not None:
-                self.experts.shared_experts = torch.compile(
-                    backend=custom_backend, dynamic=True
-                )(self.shared_experts)
-            else:
-                self.experts.shared_experts = self.shared_experts
+                self.shared_experts = torch.compile(
+                    self.shared_experts,
+                    backend=custom_backend,
+                    dynamic=True,
+                )
 
-            self.experts.routed_scaling_factor = self.routed_scaling_factor
-            self.experts.log2phy = self.layer_log2phy
+            self.experts = SharedFusedMoE(
+                shared_experts=self.shared_experts,
+                num_experts=config.n_routed_experts,
+                top_k=config.num_experts_per_tok,
+                hidden_size=config.hidden_size,
+                intermediate_size=config.moe_intermediate_size,
+                reduce_results=False,
+                renormalize=config.norm_topk_prob,
+                quant_config=quant_config,
+                use_grouped_topk=True,
+                num_expert_group=config.n_group,
+                topk_group=config.topk_group,
+                prefix=f"{prefix}.experts",
+                scoring_func=config.scoring_func,
+                routed_scaling_factor=self.routed_scaling_factor,
+                e_score_correction_bias=self.gate.e_score_correction_bias,
+                enable_eplb=self.enable_eplb,
+                num_redundant_experts=self.n_redundant_experts,
+                is_sequence_parallel=self.is_sequence_parallel,
+            )
+            # NOTE: just for alltoall, fuse add into index_add,
+            # if we only use deepep, adding it externally makes no difference
+            self.experts.add_shared = True
+
+        if self.experts.ep_size > 1 and (
+                self.experts.dp_size > 1
+                or gcu_envs.VLLM_GCU_ENABLE_SEQUENCE_PARALLEL):
+            self.tp_size = 1
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         num_tokens, hidden_dim = hidden_states.shape
         hidden_states = hidden_states.view(-1, hidden_dim)
-        shared_output = None
 
         router_logits, _ = self.gate(hidden_states)
-        final_hidden_states = self.experts(
+        fused_moe_out = self.experts(
             hidden_states=hidden_states,
             router_logits=router_logits,
         )
+        if self.n_shared_experts is not None:
+            _, final_hidden_states = fused_moe_out
+            shared_output = None
+        else:
+            final_hidden_states = fused_moe_out
+            shared_output = None
 
         if shared_output is not None:
             final_hidden_states *= self.routed_scaling_factor
@@ -696,6 +739,7 @@ class DeepseekV2DecoderLayer(nn.Module):
 
             self.mlp = DeepseekV2MoE(
                 config=config,
+                model_config=model_config,
                 quant_config=quant_config,
                 prefix=f"{prefix}.mlp",
                 layer_log2phy=layer_log2phy,
@@ -855,15 +899,6 @@ class DeepseekV2Model(nn.Module):
         return hidden_states
 
 
-def dummy_data_for_deepseek(
-    ctx: InputContext, seq_len: int, mm_counts: Mapping[str, int]
-) -> DummyData:
-    config = ctx.get_hf_config()
-    seq = np.random.randint(0, config.vocab_size, size=seq_len).tolist()
-    seq_data = SequenceData.from_seqs(seq)
-    return DummyData(seq_data)
-
-
 class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
 
     def __init__(self, *, vllm_config: VllmConfig, prefix: str = ""):
@@ -968,10 +1003,6 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
 
             NON_EXPERT_WEIGHTS = {
                 "e_score_correction_bias",
-                "shared_experts._orig_mod.gate_up_proj.weight",
-                "shared_experts._orig_mod.gate_up_proj.weight_scale_inv",
-                "shared_experts._orig_mod.down_proj.weight",
-                "shared_experts._orig_mod.down_proj.weight_scale_inv",
                 "w13_input_scale",
                 "w2_input_scale",
                 "w13_input_scale_rec",
@@ -980,7 +1011,8 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
 
             return [
                 weight.view(layer.local_num_experts, -1) for name, weight in weights
-                if name not in NON_EXPERT_WEIGHTS
+                if name not in NON_EXPERT_WEIGHTS and weight.shape != torch.Size(
+                []) and not name.startswith("_shared_experts.")
             ]
 
         for layer_idx, layer in enumerate(self.moe_layers):
@@ -1015,9 +1047,8 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
     def compute_logits(
         self,
         hidden_states: torch.Tensor,
-        sampling_metadata: SamplingMetadata,
     ) -> Optional[torch.Tensor]:
-        logits = self.logits_processor(self.lm_head, hidden_states, sampling_metadata)
+        logits = self.logits_processor(self.lm_head, hidden_states)
         return logits
 
     def make_empty_intermediate_tensors(
@@ -1066,24 +1097,13 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
 
             if "mlp.shared_experts" in name and name not in params_dict:
                 if self.quant_config is not None:
-                    # shared_experts was setattr to self.experts when not in params_dict
                     name = name.replace(
-                        "mlp.shared_experts", "mlp.experts.shared_experts._orig_mod"
-                    )
-                else:
-                    name = name.replace(
-                        "mlp.shared_experts", "mlp.experts.shared_experts"
+                        "mlp.shared_experts", "mlp.shared_experts._orig_mod"
                     )
 
-            # TODO(simon): support nextn predict layers
-            if (
-                hasattr(self.config, "num_nextn_predict_layers")
-                and self.config.num_nextn_predict_layers > 0
-            ):
-                assert self.config.num_nextn_predict_layers == 1
-                layer_idx = self.config.num_hidden_layers
-                if name.startswith(f"model.layers.{layer_idx}"):
-                    continue
+            spec_layer = get_spec_layer_idx_from_weight_name(self.config, name)
+            if spec_layer is not None:
+                continue  # skip spec decode layers for main model
 
             for param_name, weight_name, shard_id in stacked_params_mapping:
                 # Skip non-stacked layers and experts (experts handled below).
@@ -1095,11 +1115,7 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
                 # name will be updated to mlp.experts[0].gate_up_proj, which
                 # will then be updated below in expert_params_mapping
                 # for mlp.experts[0].gate_gate_up_proj, which breaks load.
-                if (
-                    ("mlp.experts." in name)
-                    and ("mlp.experts.shared_experts." not in name)
-                    and name not in params_dict
-                ):
+                if (("mlp.experts." in name) and name not in params_dict):
                     continue
                 name = name.replace(weight_name, param_name)
 
@@ -1175,3 +1191,16 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP, MixtureOfExperts):
 
 class DeepseekV3ForCausalLM(DeepseekV2ForCausalLM):
     pass
+
+
+# Compatibility with
+# https://huggingface.co/deepseek-ai/DeepSeek-V3-Base/blob/main/configuration_deepseek.py
+def get_spec_layer_idx_from_weight_name(config,
+                                        weight_name: str) -> Optional[int]:
+    if (hasattr(config, "num_nextn_predict_layers")
+            and config.num_nextn_predict_layers > 0):
+        layer_idx = config.num_hidden_layers
+        for i in range(config.num_nextn_predict_layers):
+            if weight_name.startswith(f"model.layers.{layer_idx+i}."):
+                return layer_idx + i
+    return None

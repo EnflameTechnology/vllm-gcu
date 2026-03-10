@@ -18,12 +18,15 @@ def align_up(seqlen, size):
 
 def tp_to_sp(input_, seqlen):
     tp_group = get_tp_group()
+    if tp_group.world_size == 1:
+        return input_
+
     if current_platform.has_device_capability(140):
         scatter_counts = scatter(seqlen, tp_group.world_size)
-        return torch.ops.vllm.reduce_scatter_v(
+        return tp_group.reduce_scatterv(
             input_,
-            scatter_counts,
-            tp_group.unique_name,
+            dim=-1,
+            sizes=scatter_counts,
         )
     else:
         pad_size = align_up(seqlen, tp_group.world_size) - seqlen
@@ -48,10 +51,12 @@ def tp_to_sp(input_, seqlen):
 
 def sp_to_tp(input_, seqlen):
     tp_group = get_tp_group()
+    if tp_group.world_size == 1:
+        return input_
+
     if current_platform.has_device_capability(140):
         scatter_counts = scatter(seqlen, tp_group.world_size)
-        return torch.ops.vllm.all_gather_v(input_, scatter_counts,
-                                           tp_group.unique_name)
+        return tp_group.all_gatherv(input_, dim=0, sizes=scatter_counts)
     else:
         input_ = get_tp_group().all_gather(input_, dim=0)
         return input_[:seqlen]

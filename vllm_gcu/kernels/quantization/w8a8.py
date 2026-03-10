@@ -1,4 +1,4 @@
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, cast
 
 import torch
 from torch.nn.parameter import Parameter
@@ -12,7 +12,11 @@ from vllm.model_executor.layers.linear import (
     LinearBase,
     LinearMethodBase,
     set_weight_attrs,
+    UnquantizedLinearMethod
 )
+from vllm.model_executor.layers.quantization.compressed_tensors.utils import (
+    should_ignore_layer)
+
 from vllm.model_executor.layers.quantization.base_config import QuantizationConfig
 import vllm._custom_ops as ops
 
@@ -21,7 +25,13 @@ from vllm_gcu.kernels.quantization.kv_cache import GCUBaseKVCacheMethod
 from vllm_gcu.kernels.quantization.utils import register_gcu_quantization_config
 from vllm_gcu.kernels.modular_experts import TritonExpertsPad
 from vllm.distributed import get_tensor_model_parallel_rank, get_tensor_model_parallel_world_size
+from vllm.model_executor.layers.fused_moe.config import int8_w8a8_moe_quant_config, FusedMoEQuantConfig
+from vllm.model_executor.layers.fused_moe.layer import FusedMoEConfig
 
+from vllm_gcu.kernels.quantization.kv_cache import (
+                    GCUInt8KVCachePerTensorMethod,
+                    GCUInt8KVCachePerHeadMethod
+)
 
 @register_gcu_quantization_config("w8a8")
 class W8A8Config(QuantizationConfig):
@@ -30,9 +40,11 @@ class W8A8Config(QuantizationConfig):
     def __init__(
         self,
         group_size: int,
+        ignore: list[str],
     ) -> None:
         # todo
         self.group_size = group_size
+        self.ignore = ignore 
 
     def __repr__(self) -> str:
         return "W8A8Config()"
@@ -56,11 +68,39 @@ class W8A8Config(QuantizationConfig):
     @classmethod
     def from_config(cls, config: Dict[str, Any]) -> "W8A8Config":
         # todo
+        ignore: list[str] = cast(list[str], config.get("ignore", []))
         group_size = cls.get_from_keys(config, ["group_size"])
-        return cls(group_size)
+        return cls(group_size, ignore)
 
     def get_linear_method(self) -> "W8A8LinearMethod":
         return W8A8LinearMethod(self)
+
+    def get_cache_scale(self, name: str) -> Optional[str]:
+        """
+        Map int8 KV cache scale/zero names from checkpoint to model parameter names.
+
+        Checkpoint format:  layers.X.self_attn.{k_scale,v_scale,k_zero,v_zero}
+        Model format:       layers.X.self_attn.attn.{k_scale,v_scale,k_zero,v_zero}
+
+        :param name: weight name from checkpoint
+        :return: mapped parameter name in model, or None if not a KV cache param
+        """
+        # Only process KV cache quantization parameters
+        kv_cache_suffixes = (".k_scale", ".v_scale", ".k_zero", ".v_zero")
+        if not name.endswith(kv_cache_suffixes):
+            return None
+
+        # Skip if already contains .attn. (already in correct format)
+        if ".attn." in name:
+            return None
+
+        # Map: self_attn.{k_scale,...} -> self_attn.attn.{k_scale,...}
+        for suffix in kv_cache_suffixes:
+            if name.endswith(suffix):
+                base = name[:-len(suffix)]  # e.g., "layers.0.self_attn"
+                return f"{base}.attn{suffix}"  # e.g., "layers.0.self_attn.attn.k_scale"
+
+        return None
 
     def get_quant_method(
         self, layer: torch.nn.Module, prefix: str
@@ -68,11 +108,17 @@ class W8A8Config(QuantizationConfig):
         from vllm.attention.layer import Attention
 
         if isinstance(layer, LinearBase):
+            quant_method: LinearMethodBase = UnquantizedLinearMethod()
+            if should_ignore_layer(prefix, self.ignore):
+                return quant_method
             return W8A8LinearMethod(self)
         elif isinstance(layer, FusedMoE):
-            return FusedW8A8MoEMethod(self)
+            return FusedW8A8MoEMethod(self, layer.moe_config)
         elif isinstance(layer, Attention):
-            return Int8KVCacheMethod(self)
+            if layer.kv_cache_dtype == "int8":
+                return GCUInt8KVCachePerTensorMethod(self)
+            else:
+                return Int8KVCacheMethod(self)
         return None
 
     def get_scaled_act_names(self) -> List[str]:
@@ -151,8 +197,15 @@ class W8A8LinearMethod(LinearMethodBase):
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
         w = layer.weight.T.contiguous()
+        w = w.transpose(1, 0)
         layer.weight.resize_(w.shape)
         layer.weight.data.copy_(w.data)
+        layer.in_scales.data.reciprocal_()
+        # for3.0, w8a8(int8) only support bias is fp32 or None dtype
+        from vllm.platforms import current_platform
+        if hasattr(layer, 'bias') and (layer.bias is not None) and \
+            (not current_platform.has_device_capability(140)):
+            layer.bias.data = layer.bias.data.to(torch.float32)
 
     def apply(
         self,
@@ -165,9 +218,9 @@ class W8A8LinearMethod(LinearMethodBase):
         assert x.dtype == torch.int8
 
         shape = list(x.shape)
-        shape[-1] = int(layer.weight.shape[-1])
+        shape[-1] = int(layer.weight.shape[0])
         output = torch.empty(shape, dtype=layer.out_dtype, device=x.device)
-        gcu_ops.dot_bias_quant(output, x, layer.weight, layer.out_scales, bias)
+        torch.ops._C.linear_quant(output, x, layer.weight, bias, layer.out_scales, None, -1)
         return output
 
 
@@ -178,7 +231,8 @@ class FusedW8A8MoEMethod(FusedMoEMethodBase):
         quant_config: The W8A8 quantization config.
     """
 
-    def __init__(self, quant_config: W8A8Config):
+    def __init__(self, quant_config: W8A8Config, moe: FusedMoEConfig):
+        super().__init__(moe)
         self.quant_config = quant_config
 
     def select_gemm_impl(
@@ -187,9 +241,7 @@ class FusedW8A8MoEMethod(FusedMoEMethodBase):
         moe,
     ):
         return TritonExpertsPad(
-            use_int8_w8a8=True,
-            per_channel_quant=True,
-            per_act_token_quant=True
+            self.moe_quant_config
         )
 
     def create_weights(
@@ -289,6 +341,16 @@ class FusedW8A8MoEMethod(FusedMoEMethodBase):
         layer.register_parameter("w2_in_scales", w2_input_scale)
         set_weight_attrs(w2_input_scale, extra_weight_attrs)
 
+    def get_fused_moe_quant_config(
+            self, layer: torch.nn.Module) -> Optional[FusedMoEQuantConfig]:
+        return int8_w8a8_moe_quant_config(
+            w1_scale=layer.w13_out_scales,
+            w2_scale=layer.w2_out_scales,
+            a1_scale=layer.w13_in_scales,
+            a2_scale=layer.w2_in_scales,
+            per_act_token_quant=True,
+        )
+
     def apply(
         self,
         layer: torch.nn.Module,
@@ -310,9 +372,10 @@ class FusedW8A8MoEMethod(FusedMoEMethodBase):
         expert_load_view=None,
         logical_to_physical_map=None,
         logical_replica_count=None,
+        routed_scaling_factor=None
     ) -> torch.Tensor:
 
-        topk_weights, topk_ids = FusedMoE.select_experts(
+        topk_weights, topk_ids, _ = FusedMoE.select_experts(
             hidden_states=x,
             router_logits=router_logits,
             use_grouped_topk=use_grouped_topk,
@@ -334,10 +397,6 @@ class FusedW8A8MoEMethod(FusedMoEMethodBase):
             activation=activation,
             global_num_experts=global_num_experts,
             expert_map=expert_map,
-            w1_scale=layer.w13_out_scales,
-            w2_scale=layer.w2_out_scales,
-            a1_scale=layer.w13_in_scales,
-            a2_scale=layer.w2_in_scales,
             apply_router_weight_on_input=apply_router_weight_on_input,
         )
 

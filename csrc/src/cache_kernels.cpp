@@ -1,7 +1,26 @@
+/*
+ * Copyright 2024-2025 Enflame. All Rights Reserved.
+
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #include <tops/tops_runtime.h>
 #include <torch/all.h>
 
 #include <map>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "cache_ops.h"
 
@@ -54,6 +73,32 @@ void copy_blocks(std::vector<torch::Tensor> const& key_caches,
       k[dst] = k[src];
       v[dst] = v[src];
     }
+  }
+}
+
+void convert_fp8(torch::Tensor& dst_cache, torch::Tensor& src_cache,
+                 const double scale, const std::string& kv_cache_dtype) {
+  torch::Device src_device = src_cache.device();
+  torch::Device dst_device = dst_cache.device();
+  TORCH_CHECK(src_device.is_privateuseone(), "src must be on a GCU")
+  TORCH_CHECK(dst_device.is_privateuseone(), "dst must be on a GCU")
+  TORCH_CHECK(src_device.index() == dst_device.index(),
+              "src and dst must be on the same GCU");
+  const c10::OptionalDeviceGuard device_guard(src_device);
+  if (kv_cache_dtype == "auto") {
+    TORCH_CHECK(false, "Not supported");
+  } else if (kv_cache_dtype == "fp8" || kv_cache_dtype == "fp8_e4m3") {
+    if (dst_cache.dtype() == at::ScalarType::Float ||
+        dst_cache.dtype() == at::ScalarType::Half ||
+        dst_cache.dtype() == at::ScalarType::BFloat16) {
+      dst_cache.copy_(
+          src_cache.view(at::ScalarType::Float8_e4m3fn).to(dst_cache.dtype()) *
+          scale);
+    } else {
+      TORCH_CHECK(false, "Not supported");
+    }
+  } else {
+    TORCH_CHECK(false, "Unsupported data type: ", kv_cache_dtype);
   }
 }
 

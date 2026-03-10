@@ -4,6 +4,8 @@
 #include <ATen/ATen.h>
 #include <torch/all.h>
 
+#include <string>
+
 namespace vllm_gcu::llm_ops {
 // TODO: use tensor instead of map
 void swap_blocks(torch::Tensor &src, torch::Tensor &dst,
@@ -18,4 +20,7 @@ void reshape_and_cache(const at::Tensor &key, const at::Tensor &value,
                        const at::Tensor &slot_mapping,
                        const std::string &kv_cache_dtype, double k_scale,
                        double v_scale, double k_zero, double v_zero);
+
+void convert_fp8(torch::Tensor& dst_cache, torch::Tensor& src_cache,
+                 const double scale, const std::string& kv_cache_dtype);
 }  // namespace vllm_gcu::llm_ops

@@ -65,10 +65,9 @@ std::tuple<at::Tensor, at::Tensor> mha_fwd_kvcache_mla(
     out_type = q_dtype;
   }
   at::Tensor out = torch::empty(
-    {batch_size, seqlen_q, num_heads_q, head_size_v}, opts.dtype(out_type));
+      {batch_size, seqlen_q, num_heads_q, head_size_v}, opts.dtype(out_type));
   at::Tensor softmax_lse =
       torch::empty({batch_size, num_heads_q, seqlen_q}, opts.dtype(at::kFloat));
-
   at::Scalar head_size_v_scalar(head_size_v);
   at::Scalar softmax_scale_scalar(softmax_scale);
 

@@ -7,8 +7,9 @@ from vllm.forward_context import get_forward_context
 import vllm.model_executor.layers.fused_moe.modular_kernel as mk
 from vllm.model_executor.layers.fused_moe.config import FusedMoEQuantConfig
 from vllm.model_executor.layers.fused_moe.utils import _resize_cache
-from vllm.model_executor.layers.fused_moe.fused_moe import get_config_dtype_str
 from vllm_gcu.kernels.fused_moe import get_default_config, invoke_fused_moe_kernel, moe_align_block_size
+from vllm.model_executor.layers.fused_moe.topk_weight_and_reduce import (
+    TopKWeightAndReduceNoOP)
 
 
 def _resize_cache_with_dtype(x: torch.Tensor, v: tuple[int, ...], dtype: torch.dtype) -> torch.Tensor:
@@ -26,28 +27,9 @@ class TritonExpertsPad(mk.FusedMoEPermuteExpertsUnpermute):
 
     def __init__(
         self,
-        use_fp8_w8a8: bool = False,
-        use_int8_w8a8: bool = False,
-        use_int8_w8a16: bool = False,
-        use_int4_w4a16: bool = False,
-        per_act_token_quant: bool = False,
-        block_shape: Optional[list[int]] = None,
-        per_channel_quant: bool = False
+        quant_config: FusedMoEQuantConfig,
     ):
-        super().__init__(
-            FusedMoEQuantConfig.make(
-                use_fp8_w8a8=use_fp8_w8a8,
-                use_int8_w8a8=use_int8_w8a8,
-                use_int8_w8a16=use_int8_w8a16,
-                use_int4_w4a16=use_int4_w4a16,
-                per_act_token_quant=per_act_token_quant,
-                block_shape=block_shape,
-            ))
-
-        self.use_fp8_w8a8 = use_fp8_w8a8
-        self.use_int4_w4a16 = use_int4_w4a16
-        self.use_int8_w8a8 = use_int8_w8a8
-        self.use_int8_w8a16 = use_int8_w8a16
+        super().__init__(quant_config)
 
     @property
     def activation_formats(
@@ -62,6 +44,9 @@ class TritonExpertsPad(mk.FusedMoEPermuteExpertsUnpermute):
     def supports_expert_map(self) -> bool:
         return True
 
+    def finalize_weight_and_reduce_impl(self) -> mk.TopKWeightAndReduce:
+        return TopKWeightAndReduceNoOP()
+
     def workspace_shapes(
         self,
         a: torch.Tensor,
@@ -72,6 +57,7 @@ class TritonExpertsPad(mk.FusedMoEPermuteExpertsUnpermute):
         topk: int,
         global_num_experts: int,
         local_num_experts: int,
+        expert_tokens_meta: Optional[mk.ExpertTokensMetadata],
     ) -> tuple[tuple[int, ...], tuple[int, ...], tuple[int, ...], torch.dtype]:
         workspace1 = (M, topk, max(N // 2, K))
         workspace2 = (M, topk, max(N, K))
@@ -89,26 +75,30 @@ class TritonExpertsPad(mk.FusedMoEPermuteExpertsUnpermute):
         activation: str,
         global_num_experts: int,
         expert_map: Optional[torch.Tensor],
-        w1_scale: Optional[torch.Tensor],
-        w2_scale: Optional[torch.Tensor],
-        w1_zp: Optional[torch.Tensor],
-        w2_zp: Optional[torch.Tensor],
         a1q_scale: Optional[torch.Tensor],
         a2_scale: Optional[torch.Tensor],
         workspace13: torch.Tensor,
         workspace2: torch.Tensor,
-        expert_num_tokens: Optional[torch.Tensor],
+        expert_tokens_meta: Optional[mk.ExpertTokensMetadata],
         apply_router_weight_on_input: bool,
-        a1q_scale_rec: Optional[torch.Tensor],
-        a2_scale_rec: Optional[torch.Tensor],
     ):
+        topk_ids = topk_ids.to(torch.int32)
+        if expert_tokens_meta is None:
+            # noep or deepep ht
+            expert_num_tokens = torch.full((1, ),
+                                           hidden_states.shape[0],
+                                           dtype=torch.int32,
+                                           device=hidden_states.device)
+        else:
+            # alltoall
+            expert_num_tokens = expert_tokens_meta.expert_num_tokens
         # TODO:bias
         # Check constraints.
-        if self.use_int4_w4a16:
+        if self.quant_config.use_int4_w4a16:
             assert hidden_states.size(-1) // 2 == w1.size(2), (
                 "Hidden size mismatch")
         else:
-            if self.use_fp8_w8a8 and w1.dtype == torch.int8:
+            if self.quant_config.use_fp8_w8a8 and w1.dtype == torch.int8:
                 # for w4a8-fp8
                 assert hidden_states.size(-1) // 2 == w1.size(2), (
                     "Hidden size mismatch")
@@ -132,18 +122,13 @@ class TritonExpertsPad(mk.FusedMoEPermuteExpertsUnpermute):
         if global_num_experts == -1:
             global_num_experts = E
 
-        config_dtype = get_config_dtype_str(use_fp8_w8a8=self.use_fp8_w8a8,
-                                            use_int8_w8a16=self.use_int8_w8a16,
-                                            use_int4_w4a16=self.use_int4_w4a16,
-                                            dtype=hidden_states.dtype)
-
         config = get_default_config(
             M=num_tokens,
             E=w2.shape[0],
             N=w2.shape[2],
             K=w1.shape[2],
             topk=top_k_num,
-            dtype=config_dtype,
+            dtype=self.quant_config.config_name(hidden_states.dtype),
             is_marlin=False,
             block_shape=self.block_shape,
         )
@@ -169,13 +154,14 @@ class TritonExpertsPad(mk.FusedMoEPermuteExpertsUnpermute):
                                  global_num_experts, expert_map,
                                  expert_num_tokens))
 
+        w13_input_scale_rec = getattr(self.quant_config, 'w13_input_scale_rec', None)
         invoke_fused_moe_kernel(
             hidden_states,
             w1,
             intermediate_cache1,
             a1q_scale,
-            w1_scale,
-            w1_zp,
+            self.w1_scale,
+            self.w1_zp,
             topk_weights,  # TODO: remove
             topk_ids,  # TODO: remove
             sorted_token_ids,
@@ -184,19 +170,20 @@ class TritonExpertsPad(mk.FusedMoEPermuteExpertsUnpermute):
             False,  # mul_routed_weights
             top_k_num,
             config,
-            use_fp8_w8a8=self.use_fp8_w8a8,
-            use_int8_w8a8=self.use_int8_w8a8,
-            use_int8_w8a16=self.use_int8_w8a16,
-            use_int4_w4a16=self.use_int4_w4a16,
+            use_fp8_w8a8=self.quant_config.use_fp8_w8a8,
+            use_int8_w8a8=self.quant_config.use_int8_w8a8,
+            use_int8_w8a16=self.quant_config.use_int8_w8a16,
+            use_int4_w4a16=self.quant_config.use_int4_w4a16,
             per_channel_quant=self.per_act_token_quant,
             block_shape=self.block_shape,
             real_token_num=expert_num_tokens if is_static else None,
-            A_scale_rec=a1q_scale_rec,
+            A_scale_rec=w13_input_scale_rec,
+            bias=self.quant_config.w1_bias,
         )
 
         if activation == "silu":
-            if self.use_fp8_w8a8:
-                if w1.dtype == torch.int8:
+            if self.quant_config.use_fp8_w8a8:
+                if w1.dtype == torch.int8 or self.block_shape is None:
                     # shape = (
                     #     *intermediate_cache2.shape[:-1],
                     #     N // 2 // self.quant_config.block_shape[1],
@@ -227,16 +214,21 @@ class TritonExpertsPad(mk.FusedMoEPermuteExpertsUnpermute):
                         expert_num_tokens,
                         group_size,
                     )
-            elif self.use_int8_w8a8:
-                intermediate_cache2_temp = torch.empty_like(intermediate_cache2, dtype=intermediate_cache1.dtype)
+            elif self.quant_config.use_int8_w8a8:
                 if a2_scale is not None:
+                    intermediate_cache2 = _resize_cache_with_dtype(
+                            workspace13,
+                            (num_tokens * top_k_num, N // 2),
+                            intermediate_cache1.dtype
+                    )
+
                     torch.ops._C.silu_and_mul_pad(
-                        intermediate_cache2_temp.view(-1, top_k_num, N // 2),
+                        intermediate_cache2.view(-1, top_k_num, N // 2),
                         intermediate_cache1,
                         expert_num_tokens,
                     )
-                    intermediate_cache2 = intermediate_cache2_temp
                 else:
+                    intermediate_cache2_temp = torch.empty_like(intermediate_cache2, dtype=intermediate_cache1.dtype)
                     torch.ops._C.silu_and_mul_pad(
                         intermediate_cache2_temp.view(-1, top_k_num, N // 2),
                         intermediate_cache1,
@@ -244,23 +236,30 @@ class TritonExpertsPad(mk.FusedMoEPermuteExpertsUnpermute):
                     )
                     a2_scale = torch.empty((intermediate_cache2_temp.numel() // intermediate_cache2_temp.shape[-1], 1), dtype=torch.float32, device="gcu")
                     torch.ops._C.dynamic_scaled_int8_quant(intermediate_cache2, intermediate_cache2_temp, a2_scale, None)
-                del intermediate_cache2_temp
+                    del intermediate_cache2_temp
             else:
                 torch.ops._C.silu_and_mul_pad(
                     intermediate_cache2.view(-1, top_k_num, N // 2),
                     intermediate_cache1,
                     expert_num_tokens,
                 )
+        elif activation == "swigluoai":
+            # alpha = 1.702, limit = 7.0
+            assert not self.quant_config.use_fp8_w8a8
+            assert not self.quant_config.use_int8_w8a8
+            torch.ops._C.swigluoai_and_mul(intermediate_cache2,
+                                       intermediate_cache1.view(-1, N))
         else:
             raise ValueError(f"Unsupported FusedMoe activation: {activation}")
 
+        w2_input_scale_rec = getattr(self.quant_config, 'w2_input_scale_rec', None)
         invoke_fused_moe_kernel(
             intermediate_cache2,
             w2,
             intermediate_cache3,
             a2_scale,
-            w2_scale,
-            w2_zp,
+            self.w2_scale,
+            self.w2_zp,
             topk_weights,
             topk_ids,  # TODO: remove
             sorted_token_ids,
@@ -269,14 +268,15 @@ class TritonExpertsPad(mk.FusedMoEPermuteExpertsUnpermute):
             not apply_router_weight_on_input,
             1,
             config,
-            use_fp8_w8a8=self.use_fp8_w8a8,
-            use_int8_w8a8=self.use_int8_w8a8,
-            use_int8_w8a16=self.use_int8_w8a16,
-            use_int4_w4a16=self.use_int4_w4a16,
+            use_fp8_w8a8=self.quant_config.use_fp8_w8a8,
+            use_int8_w8a8=self.quant_config.use_int8_w8a8,
+            use_int8_w8a16=self.quant_config.use_int8_w8a16,
+            use_int4_w4a16=self.quant_config.use_int4_w4a16,
             per_channel_quant=self.per_act_token_quant,
             block_shape=self.block_shape,
             real_token_num=expert_num_tokens if is_static else None,
-            A_scale_rec=a2_scale_rec,
+            A_scale_rec=w2_input_scale_rec,
+            bias=self.quant_config.w2_bias,
         )
 
         torch.ops._moe_C.moe_sum_pad(

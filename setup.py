@@ -59,9 +59,10 @@ else:
 
         VLLM_VERSION = vllm.__version__
     except ImportError:
-        VLLM_VERSION = "0.9.2"
+        VLLM_VERSION = "0.11.0"
     tops_version = get_tops_version(f"{ROOT_DIR}/.version")
-    VERSION = f"{VLLM_VERSION}+{get_tag(ROOT_DIR, tops_version)}"
+    sp = '+' if '+' not in VLLM_VERSION else '.'
+    VERSION = f"{VLLM_VERSION}{sp}{get_tag(ROOT_DIR, tops_version)}"
 
 DEBUG = os.getenv("BUILD_VLLM_DEBUG", False)
 sanitizer = os.getenv("SANITIZER")
@@ -143,6 +144,7 @@ def read_readme() -> str:
 
 
 def read_requirements():
+
     def _read_requirements(filename: str) -> List[str]:
         with open(get_path(filename)) as f:
             requirements = f.read().strip().split("\n")
@@ -201,12 +203,14 @@ ${declarations};
 
 
 class VllmBdistWheel(bdist_wheel):
+
     def initialize_options(self):
         bdist_wheel.initialize_options(self)
         self.py_limited_api = "cp38"
 
 
 class VllmPackageBuild(build_py, object):
+
     def build_module(self, module, module_file, package):
         if package == "benchmarks":
             package = "vllm_utils"
@@ -233,12 +237,14 @@ class VllmPackageBuild(build_py, object):
 
 
 class VllmInstall(install):
+
     def run(self):
         self.run_command("build_py")
         super().run()
 
 
 class VllmClean(clean):
+
     def run(self):
         if os.path.exists(".gitignore"):
             with open(".gitignore", "r") as f_ignore:
@@ -383,14 +389,19 @@ setup(
             "**/**/**/*",
             "**/**/**/**/*",
             "**/**/**/**/**/*",
+        ],
+        "vllm_gcu": [
+            "models/*.jinja",
+            "models/**/*.jinja",
         ]
     },
     python_requires=">=3.8",
     install_requires=[
         "python-multipart==0.0.20",
-        "transformers==4.51.1",
+        "transformers==4.55.2",
         "numpy<2.0",
         "cloudpickle==3.1.1",
+        "orjson"
     ],
     ext_modules=ext_modules,
     cmdclass={
@@ -406,6 +417,5 @@ setup(
         ["register_custom_models = vllm_gcu.models:register_custom_models"],
         "vllm.platform_plugins":
         ["register_platform_plugins = vllm_gcu:register_platform_plugins"],
-        "console_scripts": ["vllm_gcu=vllm_gcu.entrypoints.cli.main:main"],
     },
 )
