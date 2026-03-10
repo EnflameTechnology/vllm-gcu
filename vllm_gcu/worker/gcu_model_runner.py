@@ -102,7 +102,7 @@ class GCUModelRunner(GPUModelRunner):
             self.drafter = EagleProposerWithGraph(self.vllm_config,
                                                     self.device, self)
         
-        self.uses_xdrope_dim = self.model_config.uses_xdrope_dim
+        self.uses_xdrope_dim = self.model_config.uses_xdrope_dim if hasattr(self.model_config, "uses_xdrope_dim") else 0
         # Only relevant for models using XD-RoPE
         if self.uses_xdrope_dim > 0:
             # Similar to mrope but use assigned dimension number for RoPE, 4 as default.
