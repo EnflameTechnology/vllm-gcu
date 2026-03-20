@@ -25,7 +25,7 @@
 
 * **OS**: Ubuntu 22.04
 * **Python**: 3.10 \~ 3.12 (default python version `3.10+`)
-* **Hardware**: Enflame S60 GCU (with TopsRider **i3x 3.5+** software stack installed)
+* **Hardware**: Enflame S60 GCU (with TopsRider **i3x 3.6+** software stack installed)
 
 ### 📦 Installation Steps
 
@@ -62,24 +62,24 @@ sudo apt install python3.10-dev -y
 
 ```bash
 # Install dependencies
-pip install torch==2.7.0+cpu torchvision==0.22.0 -i https://download.pytorch.org/whl/cpu
-pip install vllm==0.9.2 triton==3.2 transformers==4.51.1
+pip install torch==2.8.0+cpu torchvision==0.23.0+cpu -i https://download.pytorch.org/whl/cpu
+pip install vllm==0.11.0 triton==3.3.0 transformers==4.55.2
 # Enflame dependencies
-pip install torch_gcu-2.7.0*.whl
-pip install flash_attn-2.6.3+torch.2.7.0.gcu*.whl
-pip install topsgraph-3.5.5.7*.whl
-pip install tops_extension-3.2*.whl
-pip install xformers-0.0.30+torch.2.7.0.gcu*.whl
+pip install torch_gcu-2.8.0*.whl
+pip install flash_attn-2.7.2+torch.2.8.0.gcu*.whl
+pip install topsgraph-3.6*.whl
+pip install tops_extension-3.6*.whl
+pip install xformers-0.0.32*.whl
 sudo dpkg -i topsaten_3.6*.deb
-sudo dpkg -i eccl_3.5*.deb
-sudo dpkg -i tops-sdk_3.5*.deb
-sudo dpkg -i topsgraph_3.5*.deb
+sudo dpkg -i eccl_3.6*.deb
+sudo dpkg -i tops-sdk_3.6*.deb
+sudo dpkg -i topsgraph_3.6*.deb
 
 # build vllm_gcu .whl package
 python3 setup.py bdist_wheel
 
 # install the built package
-python3 -m pip install ./dist/vllm_gcu-0.9.2*.whl
+python3 -m pip install ./dist/vllm_gcu-0.11.0*.whl
 ```
 
 ---
@@ -220,7 +220,7 @@ python3 -m vllm_utils.benchmark_throughput --help
 | **Baichuan2**          | ✅    | ✅    | ✅          | ✅          | ✅         | ✅     | ✅         | ✅       |
 | **ChatGLM3**           | ✅    | ✅    | ✅          | ✅          | ✅         | ✅     | ✅         | ✅       |
 | **DBRX**               | ✅    | ❌    | ❌          | ✅          | ✅         | ✅     | ✅         | ✅       |
-| **DeepSeek-V3/R1**        | ❌    | ❌    | ❌          | ❌          | ✅         | ❌     | ❌         | ❌       |
+| **DeepSeek-V3/R1/V3.2**| ❌    | ❌    | ❌          | ❌          | ✅         | ❌     | ❌         | ❌       |
 | **DeepSeek-Prover-V2** | ❌    | ✅    | ❌          | ❌          | ❌         | ❌     | ❌         | ❌       |
 | **Gemma**              | ✅    | ✅    | ✅          | ✅          | ✅         | ✅     | ✅         | ✅       |
 | **codegemma**          | ✅    | ✅    | ❌          | ❌          | ❌         | ❌     | ❌         | ❌       |
@@ -229,11 +229,14 @@ python3 -m vllm_utils.benchmark_throughput --help
 | **Mixtral**            | ✅    | ✅    | ❌          | ❌          | ❌         | ❌     | ❌         | ❌       |
 | **Qwen(1.5/2/2.5/3)**            | ✅    | ✅    | ✅          | ✅          | ✅         | ✅     | ✅         | ✅       |
 | **Qwen3-MoE**          | ✅    | ✅    | ❌          | ❌          | ✅         | ❌     | ❌         | ❌       |
+| **Qwen3-Next**         | ✅    | ✅    | ❌          | ❌          | ✅         | ❌     | ❌         | ❌       |
+| **GLM4**               | ✅    | ✅    | ❌          | ❌          | ✅         | ❌     | ❌         | ❌       |
 | **WizardCoder**        | ✅    | ✅    | ❌          | ❌          | ❌         | ❌     | ❌         | ❌       |
 | **Yi**                 | ✅    | ✅    | ✅          | ✅          | ✅         | ✅     | ✅         | ✅       |
 | **gte-Qwen2**          | ✅    | ❌    | ❌          | ❌          | ❌         | ❌     | ❌         | ❌       |
 | **jina-reranker-v2**   | ❌    | ✅    | ❌          | ❌          | ❌         | ❌     | ❌         | ❌       |
-
+| **Step3/VL**           | ✅    | ✅    | ❌          | ❌          | ✅         | ❌     | ❌         | ❌       |
+| **GPT-OSS**            | ✅    | ✅    | ❌          | ❌          | ✅         | ❌     | ❌         | ❌       |
 ---
 
 ✅: Supported and validated

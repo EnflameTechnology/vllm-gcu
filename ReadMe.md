@@ -11,7 +11,7 @@
 
 ## 📌 特性一览
 
-* 完整支持 **vLLM 0.9.2** 功能特性
+* 完整支持 **vLLM 0.11.0** 功能特性
 * 面向燧原第三代 **S60 GCU**，深度优化推理流程
 * 支持 FP16、BF16，以及 GPTQ、AWQ、INT8 等多种量化方式
 * 原生支持 Qwen、LLaMa、Gemma、Mistral、ChatGLM、DeepSeek 系列 LLM（和/或VLM）推理
@@ -25,7 +25,7 @@
 
 * **操作系统**: Ubuntu 22.04
 * **Python**: 3.10 \~ 3.12
-* **硬件**: 燧原 S60 GCU（已部署 TopsRider **i3x 3.5+** 软件栈）
+* **硬件**: 燧原 S60 GCU（已部署 TopsRider **i3x 3.6+** 软件栈）
 
 ### 📦 安装步骤
 
@@ -62,24 +62,24 @@ sudo apt install python3.10-dev -y
 
 ```bash
 # 安装依赖
-pip install torch==2.7.0+cpu torchvision==0.22.0 -i https://download.pytorch.org/whl/cpu
-pip install vllm==0.9.2 triton==3.2 transformers==4.51.1
+pip install torch==2.8.0+cpu torchvision==0.23.0+cpu -i https://download.pytorch.org/whl/cpu
+pip install vllm==0.11.0 triton==3.3.0 transformers==4.55.2
 # Enflame依赖
-pip install torch_gcu-2.7.0*.whl
-pip install flash_attn-2.6.3+torch.2.7.0.gcu*.whl
-pip install topsgraph-3.5.5.7*.whl
-pip install tops_extension-3.2*.whl
-pip install xformers-0.0.30+torch.2.7.0.gcu*.whl
+pip install torch_gcu-2.8.0*.whl
+pip install flash_attn-2.7.2+torch.2.8.0.gcu*.whl
+pip install topsgraph-3.6*.whl
+pip install tops_extension-3.6*.whl
+pip install xformers-0.0.32*.whl
 sudo dpkg -i topsaten_3.6*.deb
-sudo dpkg -i eccl_3.5*.deb
-sudo dpkg -i tops-sdk_3.5*.deb
-sudo dpkg -i topsgraph_3.5*.deb
+sudo dpkg -i eccl_3.6*.deb
+sudo dpkg -i tops-sdk_3.6*.deb
+sudo dpkg -i topsgraph_3.6*.deb
 
 # 编译 vllm_gcu .whl安装包
 python3 setup.py bdist_wheel
 
 # 安装编译好的 vllm_gcu whl包
-python3 -m pip install ./dist/vllm_gcu-0.9.2*.whl
+python3 -m pip install ./dist/vllm_gcu-0.11.0*.whl
 ```
 
 ---
@@ -216,7 +216,7 @@ python3 -m vllm_utils.benchmark_throughput --help
 | **Baichuan2**          | ✅    | ✅    | ✅          | ✅          | ✅         | ✅     | ✅         | ✅       |
 | **ChatGLM3**           | ✅    | ✅    | ✅          | ✅          | ✅         | ✅     | ✅         | ✅       |
 | **DBRX**               | ✅    | ❌    | ❌          | ✅          | ✅         | ✅     | ✅         | ✅       |
-| **DeepSeek-V3/R1**        | ❌    | ❌    | ❌          | ❌          | ✅         | ❌     | ❌         | ❌       |
+| **DeepSeek-V3/R1/V3.2**| ❌    | ❌    | ❌          | ❌          | ✅         | ❌     | ❌         | ❌       |
 | **DeepSeek-Prover-V2** | ❌    | ✅    | ❌          | ❌          | ❌         | ❌     | ❌         | ❌       |
 | **Gemma**              | ✅    | ✅    | ✅          | ✅          | ✅         | ✅     | ✅         | ✅       |
 | **codegemma**          | ✅    | ✅    | ❌          | ❌          | ❌         | ❌     | ❌         | ❌       |
@@ -225,11 +225,14 @@ python3 -m vllm_utils.benchmark_throughput --help
 | **Mixtral**            | ✅    | ✅    | ❌          | ❌          | ❌         | ❌     | ❌         | ❌       |
 | **Qwen(1.5/2/2.5/3)**            | ✅    | ✅    | ✅          | ✅          | ✅         | ✅     | ✅         | ✅       |
 | **Qwen3-MoE**          | ✅    | ✅    | ❌          | ❌          | ✅         | ❌     | ❌         | ❌       |
+| **Qwen3-Next**         | ✅    | ✅    | ❌          | ❌          | ✅         | ❌     | ❌         | ❌       |
+| **GLM4**               | ✅    | ✅    | ❌          | ❌          | ✅         | ❌     | ❌         | ❌       |
 | **WizardCoder**        | ✅    | ✅    | ❌          | ❌          | ❌         | ❌     | ❌         | ❌       |
 | **Yi**                 | ✅    | ✅    | ✅          | ✅          | ✅         | ✅     | ✅         | ✅       |
 | **gte-Qwen2**          | ✅    | ❌    | ❌          | ❌          | ❌         | ❌     | ❌         | ❌       |
 | **jina-reranker-v2**   | ❌    | ✅    | ❌          | ❌          | ❌         | ❌     | ❌         | ❌       |
-
+| **Step3/VL**           | ✅    | ✅    | ❌          | ❌          | ✅         | ❌     | ❌         | ❌       |
+| **GPT-OSS**            | ✅    | ✅    | ❌          | ❌          | ✅         | ❌     | ❌         | ❌       |
 ---
 
 ## 图标说明：
