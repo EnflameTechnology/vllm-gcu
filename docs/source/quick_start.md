@@ -7,7 +7,7 @@
 * Enflame **S60**
 * Compatible servers/workstations with GCU integration
 
-> 🔧 Make sure you've installed the **TopsRider_i3x 3.5+** runtime stack and have validated GCU using `efsmi`.
+> 🔧 Make sure you've installed the **TopsRider_i3x 3.6+** runtime stack and have validated GCU using `efsmi`.
 
 ---
 

@@ -63,14 +63,14 @@ myst_enable_extensions = ["colon_fence", "substitution"]
 myst_substitutions = {
     # the branch of vllm, used in vllm clone
     # - main branch: 'main'
-    'vllm_version': 'v0.9.2',
+    'vllm_version': 'v0.11.0',
     # - main branch: 'main'
-    'vllm_gcu_version': 'v0.9.2rc1',
+    'vllm_gcu_version': 'v0.11.0',
     # This value should be updated when cut down release.
-    'pip_vllm_gcu_version': "0.9.2rc1",
-    'pip_vllm_version': "0.9.2",
+    'pip_vllm_gcu_version': "v0.11.0",
+    'pip_vllm_version': "v0.11.0",
     # vllm version in ci
-    'ci_vllm_version': 'v0.9.2',
+    'ci_vllm_version': 'v0.11.0',
 }
 
 # Add any paths that contain templates here, relative to this directory.

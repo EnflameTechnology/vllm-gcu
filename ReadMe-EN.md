@@ -11,7 +11,7 @@
 
 ## 📌 Key Features
 
-* Fully supports **vLLM 0.9.2** capabilities
+* Fully supports **vLLM 0.11.0** capabilities
 * Deeply optimized inference pipeline for **Enflame S60 GCU**
 * Supports various quantization formats, including GPTQ, AWQ, INT8, in addition to FP16 and BF16.
 * Native support for Qwen, LLaMa, Gemma, Mistral, ChatGLM, DeepSeek series of LLMs (and/or VLMs)

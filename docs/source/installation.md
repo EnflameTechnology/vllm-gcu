@@ -11,15 +11,15 @@ This guide explains how to install and set up **vLLM-GCU** manually or via Docke
 
   | Software  | Required Version            | Notes                                     |
   | --------- | --------------------------- | ----------------------------------------- |
-  | TopsRider_i3x | ≥ `3.5`                 | Required for GCU driver/runtime           |
-  | torch-gcu | Compatible with PyTorch 2.7 | Installed via `.whl`, provided by Enflame |
-  | vllm-gcu  | Based on `vLLM 0.9.2`       | Built for the vLLM GCU backend          |
+  | TopsRider_i3x | ≥ `3.6`                 | Required for GCU driver/runtime           |
+  | torch-gcu | Compatible with PyTorch 2.8 | Installed via `.whl`, provided by Enflame |
+  | vllm-gcu  | Based on `vLLM 0.11.0`       | Built for the vLLM GCU backend          |
 
 ---
 
 ## Environment Setup
 
-Before installing, ensure that GCU drivers and the **TopsRider** stack are installed properly. Follow the [TopsRider Installation Manual](https://support.enflame-tech.com/onlinedoc_dev_3.4/2-install/sw_install/content/source/installation.html).
+Before installing, ensure that GCU drivers and the **TopsRider** stack are installed properly. Follow the [TopsRider Installation Manual](https://support.enflame-tech.com/onlinedoc_dev_3.6/2-install/sw_install/content/source/installation.html#id6).
 
 ### Validate GCU Installation
 
@@ -95,11 +95,11 @@ python3 -m pip install setuptools
 
 ```bash
 # Install Triton (required)
-python3 -m pip install triton==3.2
+python3 -m pip install triton==3.3
 
 # Install TopsRider and setup vLLM-GCU
-chmod +x ./TopsRider_i3x_3.5.xxx.run
-sudo ./TopsRider_i3x_3.5.xxx.run -y -C vllm-gcu
+chmod +x ./TopsRider_i3x_3.6.xxx.run
+sudo ./TopsRider_i3x_3.6.xxx.run -y -C vllm-gcu
 ```
 
 ---
@@ -110,18 +110,18 @@ sudo ./TopsRider_i3x_3.5.xxx.run -y -C vllm-gcu
 
 ```bash
 # Install dependencies
-pip install torch==2.7.0+cpu torchvision==0.22.0 -i https://download.pytorch.org/whl/cpu
-pip install vllm==0.9.2 triton==3.2 transformers==4.51.1
+pip install torch==2.8.0+cpu torchvision==0.23.0+cpu -i https://download.pytorch.org/whl/cpu
+pip install vllm==0.11.0 triton==3.3.0 transformers==4.55.2
 # Enflame dependencies
-pip install torch_gcu-2.7.0*.whl
-pip install flash_attn-2.6.3+torch.2.7.0.gcu*.whl
-pip install topsgraph-3.5.5.7*.whl
-pip install tops_extension-3.2*.whl
-pip install xformers-0.0.30+torch.2.7.0.gcu*.whl
+pip install torch_gcu-2.8.0*.whl
+pip install flash_attn-2.7.2+torch.2.8.0.gcu*.whl
+pip install topsgraph-3.6*.whl
+pip install tops_extension-3.6*.whl
+pip install xformers-0.0.32*.whl
 sudo dpkg -i topsaten_3.6*.deb
-sudo dpkg -i eccl_3.5*.deb
-sudo dpkg -i tops-sdk_3.5*.deb
-sudo dpkg -i topsgraph_3.5*.deb
+sudo dpkg -i eccl_3.6*.deb
+sudo dpkg -i tops-sdk_3.6*.deb
+sudo dpkg -i topsgraph_3.6*.deb
 ```
 
 #### Step 2: Build and Install vLLM-GCU from source code
@@ -130,7 +130,7 @@ sudo dpkg -i topsgraph_3.5*.deb
 git clone https://github.com/enflame-tech/vllm-gcu.git
 cd vllm-gcu
 python3 setup.py bdist_wheel
-python3 -m pip install ./dist/vllm_gcu-0.9.2*.whl
+python3 -m pip install ./dist/vllm_gcu-<version>*.whl
 ```
 
 > ⚠️ Replace `<version>` with the appropriate version string.
