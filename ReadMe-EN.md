@@ -29,60 +29,52 @@
 
 ### 📦 Installation Steps
 
-#### 1️⃣ Install Dependencies (in host)
 
-Refer to the [TopsRider Installation Manual](https://support.enflame-tech.com/onlinedoc_dev_3.4/2-install/sw_install/content/source/installation.html) to install **Enflame driver**.
+#### 1️⃣ Pull Enflame GCU Docker & Update Driver
 
-
-#### 2️⃣ Build & Installation
-
-**Python3.10+:** Make sure you have python3.10+ installed and the default python version is 3.10+
-
+Pull GGCU docker environment for vLLM-GCU v0.11.0 compilation
 ```bash
-# check default python version 
-python3 --version
+IMAGE=registry-egc.enflame-tech.com/artifacts/vllm_gcu:v0.11.0-TR3.7.107-ubuntu2204
 
-# install python3.10 if default python version < 3.10
-sudo apt update && sudo apt install python3.10 -y
-
-# switch default python to version 3.10
-sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1
-sudo update-alternatives --config python3
-
-# install pip for python3.10
-sudo apt update && sudo apt install python3.10-distutils -y
-curl -sS https://bootstrap.pypa.io/get-pip.py | sudo python3
-
-# install setuptools
-python3 -m pip install setuptools
-sudo apt install python3.10-dev -y
+docker run --name vllm-gcu -d \
+  -v /home:/home \
+  --shm-size 8G \
+  --ipc=host --network host \
+  --cap-add SYS_PTRACE \
+  --security-opt seccomp=unconfined \
+  --privileged \
+  "$IMAGE" \
+  tail -f /dev/null
 ```
 
-✅ **Build and install vLLM-GCU `.whl` package from source code**
+Update Host GCU Driver
 
 ```bash
-# Install dependencies
-pip install torch==2.8.0+cpu torchvision==0.23.0+cpu -i https://download.pytorch.org/whl/cpu
-pip install vllm==0.11.0 triton==3.3.0 transformers==4.55.2
-# Enflame dependencies
-pip install torch_gcu-2.8.0*.whl
-pip install flash_attn-2.7.2+torch.2.8.0.gcu*.whl
-pip install topsgraph-3.6*.whl
-pip install tops_extension-3.6*.whl
-pip install xformers-0.0.32*.whl
-sudo dpkg -i topsaten_3.6*.deb
-sudo dpkg -i eccl_3.6*.deb
-sudo dpkg -i tops-sdk_3.6*.deb
-sudo dpkg -i topsgraph_3.6*.deb
+# Obtain driver from the docker
+docker cp vllm-gcu:/enflame/driver ./
+# Update GCU driver
+sudo driver/enflame-x86_64-gcc-1.7.2.2402-20260429134535.run -y
+# Restart Docker for the driver update to take effect
+docker restart vllm-gcu
+```
 
-# build vllm_gcu .whl package
+#### 2️⃣ Compile and Install within Docker
+
+Get source code
+```bash
+cd /home
+git clone https://github.com/EnflameTechnology/vllm-gcu.git
+```
+
+Compile and install vLLM-GCU
+```bash
+docker exec -it vllm-gcu bash
+cd vllm-gcu
+# compile
 python3 setup.py bdist_wheel
-
-# install the built package
+# install
 python3 -m pip install ./dist/vllm_gcu-0.11.0*.whl
 ```
-
----
 
 ## 🚀 Usage Instructions
 
@@ -126,6 +118,7 @@ Download to the folder named `Qwen2.5-32B-Instruct-GPTQ-Int8`.
 #### Batch Offline Inference
 
 ```bash
+docker exec -it vllm-gcu bash
 python3 -m vllm_utils.benchmark_throughput \
  --model=[Qwen2.5-32B-Instruct-GPTQ-Int8 folder path] \
  --tensor-parallel-size=2 \
@@ -140,6 +133,7 @@ python3 -m vllm_utils.benchmark_throughput \
 #### Serving Mode
 
 ```bash
+docker exec -it vllm-gcu bash
 # Start server
 python3 -m vllm.entrypoints.openai.api_server \
  --model [Qwen2.5-32B-Instruct-GPTQ-Int8 folder path] \

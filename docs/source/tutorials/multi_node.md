@@ -45,32 +45,21 @@ sudo bash ./TopsPlatform_*_deb_amd64.run --no-auto-load --peermem -y
 
 ### Docker Image Preparation
 
-Use the pre-saved Docker image (since `docker pull` may fail):
-
 ```bash
-docker load -i ubuntu2204_llm.tar
-```
+IMAGE=registry-egc.enflame-tech.com/artifacts/vllm_gcu:v0.11.0-TR3.7.107-ubuntu2204
 
-### Launch Docker Container
-
-```bash
-docker run -it --name test_env \
-  -v /data/test:/home/workspace \
+docker run --name vllm-gcu -d \
+  -v /home:/home \
   -e ENFLAME_VISIBLE_DEVICES=all \
   -e TZ=Asia/Shanghai \
   --ipc=host -u root \
-  -e ENFLAME_UMD_FLAGS="enable_gcu_coredump=true" \
-  --ulimit core=-1 --security-opt seccomp=unconfined \
+  --shm-size 8G \
+  --cap-add SYS_PTRACE \
+  --security-opt seccomp=unconfined \
+  --privileged \
   --network host -v /sys/kernel:/sys/kernel \
-  --privileged artifact.enflame.cn/enflame_docker_release/amd64_ubuntu2204_llm:3.4.203
-```
-
-### Python Environment Setup
-
-```bash
-python3 -m pip install datasets==3.2.0
-python3 -m pip install opencv-python==4.10.0.84 opencv-python-headless==4.10.0.84
-python3 -m pip install triton==3.3
+  "$IMAGE" \
+  tail -f /dev/null
 ```
 
 ### ECCL Communication Verification

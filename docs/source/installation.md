@@ -89,7 +89,7 @@ python3 -m pip install setuptools
 
 ---
 
-### Option 1: Install via TopsRider (Recommended)
+### Option 1: Install via TopsRider
 
 > This method installs all required packages, extensions, and runtime libraries for Enflame GCU.
 
@@ -104,59 +104,52 @@ sudo ./TopsRider_i3x_3.6.xxx.run -y -C vllm-gcu
 
 ---
 
-### Option 2: Manual Build from Source
+### Option 2: Build source code with Docker
 
-#### Step 1: Install Required Python Packages
+#### 1️⃣ Pull Enflame GCU Docker & Update Driver
 
+Pull GGCU docker environment for vLLM-GCU v0.11.0 compilation
 ```bash
-# Install dependencies
-pip install torch==2.8.0+cpu torchvision==0.23.0+cpu -i https://download.pytorch.org/whl/cpu
-pip install vllm==0.11.0 triton==3.3.0 transformers==4.55.2
-# Enflame dependencies
-pip install torch_gcu-2.8.0*.whl
-pip install flash_attn-2.7.2+torch.2.8.0.gcu*.whl
-pip install topsgraph-3.6*.whl
-pip install tops_extension-3.6*.whl
-pip install xformers-0.0.32*.whl
-sudo dpkg -i topsaten_3.6*.deb
-sudo dpkg -i eccl_3.6*.deb
-sudo dpkg -i tops-sdk_3.6*.deb
-sudo dpkg -i topsgraph_3.6*.deb
+IMAGE=registry-egc.enflame-tech.com/artifacts/vllm_gcu:v0.11.0-TR3.7.107-ubuntu2204
+
+docker run --name vllm-gcu -d \
+  -v /home:/home \
+  --shm-size 8G \
+  --ipc=host --network host \
+  --cap-add SYS_PTRACE \
+  --security-opt seccomp=unconfined \
+  --privileged \
+  "$IMAGE" \
+  tail -f /dev/null
 ```
 
-#### Step 2: Build and Install vLLM-GCU from source code
+Update Host GCU Driver
 
 ```bash
-git clone https://github.com/enflame-tech/vllm-gcu.git
-cd vllm-gcu
+# Obtain driver from the docker
+docker cp vllm-gcu:/enflame/driver ./
+# Update GCU driver
+sudo driver/enflame-x86_64-gcc-1.7.2.2402-20260429134535.run -y
+# Restart Docker for the driver update to take effect
+docker restart vllm-gcu
+```
+
+#### 2️⃣ Compile and Install within Docker
+
+Get source code
+```bash
+cd /home
+git clone https://github.com/EnflameTechnology/vllm-gcu.git
+```
+
+Compile and install vLLM-GCU
+```bash
+docker exec -it vllm-gcu bash
+# compile
 python3 setup.py bdist_wheel
-python3 -m pip install ./dist/vllm_gcu-<version>*.whl
+# install
+python3 -m pip install ./dist/vllm_gcu-0.11.0*.whl
 ```
-
-> ⚠️ Replace `<version>` with the appropriate version string.
-
----
-
-## Docker Support
-
-If you prefer containerized deployment, use the prebuilt Docker image provided by Enflame.
-
-```bash
-export IMAGE=artifact.enflame.cn/enflame_docker_release/amd64_ubuntu2004_tr:latest
-
-# start the docker
-docker run --ipc=host --network host --privileged -v /dev:/dev -d -i --name gcudocker $IMAGE
-
-# copy driver package and install driver on the host
-docker cp gcudocker:/enflame/driver ~/
-cd ~/driver
-sudo ./enflame-x86_64*.run
-
-# exec the docker
-docker exec -it gcudocker bash
-```
-
-The default working directory will contain vLLM and vLLM-GCU in development mode.
 
 ---
 

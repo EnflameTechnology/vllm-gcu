@@ -29,56 +29,49 @@
 
 ### 📦 安装步骤
 
-#### 1️⃣ 安装依赖组件（主机环境）
+#### 1️⃣ 拉取Enflame GCU镜像并更新主机驱动
 
-请首先参考[《TopsRider 软件栈安装手册》](https://support.enflame-tech.com/onlinedoc_dev_3.4/2-install/sw_install/content/source/installation.html)在主机中完成**驱动程序**安装。
-
-
-#### 2️⃣ 编译与安装
-
-**Python3.10+：** 确保你已经安装了 Python 3.10 或更高版本，并且默认的 Python 版本是 3.10 及以上。
-
+拉取适用于vLLM-GCU v0.11.0的编译环境镜像
 ```bash
-# 检查默认的 python 版本
-python3 --version
+IMAGE=registry-egc.enflame-tech.com/artifacts/vllm_gcu:v0.11.0-TR3.7.107-ubuntu2204
 
-# 如果默认的 python 版本小于 3.10，则安装 python3.10
-sudo apt update && sudo apt install python3.10 -y
-
-# 将默认的 python 版本切换为 3.10
-sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1
-sudo update-alternatives --config python3
-
-# 为 python3.10 安装pip
-sudo apt update && sudo apt install python3.10-distutils -y
-curl -sS https://bootstrap.pypa.io/get-pip.py | sudo python3
-
-# 安装setuptools
-python3 -m pip install setuptools
-sudo apt install python3.10-dev -y
+docker run --name vllm-gcu -d \
+  -v /home:/home \
+  --shm-size 8G \
+  --ipc=host --network host \
+  --cap-add SYS_PTRACE \
+  --security-opt seccomp=unconfined \
+  --privileged \
+  "$IMAGE" \
+  tail -f /dev/null
 ```
 
-✅ **从源代码编译并安装 vLLM-GCU `.whl` 包**
+更新主机GCU驱动
 
 ```bash
-# 安装依赖
-pip install torch==2.8.0+cpu torchvision==0.23.0+cpu -i https://download.pytorch.org/whl/cpu
-pip install vllm==0.11.0 triton==3.3.0 transformers==4.55.2
-# Enflame依赖
-pip install torch_gcu-2.8.0*.whl
-pip install flash_attn-2.7.2+torch.2.8.0.gcu*.whl
-pip install topsgraph-3.6*.whl
-pip install tops_extension-3.6*.whl
-pip install xformers-0.0.32*.whl
-sudo dpkg -i topsaten_3.6*.deb
-sudo dpkg -i eccl_3.6*.deb
-sudo dpkg -i tops-sdk_3.6*.deb
-sudo dpkg -i topsgraph_3.6*.deb
+# 从镜像中获取匹配的驱动版本
+docker cp vllm-gcu:/enflame/driver ./
+# 更新驱动
+sudo driver/enflame-x86_64-gcc-1.7.2.2402-20260429134535.run -y
+# 重启docker以使用更新后的驱动
+docker restart vllm-gcu
+```
 
-# 编译 vllm_gcu .whl安装包
+#### 2️⃣ 在Docker中编译与安装
+
+下载源码
+```bash
+cd /home
+git clone https://github.com/EnflameTechnology/vllm-gcu.git
+```
+
+在GCU镜像中编译并运行vLLM-GCU
+```bash
+docker exec -it vllm-gcu bash
+cd vllm-gcu
+# 编译
 python3 setup.py bdist_wheel
-
-# 安装编译好的 vllm_gcu whl包
+# 安装
 python3 -m pip install ./dist/vllm_gcu-0.11.0*.whl
 ```
 
@@ -122,6 +115,7 @@ export TORCHGCU_INDUCTOR_ENABLE=0 #禁用Torch Inductor
 
 #### 批量离线推理
 ```shell
+docker exec -it vllm-gcu bash
 python3 -m vllm_utils.benchmark_throughput \
  --model=[Qwen2.5-32B-Instruct-GPTQ-Int8文件夹] \
  --tensor-parallel-size=2 \
@@ -137,6 +131,7 @@ python3 -m vllm_utils.benchmark_throughput \
 
 ```shell
 # 启动服务端
+docker exec -it vllm-gcu bash
 python3 -m vllm.entrypoints.openai.api_server \
  --model [Qwen2.5-32B-Instruct-GPTQ-Int8文件夹] \
  --tensor-parallel-size 2 \
