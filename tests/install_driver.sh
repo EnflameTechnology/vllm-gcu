@@ -39,11 +39,11 @@ done
 run_installer() {
     local installer="$1"
     if [ "$DEBUG" -eq 1 ]; then
-        sudo "./${installer}" -y
+        sudo "./${installer}" --no-auto-load --no-dkms
     else
         local log_file
         log_file="$(mktemp /tmp/torch_gcu_driver_XXXXXX.log)"
-        if sudo "./${installer}" -y > "$log_file" 2>&1; then
+        if sudo "./${installer}" --no-auto-load --no-dkms > "$log_file" 2>&1; then
             rm -f "$log_file"
         else
             echo -e "${RED}[ERROR]${NC} Driver installation failed:"
@@ -113,7 +113,7 @@ if [ ! -f "${INSTALLER[0]}" ]; then
     echo -e "${RED}[ERROR]${NC} No enflame-x86_64*.run installer found in $DRIVER_DIR"
     exit 1
 fi
-log_info "Running: sudo ./${INSTALLER[0]} -y"
+log_info "Running: sudo ./${INSTALLER[0]} --no-auto-load --no-dkms"
 run_installer "${INSTALLER[0]}"
 log_ok "Driver installed successfully"
 
