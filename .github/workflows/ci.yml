@@ -15,7 +15,7 @@ env:
   SAST_BRANCH: main
 
 jobs:
-  static-check:
+  all-ci-check:
     runs-on: S60
     
     steps:
@@ -51,19 +51,24 @@ jobs:
 
       - name: Install driver
         run: |
-          sudo ./vllm-gcu/tests/install_driver.sh
+          pwd;ls -l;ls -l ./vllm-gcu;ls -l ./vllm-gcu/tests;sudo bash ./vllm-gcu/tests/install_driver.sh
 
 
       - name: Run CI build and tests
         run: |
           sudo docker run --rm \
-            -v "$(pwd)/vllm-gcu:/app" \
+            -v "$(pwd)/:/app" \
             --volume=/log:/log \
             --volume=/root:/root \
             --volume=/lib/modules/:/lib/modules/ \
             --volume=/usr/src/:/usr/src/ \
             --volume=/dev:/dev \
             --privileged \
+            -v /home/pypi_packages:/home/pypi_packages \
             -w /app \
             "${{ env.CI_IMAGE }}" \
-            bash -c 'git config --global --add safe.directory /app/vllm-gcu && sudo ./vllm-gcu/.pipeline/build.sh ci_build;sudo ./vllm-gcu/tests/install_env.sh'
+            bash -c 'git config --global --add safe.directory /app/vllm-gcu && sudo bash ./vllm-gcu/.pipeline/build.sh ci_build;sudo bash ./vllm-gcu/tests/install_env.sh'
+
+      - name: Clean up
+        run: |
+          sudo rm -rf vllm-gcu sast
