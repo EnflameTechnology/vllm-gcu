@@ -70,5 +70,6 @@ jobs:
             bash -c 'git config --global --add safe.directory /app/vllm-gcu && sudo bash ./vllm-gcu/.pipeline/build.sh ci_build;sudo bash ./vllm-gcu/tests/install_env.sh'
 
       - name: Clean up
+        if: always()
         run: |
           sudo rm -rf vllm-gcu sast
