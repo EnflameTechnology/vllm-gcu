@@ -103,6 +103,9 @@ log_info "Wheel package(s):"
 ls -lh "${WHEELS[@]}"
 echo ""
 log_warn "You may be prompted for your sudo password again."
+cd /home/pypi_packages
+run_pip install vllm-0.11.0-cp38-abi3-manylinux1_x86_64.whl
+cd -
 run_pip install "${WHEELS[@]}"
 log_ok "vllm_gcu installed: $(python3 -c 'import vllm_gcu; print(vllm_gcu.__file__)' 2>/dev/null || echo '(import check skipped)')"
 
