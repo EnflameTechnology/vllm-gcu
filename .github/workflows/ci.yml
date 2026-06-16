@@ -10,11 +10,12 @@ on:
 
 env:
   DOCKER_IMAGE: registry-egc.enflame-tech.com/enflame/ci_sast:v1.0-os
+  CI_IMAGE: registry-egc.enflame-tech.com/artifacts/vllm_gcu:v0.11.0-TR3.7.107-ubuntu2204
   SAST_REPO: EnflameTechnology/sast
   SAST_BRANCH: main
 
 jobs:
-  static-check:
+  all-ci-check:
     runs-on: S60
     
     steps:
@@ -47,3 +48,28 @@ jobs:
             -w /app \
             "${{ env.DOCKER_IMAGE }}" \
             bash -c 'cd /app && python3 /sast/run.py --all_ci_check'
+
+      - name: Install driver
+        run: |
+          pwd;ls -l;ls -l ./vllm-gcu;ls -l ./vllm-gcu/tests;sudo bash ./vllm-gcu/tests/install_driver.sh
+
+
+      - name: Run CI build and tests
+        run: |
+          sudo docker run --rm \
+            -v "$(pwd)/:/app" \
+            --volume=/log:/log \
+            --volume=/root:/root \
+            --volume=/lib/modules/:/lib/modules/ \
+            --volume=/usr/src/:/usr/src/ \
+            --volume=/dev:/dev \
+            --privileged \
+            -v /home/pypi_packages:/home/pypi_packages \
+            -w /app \
+            "${{ env.CI_IMAGE }}" \
+            bash -c 'git config --global --add safe.directory /app/vllm-gcu && sudo bash ./vllm-gcu/.pipeline/build.sh ci_build;sudo bash ./vllm-gcu/tests/install_env.sh'
+
+      - name: Clean up
+        if: always()
+        run: |
+          sudo rm -rf vllm-gcu sast
