@@ -67,7 +67,7 @@ jobs:
             -v /home/pypi_packages:/home/pypi_packages \
             -w /app \
             "${{ env.CI_IMAGE }}" \
-            bash -c 'git config --global --add safe.directory /app/vllm-gcu && sudo bash ./vllm-gcu/.pipeline/build.sh ci_build;sudo bash ./vllm-gcu/tests/install_env.sh'
+            bash -c 'git config --global --add safe.directory /app/vllm-gcu && sudo bash ./vllm-gcu/.pipeline/build.sh ci_build;sudo bash ./vllm-gcu/tests/install_env.sh;cd ./vllm-gcu/tests/;bash run_all_test.sh kernel'
 
       - name: Clean up
         if: always()
