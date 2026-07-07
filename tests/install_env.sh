@@ -104,6 +104,7 @@ ls -lh "${WHEELS[@]}"
 echo ""
 log_warn "You may be prompted for your sudo password again."
 cd /home/pypi_packages
+run_pip install pytest==8.3.3
 run_pip install vllm-0.11.0-cp38-abi3-manylinux1_x86_64.whl
 cd -
 run_pip install "${WHEELS[@]}"

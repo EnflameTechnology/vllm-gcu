@@ -19,10 +19,6 @@ jobs:
     runs-on: S60
     
     steps:
-      - name: Setup SSH Agent
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
       - name: Checkout SAST tools
         uses: actions/checkout@v4
@@ -30,14 +26,12 @@ jobs:
           repository: ${{env.SAST_REPO}}
           ref: ${{env.SAST_BRANCH}}
           path: ./sast
-          ssh-key: ${{ secrets.SSH_PUB_KEY }}
 
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0  # Required for full git history to compare changes
           path: ./vllm-gcu
-          ssh-key: ${{ secrets.SSH_PUB_KEY }}
 
       - name: Run static code analysis
         run: |
@@ -67,7 +61,7 @@ jobs:
             -v /home/pypi_packages:/home/pypi_packages \
             -w /app \
             "${{ env.CI_IMAGE }}" \
-            bash -c 'git config --global --add safe.directory /app/vllm-gcu && sudo bash ./vllm-gcu/.pipeline/build.sh ci_build;sudo bash ./vllm-gcu/tests/install_env.sh'
+            bash -c 'git config --global --add safe.directory /app/vllm-gcu && sudo bash ./vllm-gcu/.pipeline/build.sh ci_build;sudo bash ./vllm-gcu/tests/install_env.sh;cd ./vllm-gcu/tests/;bash run_all_test.sh kernel'
 
       - name: Clean up
         if: always()
